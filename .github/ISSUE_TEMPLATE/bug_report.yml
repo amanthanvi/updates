@@ -1,0 +1,37 @@
+name: Bug report
+description: Report a problem with the updates script
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug! Please include enough detail to reproduce.
+  - type: input
+    id: macos_version
+    attributes:
+      label: macOS version
+      placeholder: "e.g. 15.1"
+    validations:
+      required: false
+  - type: textarea
+    id: command
+    attributes:
+      label: Command run
+      description: The exact command you ran (include flags).
+      placeholder: "updates --dry-run --only brew,node"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Paste output logs (redact secrets).
+    validations:
+      required: true
+
