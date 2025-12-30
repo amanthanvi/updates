@@ -1,12 +1,13 @@
 # updates
 
-Opinionated macOS update script for common tooling (Homebrew, npm globals, pip globals, etc.).
+A Bash script I use to update my common macOS tooling (Homebrew, npm globals, pip globals, etc.).
 
 ## Install
 
 ```bash
 chmod +x ./updates
-sudo ln -sf "$(pwd)/updates" /usr/local/bin/updates  # or ~/bin/updates
+sudo mkdir -p /usr/local/bin
+sudo install -m 0755 ./updates /usr/local/bin/updates
 ```
 
 ## Usage
@@ -64,3 +65,11 @@ Install what you actually use:
 
 - This script updates *global* environments (`npm -g`, `pip`), which can be disruptive.
 - Use `--dry-run` first, and consider `--only`/`--skip` to control scope.
+
+## Contributing
+
+See `CONTRIBUTING.md`.
+
+## License
+
+MIT — see `LICENSE`.
