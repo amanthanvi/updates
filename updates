@@ -1,58 +1,602 @@
 #!/bin/bash
 
-# Custom scripts for updating system packages and all commonly used applications
-echo "Starting system update..."
+set -o pipefail
 
-# Update and upgrade system packages -- macOS with Homebrew
-# Combines formulae and casks in single upgrade command (faster than separate calls)
-echo "Updating Homebrew packages and casks... 🍺"
-brew update && brew upgrade --greedy
-echo "Homebrew packages updated."
-echo "Cleaning up Homebrew..."
-brew cleanup
-echo "Homebrew cleanup completed."
+UPDATES_VERSION="0.3.0"
 
-# Check for outdated npm packages globally using ncu
-echo "Checking for outdated npm packages... 📦"
-ncu_output=$(ncu -g --jsonUpgraded 2>&1)
+SCRIPT_NAME="$(basename "$0")"
 
-# Check if there are any upgrades (JSON output will be {} if none)
-if echo "$ncu_output" | grep -q "All global packages are up-to-date" || [ "$ncu_output" = "{}" ]; then
-	echo "All global npm packages are up-to-date. ✅"
-else
-	echo "Outdated packages found:"
-	# Display human-readable from cached JSON instead of running ncu again
-	echo "$ncu_output" | python3 -c "import sys, json; data = json.load(sys.stdin); [print(f'  {k}: {v}') for k,v in data.items()]" 2>/dev/null
-	echo "Updating outdated npm packages... 📦"
-	# ncu cannot upgrade global packages directly - must use npm install
-	packages=$(echo "$ncu_output" | python3 -c "import sys, json; data = json.load(sys.stdin); print(' '.join([f'{k}@{v}' for k,v in data.items()]))" 2>/dev/null)
-	if [ -n "$packages" ]; then
-		npm install -g $packages
-		echo "npm packages updated."
+DRY_RUN=0
+STRICT=0
+QUIET=0
+VERBOSE=0
+NO_EMOJI=0
+NON_INTERACTIVE=0
+LOG_FILE=""
+PARALLEL=4
+
+BREW_GREEDY=1
+BREW_CLEANUP=1
+
+only_modules=()
+skip_modules=()
+failures=()
+
+print() {
+	printf '%s\n' "$*"
+}
+
+log() {
+	if [ "$QUIET" -eq 0 ]; then
+		print "$*"
 	fi
-fi
+}
 
-# Update and upgrade Python packages globally using pip
-echo "Checking for outdated Python packages... 🐍"
-outdated_pip=$(pip3 list --outdated --format=json 2>/dev/null)
-if [ "$outdated_pip" = "[]" ] || [ -z "$outdated_pip" ]; then
-	echo "All Python packages are up-to-date. ✅"
-else
-	echo "Updating outdated Python packages..."
-	# Use xargs -P for parallel installs (much faster)
-	echo "$outdated_pip" | python3 -c "import sys, json; print('\n'.join([p['name'] for p in json.load(sys.stdin)]))" | xargs -n1 -P4 pip3 install -U 2>/dev/null
-	echo "Python packages updated."
-fi
+debug() {
+	if [ "$VERBOSE" -eq 1 ]; then
+		print "$*"
+	fi
+}
 
-# Update standalone applications
-# Claude Code CLI
-echo "Updating Claude Code CLI... 🤖"
-claude update
-echo "Claude Code CLI updated."
+warn() {
+	print "WARN: $*" >&2
+}
 
-# Check for macOS software updates
-echo "Checking for macOS software updates... 🍏"
-# If there are updates, we make user aware but do not install automatically
-softwareupdate -l
-echo "macOS software update check completed."
-echo "System update process completed. 🎉"
+err() {
+	print "ERROR: $*" >&2
+}
+
+die() {
+	err "$*"
+	exit 2
+}
+
+emoji() {
+	if [ "$NO_EMOJI" -eq 1 ]; then
+		return 0
+	fi
+	printf '%s' "$1"
+}
+
+cmd_exists() {
+	command -v "$1" >/dev/null 2>&1
+}
+
+is_macos() {
+	[ "$(uname -s)" = "Darwin" ]
+}
+
+require_macos() {
+	if is_macos; then
+		return 0
+	fi
+	if [ "${UPDATES_ALLOW_NON_DARWIN:-0}" = "1" ]; then
+		warn "Non-macOS detected; continuing because UPDATES_ALLOW_NON_DARWIN=1 is set."
+		return 0
+	fi
+	die "This script targets macOS. Set UPDATES_ALLOW_NON_DARWIN=1 to bypass."
+}
+
+run() {
+	debug "+ $*"
+	if [ "$DRY_RUN" -eq 1 ]; then
+		return 0
+	fi
+	"$@"
+}
+
+contains_word() {
+	local needle="$1"
+	shift
+	local item
+	for item in "$@"; do
+		if [ "$item" = "$needle" ]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+normalize_module_list() {
+	# Converts a CSV list like "brew, mas,python" to space-separated words.
+	local s="$1"
+	s="${s//,/ }"
+	print "$s"
+}
+
+is_module_known() {
+	case "$1" in
+	brew | node | python | mas | pipx | rustup | claude | macos) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+module_description() {
+	case "$1" in
+	brew) print "Update Homebrew formulae/casks" ;;
+	node) print "Upgrade global npm packages via ncu" ;;
+	python) print "Upgrade global Python packages via pip" ;;
+	mas) print "Upgrade Mac App Store apps via mas" ;;
+	pipx) print "Upgrade pipx-managed apps via pipx" ;;
+	rustup) print "Update Rust toolchains via rustup" ;;
+	claude) print "Update Claude Code CLI" ;;
+	macos) print "List available macOS software updates" ;;
+	*) print "" ;;
+	esac
+}
+
+list_modules() {
+	local m
+	for m in brew node python mas pipx rustup claude macos; do
+		printf '%-8s %s\n' "$m" "$(module_description "$m")"
+	done
+}
+
+usage() {
+	cat <<EOF
+${SCRIPT_NAME} v${UPDATES_VERSION}
+
+Updates common tooling on macOS (Homebrew, npm globals, pip globals, etc.).
+
+Usage:
+  ${SCRIPT_NAME} [options]
+
+Options:
+  -h, --help               Show this help
+      --version            Print version
+      --list-modules       List available modules
+      --dry-run            Print what would run; make no changes
+      --only <list>        Run only these modules (CSV or space-separated)
+      --skip <list>        Skip these modules (CSV or space-separated)
+      --strict             Stop on first failure
+  -q, --quiet              Reduce output
+  -v, --verbose            Print commands as they run
+      --no-emoji           Disable emoji in output
+      --log-file <path>    Tee output to a log file
+      --non-interactive    Avoid interactive prompts when possible
+      --parallel <N>       Parallelism for pip upgrades (default: ${PARALLEL})
+      --[no-]brew-greedy   Include greedy cask upgrades (default: enabled)
+      --[no-]brew-cleanup  Run brew cleanup after upgrade (default: enabled)
+
+Examples:
+  ${SCRIPT_NAME}
+  ${SCRIPT_NAME} --dry-run
+  ${SCRIPT_NAME} --only brew,node
+  ${SCRIPT_NAME} --skip python --log-file ./updates.log
+
+EOF
+}
+
+parse_args() {
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		-h | --help)
+			usage
+			exit 0
+			;;
+		--version)
+			print "${UPDATES_VERSION}"
+			exit 0
+			;;
+		--list-modules)
+			list_modules
+			exit 0
+			;;
+		--dry-run)
+			DRY_RUN=1
+			;;
+		--strict)
+			STRICT=1
+			;;
+		-q | --quiet)
+			QUIET=1
+			;;
+		-v | --verbose)
+			VERBOSE=1
+			;;
+		--no-emoji)
+			NO_EMOJI=1
+			;;
+		--non-interactive)
+			NON_INTERACTIVE=1
+			;;
+		--log-file)
+			shift
+			[ $# -gt 0 ] || die "--log-file requires a path"
+			LOG_FILE="$1"
+			;;
+		--parallel)
+			shift
+			[ $# -gt 0 ] || die "--parallel requires a number"
+			PARALLEL="$1"
+			case "$PARALLEL" in
+			'' | *[!0-9]*)
+				die "--parallel must be a positive integer"
+				;;
+			esac
+			if [ "$PARALLEL" -lt 1 ]; then
+				die "--parallel must be >= 1"
+			fi
+			;;
+		--only)
+			shift
+			[ $# -gt 0 ] || die "--only requires a module list"
+			local list
+			list="$(normalize_module_list "$1")"
+			local m
+			for m in $list; do
+				is_module_known "$m" || die "Unknown module in --only: $m"
+				only_modules+=("$m")
+			done
+			;;
+		--skip)
+			shift
+			[ $# -gt 0 ] || die "--skip requires a module list"
+			local list
+			list="$(normalize_module_list "$1")"
+			local m
+			for m in $list; do
+				is_module_known "$m" || die "Unknown module in --skip: $m"
+				skip_modules+=("$m")
+			done
+			;;
+		--brew-greedy)
+			BREW_GREEDY=1
+			;;
+		--no-brew-greedy)
+			BREW_GREEDY=0
+			;;
+		--brew-cleanup)
+			BREW_CLEANUP=1
+			;;
+		--no-brew-cleanup)
+			BREW_CLEANUP=0
+			;;
+		--)
+			shift
+			break
+			;;
+		-*)
+			die "Unknown option: $1"
+			;;
+		*)
+			die "Unexpected argument: $1"
+			;;
+		esac
+		shift
+	done
+}
+
+module_selected() {
+	local name="$1"
+
+	if contains_word "$name" "${skip_modules[@]}"; then
+		return 1
+	fi
+
+	if [ "${#only_modules[@]}" -gt 0 ]; then
+		contains_word "$name" "${only_modules[@]}"
+		return $?
+	fi
+
+	return 0
+}
+
+module_dependency_missing() {
+	# In --only mode, missing deps should be treated as an error.
+	if [ "${#only_modules[@]}" -gt 0 ]; then
+		return 0
+	fi
+	return 1
+}
+
+ensure_cmd_or_skip() {
+	local cmd="$1"
+	local module="$2"
+	if cmd_exists "$cmd"; then
+		return 0
+	fi
+
+	if module_dependency_missing; then
+		err "$module: required command not found: $cmd"
+		return 1
+	fi
+
+	log "Skipping $module: $cmd not found."
+	return 2
+}
+
+json_pairs() {
+	# Prints tab-delimited key/value pairs from a JSON object on stdin.
+	if cmd_exists python3; then
+		python3 -c 'import sys, json; obj=json.load(sys.stdin); [print(f"{k}\t{v}") for k,v in obj.items()]'
+		return $?
+	fi
+	if cmd_exists node; then
+		node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{const o=JSON.parse(d||"{}");for(const k of Object.keys(o)){process.stdout.write(k+"\t"+o[k]+"\n");}});'
+		return $?
+	fi
+	return 1
+}
+
+module_brew() {
+	log "Homebrew $(emoji "🍺")"
+	ensure_cmd_or_skip brew brew || return $?
+
+	if [ "$DRY_RUN" -eq 1 ]; then
+		log "DRY RUN: brew update"
+		if [ "$BREW_GREEDY" -eq 1 ]; then
+			log "DRY RUN: brew upgrade --greedy"
+		else
+			log "DRY RUN: brew upgrade"
+		fi
+		if [ "$BREW_CLEANUP" -eq 1 ]; then
+			log "DRY RUN: brew cleanup"
+		fi
+		return 0
+	fi
+
+	run brew update || return 1
+
+	if [ "$BREW_GREEDY" -eq 1 ]; then
+		run brew upgrade --greedy || return 1
+	else
+		run brew upgrade || return 1
+	fi
+
+	if [ "$BREW_CLEANUP" -eq 1 ]; then
+		run brew cleanup || return 1
+	fi
+
+	return 0
+}
+
+module_node() {
+	log "npm globals $(emoji "📦")"
+	ensure_cmd_or_skip ncu node || return $?
+	ensure_cmd_or_skip npm node || return $?
+
+	if [ "$DRY_RUN" -eq 1 ]; then
+		log "DRY RUN: ncu -g --jsonUpgraded"
+		log "DRY RUN: npm install -g -- <packages...>"
+		return 0
+	fi
+
+	local json
+	if ! json="$(ncu -g --jsonUpgraded)"; then
+		err "node: ncu failed"
+		return 1
+	fi
+
+	local pairs
+	if ! pairs="$(printf '%s' "$json" | json_pairs)"; then
+		err "node: failed to parse ncu JSON output"
+		return 1
+	fi
+
+	local -a packages=()
+	local name ver
+	while IFS=$'\t' read -r name ver; do
+		[ -n "$name" ] || continue
+		packages+=("${name}@${ver}")
+	done <<<"$pairs"
+
+	if [ "${#packages[@]}" -eq 0 ]; then
+		log "All global npm packages are up-to-date. $(emoji "✅")"
+		return 0
+	fi
+
+	log "Upgrading global npm packages:"
+	local p
+	for p in "${packages[@]}"; do
+		log "  - $p"
+	done
+
+	run npm install -g -- "${packages[@]}" || return 1
+	return 0
+}
+
+module_python() {
+	log "Python globals $(emoji "🐍")"
+	ensure_cmd_or_skip python3 python || return $?
+
+	if [ "$DRY_RUN" -eq 1 ]; then
+		log "DRY RUN: python3 -m pip list --outdated --format=json"
+		log "DRY RUN: python3 -m pip install -U --no-input <package>  (parallel: ${PARALLEL})"
+		return 0
+	fi
+
+	local outdated_json
+	if ! outdated_json="$(python3 -m pip list --outdated --format=json)"; then
+		err "python: failed to query outdated packages"
+		return 1
+	fi
+
+	local names
+	if ! names="$(printf '%s' "$outdated_json" | python3 -c 'import sys, json; data=json.load(sys.stdin); print("\n".join([p.get("name","") for p in data if p.get("name")]))' 2>/dev/null)"; then
+		err "python: failed to parse pip output"
+		return 1
+	fi
+
+	local -a packages=()
+	local pkg
+	while IFS= read -r pkg; do
+		[ -n "$pkg" ] || continue
+		packages+=("$pkg")
+	done <<<"$names"
+
+	if [ "${#packages[@]}" -eq 0 ]; then
+		log "All Python packages are up-to-date. $(emoji "✅")"
+		return 0
+	fi
+
+	if [ "$PARALLEL" -lt 1 ] 2>/dev/null; then
+		PARALLEL=1
+	fi
+
+	log "Upgrading ${#packages[@]} Python packages (parallel: ${PARALLEL})..."
+
+	local -a pids=()
+	local -a pid_pkgs=()
+	local failed=0
+
+	for pkg in "${packages[@]}"; do
+		debug "+ python3 -m pip install -U ${NON_INTERACTIVE:+--no-input }$pkg"
+		if [ "$NON_INTERACTIVE" -eq 1 ]; then
+			python3 -m pip install -U --no-input "$pkg" &
+		else
+			python3 -m pip install -U "$pkg" &
+		fi
+		pids+=("$!")
+		pid_pkgs+=("$pkg")
+
+		if [ "${#pids[@]}" -ge "$PARALLEL" ]; then
+			local pid="${pids[0]}"
+			local pid_pkg="${pid_pkgs[0]}"
+			if ! wait "$pid"; then
+				err "python: pip upgrade failed: $pid_pkg"
+				failed=1
+			fi
+			pids=("${pids[@]:1}")
+			pid_pkgs=("${pid_pkgs[@]:1}")
+		fi
+	done
+
+	local i
+	for i in "${!pids[@]}"; do
+		if ! wait "${pids[$i]}"; then
+			err "python: pip upgrade failed: ${pid_pkgs[$i]}"
+			failed=1
+		fi
+	done
+
+	if [ "$failed" -ne 0 ]; then
+		return 1
+	fi
+	return 0
+}
+
+module_mas() {
+	log "Mac App Store $(emoji "🛍️")"
+	ensure_cmd_or_skip mas mas || return $?
+
+	if [ "$DRY_RUN" -eq 1 ]; then
+		log "DRY RUN: mas upgrade"
+		return 0
+	fi
+
+	run mas upgrade || return 1
+	return 0
+}
+
+module_pipx() {
+	log "pipx $(emoji "🧰")"
+	ensure_cmd_or_skip pipx pipx || return $?
+
+	if [ "$DRY_RUN" -eq 1 ]; then
+		log "DRY RUN: pipx upgrade-all"
+		return 0
+	fi
+
+	run pipx upgrade-all || return 1
+	return 0
+}
+
+module_rustup() {
+	log "Rust $(emoji "🦀")"
+	ensure_cmd_or_skip rustup rustup || return $?
+
+	if [ "$DRY_RUN" -eq 1 ]; then
+		log "DRY RUN: rustup update"
+		return 0
+	fi
+
+	run rustup update || return 1
+	return 0
+}
+
+module_claude() {
+	log "Claude Code $(emoji "🤖")"
+	ensure_cmd_or_skip claude claude || return $?
+
+	if [ "$DRY_RUN" -eq 1 ]; then
+		log "DRY RUN: claude update"
+		return 0
+	fi
+
+	run claude update || return 1
+	return 0
+}
+
+module_macos() {
+	log "macOS updates $(emoji "🍏")"
+	ensure_cmd_or_skip softwareupdate macos || return $?
+
+	if [ "$DRY_RUN" -eq 1 ]; then
+		log "DRY RUN: softwareupdate -l"
+		return 0
+	fi
+
+	run softwareupdate -l || return 1
+	return 0
+}
+
+run_selected_modules() {
+	local m
+	for m in brew node python mas pipx rustup claude macos; do
+		if ! module_selected "$m"; then
+			continue
+		fi
+
+		debug "Running module: $m"
+		local rc=0
+		"module_${m}"
+		rc=$?
+
+		if [ "$rc" -eq 0 ]; then
+			continue
+		fi
+
+		# 2 means "skipped due to missing dependency"
+		if [ "$rc" -eq 2 ]; then
+			continue
+		fi
+
+		failures+=("$m")
+		if [ "$STRICT" -eq 1 ]; then
+			return 1
+		fi
+	done
+
+	if [ "${#failures[@]}" -gt 0 ]; then
+		return 1
+	fi
+	return 0
+}
+
+main() {
+	parse_args "$@"
+
+	if [ -n "$LOG_FILE" ]; then
+		mkdir -p "$(dirname "$LOG_FILE")" || die "Failed to create log dir"
+		exec > >(tee -a "$LOG_FILE") 2>&1
+	fi
+
+	require_macos
+
+	log "Starting updates..."
+	local start end
+	start="$(date +%s)"
+
+	if run_selected_modules; then
+		end="$(date +%s)"
+		log "Done in $((end - start))s. $(emoji "🎉")"
+		return 0
+	fi
+
+	end="$(date +%s)"
+	err "Completed in $((end - start))s with failures: ${failures[*]}"
+	return 1
+}
+
+main "$@"
