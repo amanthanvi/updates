@@ -63,10 +63,12 @@ jobs:
           ARCHIVE="updates-${TAG}.tar.gz"
 
           mkdir -p dist
+          cp updates "dist/updates"
+          chmod +x "dist/updates"
           tar -czf "dist/${ARCHIVE}" \
             updates README.md LICENSE CHANGELOG.md CONTRIBUTING.md CODE_OF_CONDUCT.md SECURITY.md
 
-          sha256sum "dist/${ARCHIVE}" > dist/SHA256SUMS
+          sha256sum dist/* > dist/SHA256SUMS
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -74,4 +76,3 @@ jobs:
           files: |
             dist/*
           generate_release_notes: true
-
