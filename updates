@@ -1,0 +1,58 @@
+#!/bin/bash
+
+# Custom scripts for updating system packages and all commonly used applications
+echo "Starting system update..."
+
+# Update and upgrade system packages -- macOS with Homebrew
+# Combines formulae and casks in single upgrade command (faster than separate calls)
+echo "Updating Homebrew packages and casks... 🍺"
+brew update && brew upgrade --greedy
+echo "Homebrew packages updated."
+echo "Cleaning up Homebrew..."
+brew cleanup
+echo "Homebrew cleanup completed."
+
+# Check for outdated npm packages globally using ncu
+echo "Checking for outdated npm packages... 📦"
+ncu_output=$(ncu -g --jsonUpgraded 2>&1)
+
+# Check if there are any upgrades (JSON output will be {} if none)
+if echo "$ncu_output" | grep -q "All global packages are up-to-date" || [ "$ncu_output" = "{}" ]; then
+	echo "All global npm packages are up-to-date. ✅"
+else
+	echo "Outdated packages found:"
+	# Display human-readable from cached JSON instead of running ncu again
+	echo "$ncu_output" | python3 -c "import sys, json; data = json.load(sys.stdin); [print(f'  {k}: {v}') for k,v in data.items()]" 2>/dev/null
+	echo "Updating outdated npm packages... 📦"
+	# ncu cannot upgrade global packages directly - must use npm install
+	packages=$(echo "$ncu_output" | python3 -c "import sys, json; data = json.load(sys.stdin); print(' '.join([f'{k}@{v}' for k,v in data.items()]))" 2>/dev/null)
+	if [ -n "$packages" ]; then
+		npm install -g $packages
+		echo "npm packages updated."
+	fi
+fi
+
+# Update and upgrade Python packages globally using pip
+echo "Checking for outdated Python packages... 🐍"
+outdated_pip=$(pip3 list --outdated --format=json 2>/dev/null)
+if [ "$outdated_pip" = "[]" ] || [ -z "$outdated_pip" ]; then
+	echo "All Python packages are up-to-date. ✅"
+else
+	echo "Updating outdated Python packages..."
+	# Use xargs -P for parallel installs (much faster)
+	echo "$outdated_pip" | python3 -c "import sys, json; print('\n'.join([p['name'] for p in json.load(sys.stdin)]))" | xargs -n1 -P4 pip3 install -U 2>/dev/null
+	echo "Python packages updated."
+fi
+
+# Update standalone applications
+# Claude Code CLI
+echo "Updating Claude Code CLI... 🤖"
+claude update
+echo "Claude Code CLI updated."
+
+# Check for macOS software updates
+echo "Checking for macOS software updates... 🍏"
+# If there are updates, we make user aware but do not install automatically
+softwareupdate -l
+echo "macOS software update check completed."
+echo "System update process completed. 🎉"
