@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate tag matches script version
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          SCRIPT_VERSION="$(sed -n 's/^UPDATES_VERSION=\"\\(.*\\)\"/\\1/p' updates | head -n 1)"
+
+          if [ -z "$SCRIPT_VERSION" ]; then
+            echo "Failed to detect UPDATES_VERSION in updates" >&2
+            exit 1
+          fi
+
+          if [ "$SCRIPT_VERSION" != "$VERSION" ]; then
+            echo "Tag version ($VERSION) does not match UPDATES_VERSION ($SCRIPT_VERSION)" >&2
+            exit 1
+          fi
+
+          if ! grep -q "^## \\[$VERSION\\]" CHANGELOG.md; then
+            echo "CHANGELOG.md missing entry for version $VERSION" >&2
+            exit 1
+          fi
+
+      - name: Syntax check
+        run: bash -n updates
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Install shfmt
+        run: |
+          curl -fsSL https://github.com/mvdan/sh/releases/download/v3.12.0/shfmt_v3.12.0_linux_amd64 -o shfmt
+          echo "d9fbb2a9c33d13f47e7618cf362a914d029d02a6df124064fff04fd688a745ea  shfmt" | sha256sum -c -
+          chmod +x shfmt
+          sudo mv shfmt /usr/local/bin/shfmt
+
+      - name: Lint
+        run: ./scripts/lint.sh
+
+      - name: Tests
+        run: ./scripts/test.sh
+
+      - name: Build release artifacts
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          ARCHIVE="updates-${TAG}.tar.gz"
+
+          mkdir -p dist
+          tar -czf "dist/${ARCHIVE}" \
+            updates README.md LICENSE CHANGELOG.md CONTRIBUTING.md CODE_OF_CONDUCT.md SECURITY.md
+
+          sha256sum "dist/${ARCHIVE}" > dist/SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*
+          generate_release_notes: true
+
