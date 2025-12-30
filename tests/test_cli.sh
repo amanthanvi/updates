@@ -11,7 +11,8 @@ trap 'rm -rf "$tmp_dir"' EXIT
 stub_bin="${tmp_dir}/bin"
 mkdir -p "$stub_bin"
 
-export PATH="${stub_bin}:${PATH}"
+BASE_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH="${stub_bin}:${BASE_PATH}"
 
 write_stub() {
 	local name="$1"
@@ -30,12 +31,18 @@ CALL_LOG="${tmp_dir}/calls.log"
 export CALL_LOG
 
 write_stub uname 'echo Darwin'
+# shellcheck disable=SC2016
 write_stub brew 'echo "brew $*" >>"$CALL_LOG"'
 write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
+# shellcheck disable=SC2016
 write_stub npm 'echo "npm $*" >>"$CALL_LOG"'
+# shellcheck disable=SC2016
 write_stub pipx 'echo "pipx $*" >>"$CALL_LOG"'
+# shellcheck disable=SC2016
 write_stub rustup 'echo "rustup $*" >>"$CALL_LOG"'
+# shellcheck disable=SC2016
 write_stub claude 'echo "claude $*" >>"$CALL_LOG"'
+# shellcheck disable=SC2016
 write_stub softwareupdate 'echo "softwareupdate $*" >>"$CALL_LOG"'
 
 echo "Test: help works"

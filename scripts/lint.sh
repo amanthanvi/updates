@@ -5,6 +5,8 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 bash -n updates
+bash -n scripts/*.sh
+bash -n tests/*.sh
 
 if ! command -v shellcheck >/dev/null 2>&1; then
 	echo "shellcheck is required (try: brew install shellcheck)" >&2
@@ -16,6 +18,5 @@ if ! command -v shfmt >/dev/null 2>&1; then
 	exit 1
 fi
 
-shellcheck updates
-shfmt -d updates
-
+shellcheck updates scripts/*.sh tests/*.sh
+shfmt -d updates scripts/*.sh tests/*.sh
