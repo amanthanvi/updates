@@ -22,7 +22,7 @@ if [ -n "$(git status --porcelain=v1)" ]; then
 	exit 2
 fi
 
-SCRIPT_VERSION="$(sed -n 's/^UPDATES_VERSION=\"\\(.*\\)\"/\\1/p' updates | head -n 1)"
+SCRIPT_VERSION="$(awk -F'"' '/^UPDATES_VERSION=/{print $2; exit}' updates)"
 if [ "$SCRIPT_VERSION" != "$VERSION" ]; then
 	echo "UPDATES_VERSION (${SCRIPT_VERSION}) does not match requested version (${VERSION})" >&2
 	exit 2

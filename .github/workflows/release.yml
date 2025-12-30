@@ -20,7 +20,7 @@ jobs:
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"
-          SCRIPT_VERSION="$(sed -n 's/^UPDATES_VERSION=\"\\(.*\\)\"/\\1/p' updates | head -n 1)"
+          SCRIPT_VERSION="$(awk -F'\"' '/^UPDATES_VERSION=/{print $2; exit}' updates)"
 
           if [ -z "$SCRIPT_VERSION" ]; then
             echo "Failed to detect UPDATES_VERSION in updates" >&2
