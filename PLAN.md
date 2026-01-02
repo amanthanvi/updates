@@ -19,8 +19,8 @@ This is the execution plan for shipping `updates` **v0.4.0**. It is a living che
 
 ### 1) Docs + spec scaffolding
 
-- [ ] Update `SPEC.md` with macOS/Linux/WSL platform rules and a module/platform matrix.
-- [ ] Update `README.md` module list + examples for Linux + WSL.
+- [x] Update `SPEC.md` with macOS/Linux/WSL platform rules and a module/platform matrix.
+- [x] Update `README.md` module list + examples for Linux + WSL.
 
 ### 2) Platform support
 

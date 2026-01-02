@@ -122,6 +122,19 @@ Precedence rules:
 - Each module is a Bash function named `module_<name>()`.
 - Modules are run sequentially in a fixed order:
   `brew`, `linux`, `node`, `python`, `mas`, `pipx`, `rustup`, `claude`, `macos`.
+- Modules are command-driven; this matrix is informational:
+
+| Module   | macOS | Linux | WSL | Notes |
+|----------|:-----:|:-----:|:---:|-------|
+| `brew`   |  ✅   |  ✅   | ✅  | Requires `brew` (Homebrew can be installed on Linux) |
+| `linux`  |  ❌   |  ✅   | ✅  | Requires a supported Linux package manager + optional `sudo` |
+| `node`   |  ✅   |  ✅   | ✅  | Requires `ncu` + `npm` |
+| `python` |  ✅   |  ✅   | ✅  | Requires `python3 -m pip` |
+| `mas`    |  ✅   |  ❌   | ❌  | Requires `mas` |
+| `pipx`   |  ✅   |  ✅   | ✅  | Requires `pipx` |
+| `rustup` |  ✅   |  ✅   | ✅  | Requires `rustup` |
+| `claude` |  ✅   |  ✅   | ✅  | Requires `claude` |
+| `macos`  |  ✅   |  ❌   | ❌  | Requires `softwareupdate` |
 - Modules are **auto-detected**:
   - If the backing command is missing and the module is not explicitly required, the module is skipped.
   - If the module is selected via `--only`, missing dependencies become an error.

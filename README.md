@@ -31,6 +31,7 @@ sudo install -m 0755 ./updates /usr/local/bin/updates
 updates
 updates --dry-run
 updates --only brew,node
+updates --only linux --non-interactive
 updates --skip python --log-file ./updates.log
 ```
 
