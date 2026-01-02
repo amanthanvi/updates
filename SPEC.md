@@ -51,6 +51,8 @@ The CLI takes no positional arguments. Unknown options or unexpected arguments *
 - `0`: success (including cases where some modules were skipped due to missing dependencies)
 - `1`: one or more selected modules failed
 - `2`: usage / configuration error (unknown flag, missing flag value, invalid flag value, non-macOS without override, etc.)
+- `130`: interrupted (SIGINT)
+- `143`: terminated (SIGTERM)
 
 ### Output + logging
 
@@ -64,6 +66,14 @@ Output is intended to be stable and easy to grep.
 - Emoji is enabled by default; `--no-emoji` removes emoji from output (useful for tests/CI/log parsing).
 - `--log-file <path>` duplicates output to the given file by teeing **both stdout and stderr** and appending (`tee -a`).
   - The log directory is created if missing (`mkdir -p`).
+
+Standardized boundaries:
+
+- Each selected module prints boundary lines:
+  - `==> <module> START`
+  - `==> <module> END (<OK|SKIP|FAIL>) (<Ns>)`
+- After the run completes, a summary line is printed:
+  - `==> SUMMARY ok=<N> skip=<N> fail=<N> total=<Ns> [failures=<csv>]`
 
 ### Options
 

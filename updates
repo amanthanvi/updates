@@ -21,6 +21,8 @@ BREW_CLEANUP=1
 
 only_modules=()
 skip_modules=()
+successes=()
+skipped=()
 failures=()
 
 print() {
@@ -86,6 +88,17 @@ is_wsl() {
 	return 1
 }
 
+module_supported() {
+	# When UPDATES_ALLOW_NON_DARWIN=1 is set, allow command-driven modules to run
+	# on unknown platforms, but still treat OS-specific modules as unsupported.
+	case "$1" in
+	brew | node | python | pipx | rustup | claude) return 0 ;;
+	linux) is_linux ;;
+	mas | macos) is_macos ;;
+	*) return 1 ;;
+	esac
+}
+
 require_supported_platform() {
 	if is_macos || is_linux; then
 		return 0
@@ -95,6 +108,20 @@ require_supported_platform() {
 		return 0
 	fi
 	die "This script targets macOS and Linux. Set UPDATES_ALLOW_NON_DARWIN=1 to bypass."
+}
+
+validate_only_modules_supported() {
+	if [ "${#only_modules[@]}" -eq 0 ]; then
+		return 0
+	fi
+
+	local m
+	for m in "${only_modules[@]}"; do
+		if module_supported "$m"; then
+			continue
+		fi
+		die "$m: module is not supported on this platform"
+	done
 }
 
 run() {
@@ -157,7 +184,7 @@ usage() {
 	cat <<EOF
 ${SCRIPT_NAME} v${UPDATES_VERSION}
 
-Updates common tooling on macOS (Homebrew, npm globals, pip globals, etc.).
+Updates common tooling on macOS and Linux (Homebrew, npm globals, pip globals, etc.).
 
 Usage:
   ${SCRIPT_NAME} [options]
@@ -305,7 +332,7 @@ module_selected() {
 		return $?
 	fi
 
-	return 0
+	module_supported "$name"
 }
 
 module_dependency_missing() {
@@ -753,28 +780,46 @@ module_macos() {
 	return 0
 }
 
+csv_join() {
+	local IFS=,
+	print "$*"
+}
+
 run_selected_modules() {
+	successes=()
+	skipped=()
+	failures=()
+
 	local m
 	for m in brew linux node python mas pipx rustup claude macos; do
 		if ! module_selected "$m"; then
 			continue
 		fi
 
+		log "==> $m START"
+		local start="$SECONDS"
+
 		debug "Running module: $m"
 		local rc=0
 		"module_${m}"
 		rc=$?
+		local dur=$((SECONDS - start))
 
 		if [ "$rc" -eq 0 ]; then
+			successes+=("$m")
+			log "==> $m END (OK) (${dur}s)"
 			continue
 		fi
 
 		# 2 means "skipped due to missing dependency"
 		if [ "$rc" -eq 2 ]; then
+			skipped+=("$m")
+			log "==> $m END (SKIP) (${dur}s)"
 			continue
 		fi
 
 		failures+=("$m")
+		log "==> $m END (FAIL) (${dur}s)"
 		if [ "$STRICT" -eq 1 ]; then
 			return 1
 		fi
@@ -786,6 +831,13 @@ run_selected_modules() {
 	return 0
 }
 
+on_interrupt() {
+	local code="$1"
+	local sig="$2"
+	err "Interrupted ($sig)."
+	exit "$code"
+}
+
 main() {
 	parse_args "$@"
 
@@ -795,19 +847,29 @@ main() {
 	fi
 
 	require_supported_platform
+	validate_only_modules_supported
+
+	trap 'on_interrupt 130 SIGINT' INT
+	trap 'on_interrupt 143 SIGTERM' TERM
 
 	log "Starting updates..."
-	local start end
-	start="$(date +%s)"
+	SECONDS=0
 
+	local rc=0
 	if run_selected_modules; then
-		end="$(date +%s)"
-		log "Done in $((end - start))s. $(emoji "🎉")"
+		local total="${SECONDS}"
+		log "==> SUMMARY ok=${#successes[@]} skip=${#skipped[@]} fail=${#failures[@]} total=${total}s"
+		log "Done in ${total}s. $(emoji "🎉")"
 		return 0
 	fi
 
-	end="$(date +%s)"
-	err "Completed in $((end - start))s with failures: ${failures[*]}"
+	local total="${SECONDS}"
+	local summary="==> SUMMARY ok=${#successes[@]} skip=${#skipped[@]} fail=${#failures[@]} total=${total}s"
+	if [ "${#failures[@]}" -gt 0 ]; then
+		summary="${summary} failures=$(csv_join "${failures[@]}")"
+	fi
+	log "$summary"
+	err "Completed in ${total}s with failures: ${failures[*]}"
 	return 1
 }
 
