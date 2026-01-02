@@ -55,3 +55,53 @@ This is the execution plan for shipping `updates` **v0.4.0**. It is a living che
 - Linux module should **upgrade packages** (not just list them).
 - Homebrew can exist on Linux; `brew` module remains cross-platform (command-based).
 - PEP 668 default is **safe** (user-site upgrades); “break system packages” requires explicit opt-in.
+
+---
+
+# Plan: v0.5.0
+
+This is the execution plan for shipping `updates` **v0.5.0**. It focuses on clearer output, small performance improvements, and safety hardening without adding bloat.
+
+## Goals
+
+- Make output easier to scan: per-module boundaries, per-module statuses, and a concise end summary.
+- Preserve performance: reduce unnecessary subprocess usage and avoid extra network-y checks where safe.
+- Preserve security and safety: safer non-interactive behavior; clear failure reporting; no risky defaults.
+
+## Non-goals
+
+- Adding heavy output modes (no JSON output, no rich TUI).
+- Rewriting modules to wrap/parse tool output (brew/pip/etc. output remains the source).
+- Adding new runtime dependencies.
+
+## Execution checklist
+
+### 1) Spec-first: output contract
+
+- [ ] Update `SPEC.md` with standardized module boundaries and summary lines.
+- [ ] Document signal handling behavior (Ctrl-C) and exit codes.
+
+### 2) Implement output scaffolding + timings
+
+- [ ] Add a module runner wrapper that prints `START`/`END` lines with `OK/SKIP/FAIL` + duration.
+- [ ] Print a final summary (counts + failures) and preserve `--quiet` / `--verbose` behavior.
+- [ ] Switch timing to Bash `SECONDS` (avoid `date` subprocesses).
+
+### 3) Safety + perf hardening
+
+- [ ] Add SIGINT/SIGTERM handling with clean “interrupted” output and exit `130`.
+- [ ] Improve non-interactive Linux upgrades (`DEBIAN_FRONTEND=noninteractive` for `apt-get`).
+- [ ] Reduce pip overhead/noise where safe (e.g., disable pip version check).
+
+### 4) Tests + docs
+
+- [ ] Extend `tests/test_cli.sh` to assert module boundary/summary output (using stubs).
+- [ ] Update `README.md` with a short example of the new output.
+- [ ] Add `CHANGELOG.md` entries for 0.5.0 as changes land.
+
+### 5) Release
+
+- [ ] Bump `UPDATES_VERSION` to `0.5.0`.
+- [ ] Finalize `CHANGELOG.md` with `## [0.5.0] - YYYY-MM-DD`.
+- [ ] Run `./scripts/lint.sh` and `./scripts/test.sh`.
+- [ ] Tag and push `v0.5.0`.
