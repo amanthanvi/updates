@@ -146,8 +146,8 @@ Options:
       --version            Print version
       --list-modules       List available modules
       --dry-run            Print what would run; make no changes
-      --only <list>        Run only these modules (CSV or space-separated)
-      --skip <list>        Skip these modules (CSV or space-separated)
+      --only <list>        Run only these modules (CSV; or quote a space-separated list)
+      --skip <list>        Skip these modules (CSV; or quote a space-separated list)
       --strict             Stop on first failure
   -q, --quiet              Reduce output
   -v, --verbose            Print commands as they run

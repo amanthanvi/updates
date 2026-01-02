@@ -66,7 +66,7 @@ jobs:
           cp updates "dist/updates"
           chmod +x "dist/updates"
           tar -czf "dist/${ARCHIVE}" \
-            updates README.md LICENSE CHANGELOG.md CONTRIBUTING.md CODE_OF_CONDUCT.md SECURITY.md
+            updates README.md SPEC.md LICENSE CHANGELOG.md CONTRIBUTING.md CODE_OF_CONDUCT.md SECURITY.md
 
           sha256sum dist/* > dist/SHA256SUMS
 

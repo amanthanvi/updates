@@ -1,8 +1,23 @@
 # updates
 
-A Bash script I use to update my common macOS tooling (Homebrew, npm globals, pip globals, etc.).
+A small, modular Bash CLI to update common macOS tooling (Homebrew, global npm packages, global Python packages, etc.).
+
+This script can be disruptive (it updates global environments). Use `--dry-run` and scope with `--only` / `--skip`.
+
+## Spec
+
+See `SPEC.md` for the full CLI/module contract, exit codes, and release invariants.
 
 ## Install
+
+Using the Makefile:
+
+```bash
+make install
+# or: make install PREFIX=/opt/homebrew
+```
+
+Manual install:
 
 ```bash
 chmod +x ./updates
@@ -53,6 +68,7 @@ Install what you actually use:
 - `mas`: `brew install mas`
 - `pipx`: `brew install pipx`
 - `rustup`: from https://rustup.rs
+- `claude` (Claude Code CLI) for the `claude` module
 
 ## Development
 

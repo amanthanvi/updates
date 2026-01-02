@@ -2,6 +2,8 @@
 
 Thanks for considering a contribution!
 
+For the canonical CLI/module contract (flags, exit codes, module behavior), see `SPEC.md`.
+
 ## Quick start
 
 ```bash
@@ -13,6 +15,7 @@ Thanks for considering a contribution!
 
 - Keep changes small and focused.
 - Prefer adding new functionality as a new module function in `updates` (`module_<name>()`) instead of ad-hoc commands.
+- If you change user-visible behavior (flags, output, module semantics), update `SPEC.md` and `README.md` accordingly.
 - Modules should be:
   - auto-detected (skip if the backing command isn’t installed), and
   - runnable via `--only <module>` (where missing dependencies become an error).

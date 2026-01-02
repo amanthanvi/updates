@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `SPEC.md` as a centralized, living specification for the CLI/module contract.
+
+### Changed
+
+- Documentation now references `SPEC.md` as the source of truth for behavior.
+
 ## [0.3.0] - 2025-12-30
 
 ### Added
@@ -14,4 +22,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Modular CLI with `--only/--skip`, `--dry-run`, `--log-file`, and `--strict`.
 - Modules: `mas`, `pipx`, `rustup` (in addition to existing brew/npm/pip/claude/macos checks).
 - Lint + tests + CI workflow.
-
