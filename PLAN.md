@@ -78,26 +78,26 @@ This is the execution plan for shipping `updates` **v0.5.0**. It focuses on clea
 
 ### 1) Spec-first: output contract
 
-- [ ] Update `SPEC.md` with standardized module boundaries and summary lines.
-- [ ] Document signal handling behavior (Ctrl-C) and exit codes.
+- [x] Update `SPEC.md` with standardized module boundaries and summary lines.
+- [x] Document signal handling behavior (Ctrl-C) and exit codes.
 
 ### 2) Implement output scaffolding + timings
 
-- [ ] Add a module runner wrapper that prints `START`/`END` lines with `OK/SKIP/FAIL` + duration.
-- [ ] Print a final summary (counts + failures) and preserve `--quiet` / `--verbose` behavior.
-- [ ] Switch timing to Bash `SECONDS` (avoid `date` subprocesses).
+- [x] Add a module runner wrapper that prints `START`/`END` lines with `OK/SKIP/FAIL` + duration.
+- [x] Print a final summary (counts + failures) and preserve `--quiet` / `--verbose` behavior.
+- [x] Switch timing to Bash `SECONDS` (avoid `date` subprocesses).
 
 ### 3) Safety + perf hardening
 
-- [ ] Add SIGINT/SIGTERM handling with clean “interrupted” output and exit `130`.
-- [ ] Improve non-interactive Linux upgrades (`DEBIAN_FRONTEND=noninteractive` for `apt-get`).
-- [ ] Reduce pip overhead/noise where safe (e.g., disable pip version check).
+- [x] Add SIGINT/SIGTERM handling with clean “interrupted” output and exit `130`.
+- [x] Improve non-interactive Linux upgrades (`DEBIAN_FRONTEND=noninteractive` for `apt-get`).
+- [x] Reduce pip overhead/noise where safe (e.g., disable pip version check).
 
 ### 4) Tests + docs
 
-- [ ] Extend `tests/test_cli.sh` to assert module boundary/summary output (using stubs).
-- [ ] Update `README.md` with a short example of the new output.
-- [ ] Add `CHANGELOG.md` entries for 0.5.0 as changes land.
+- [x] Extend `tests/test_cli.sh` to assert module boundary/summary output (using stubs).
+- [x] Update `README.md` with a short example of the new output.
+- [x] Add `CHANGELOG.md` entries for 0.5.0 as changes land.
 
 ### 5) Release
 

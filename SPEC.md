@@ -114,6 +114,7 @@ Module lists are parsed from a **single argument**:
 - Whitespace inside the argument is supported, but must be quoted: `--only "brew node"`
 
 If `--only`/`--skip` includes an unknown module, the CLI **MUST** exit with code `2`.
+If `--only` includes a module that is not supported on the current platform, the CLI **MUST** exit with code `2`.
 
 Precedence rules:
 

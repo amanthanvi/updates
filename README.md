@@ -35,6 +35,17 @@ updates --only linux --non-interactive
 updates --skip python --log-file ./updates.log
 ```
 
+Example output (trimmed):
+
+```text
+Starting updates...
+==> brew START
+Homebrew 🍺
+==> brew END (OK) (12s)
+==> SUMMARY ok=1 skip=0 fail=0 total=12s
+Done in 12s. 🎉
+```
+
 List available modules:
 
 ```bash

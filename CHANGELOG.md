@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Standardized per-module boundary lines (`==> <module> START/END`) and a summary line.
+- SIGINT/SIGTERM handling with explicit exit codes.
+
+### Changed
+
+- Linux `apt-get` non-interactive upgrades set `DEBIAN_FRONTEND=noninteractive`.
+- Python `pip` calls disable the version check to reduce overhead/noise.
+- `--only` now validates that selected modules are supported on the current platform.
+
 ## [0.4.0] - 2026-01-02
 
 ### Added
