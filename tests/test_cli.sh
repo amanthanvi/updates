@@ -60,9 +60,19 @@ if echo "$out" | grep -q 'npm globals'; then
 	echo "Expected node module to be skipped" >&2
 	exit 1
 fi
+echo "$out" | grep -q '^==> brew START$'
+if echo "$out" | grep -q '^==> node START$'; then
+	echo "Expected node module to not start" >&2
+	exit 1
+fi
 
 echo "Test: selected modules run in non-dry-run mode"
-UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --only brew,node --no-emoji >/dev/null
+out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --only brew,node --no-emoji)"
+echo "$out" | grep -q '^==> brew START$'
+echo "$out" | grep -q '^==> brew END (OK)'
+echo "$out" | grep -q '^==> node START$'
+echo "$out" | grep -q '^==> node END (OK)'
+echo "$out" | grep -q '^==> SUMMARY ok=2 skip=0 fail=0 total='
 grep -q '^brew update$' "$CALL_LOG"
 grep -q '^npm install -g -- npm@11.7.0$' "$CALL_LOG"
 
