@@ -36,11 +36,11 @@ This is the execution plan for shipping `updates` **v0.4.0**. It is a living che
 
 ### 4) Linux system package upgrades (minimal)
 
-- [ ] Add a Linux module (name: `linux`) that auto-detects one of:
+- [x] Add a Linux module (name: `linux`) that auto-detects one of:
   - `apt-get`, `dnf`, `yum`, `pacman`, `zypper`, `apk`
-- [ ] Implement update + upgrade flow per package manager.
-- [ ] Use `sudo` when needed; honor `--non-interactive` and `--dry-run`.
-- [ ] Add tests for module selection + command invocation.
+- [x] Implement update + upgrade flow per package manager.
+- [x] Use `sudo` when needed; honor `--non-interactive` and `--dry-run`.
+- [x] Add tests for module selection + command invocation.
 
 ### 5) Release prep
 

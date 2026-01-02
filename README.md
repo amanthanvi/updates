@@ -51,6 +51,7 @@ updates --help
 Modules are auto-detected: if the underlying command isn’t installed, the module is skipped (unless you used `--only`, in which case it’s an error).
 
 - `brew`: update/upgrade Homebrew formulae + casks
+- `linux`: upgrade Linux system packages (auto-detects `apt-get`/`dnf`/`yum`/`pacman`/`zypper`/`apk`)
 - `node`: upgrade global npm packages via `ncu` + `npm`
 - `python`: upgrade global Python packages via `python3 -m pip`
 - `mas`: upgrade Mac App Store apps via `mas`
@@ -69,6 +70,7 @@ Install what you actually use:
 - `pipx`: `brew install pipx`
 - `rustup`: from https://rustup.rs
 - `claude` (Claude Code CLI) for the `claude` module
+- On Linux: a supported system package manager (`apt-get`, `dnf`, `yum`, `pacman`, `zypper`, or `apk`) and `sudo` (if not running as root)
 
 ## Development
 

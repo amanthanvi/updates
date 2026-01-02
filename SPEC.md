@@ -121,7 +121,7 @@ Precedence rules:
 
 - Each module is a Bash function named `module_<name>()`.
 - Modules are run sequentially in a fixed order:
-  `brew`, `node`, `python`, `mas`, `pipx`, `rustup`, `claude`, `macos`.
+  `brew`, `linux`, `node`, `python`, `mas`, `pipx`, `rustup`, `claude`, `macos`.
 - Modules are **auto-detected**:
   - If the backing command is missing and the module is not explicitly required, the module is skipped.
   - If the module is selected via `--only`, missing dependencies become an error.
@@ -158,6 +158,24 @@ Purpose: update and upgrade Homebrew formulae/casks.
   - optionally `brew cleanup` (controlled by `--[no-]brew-cleanup`)
 - Side effects:
   - Upgrades Homebrew-managed packages and (optionally) cleans up old versions.
+
+### `linux`
+
+Purpose: upgrade Linux system packages using the host distro package manager.
+
+- Runs only on Linux (including WSL).
+- Requires:
+  - One of: `apt-get`, `dnf`, `yum`, `pacman`, `zypper`, `apk`
+  - If not running as root: `sudo` (uses `sudo -n` when `--non-interactive` is set)
+- Non-dry-run commands (auto-detected):
+  - `apt-get`: `apt-get update`, `apt-get upgrade [-y]`
+  - `dnf`: `dnf upgrade [-y]`
+  - `yum`: `yum update [-y]`
+  - `pacman`: `pacman -Syu [--noconfirm]`
+  - `zypper`: `zypper refresh [--non-interactive]`, `zypper update [--non-interactive]`
+  - `apk`: `apk update`, `apk upgrade`
+- Side effects:
+  - Upgrades OS-managed packages and may require elevated privileges.
 
 ### `node`
 

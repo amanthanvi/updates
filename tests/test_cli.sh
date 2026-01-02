@@ -51,6 +51,7 @@ echo "Test: help works"
 echo "Test: list-modules works"
 out="$("$SCRIPT" --list-modules)"
 echo "$out" | grep -q '^brew'
+echo "$out" | grep -q '^linux'
 
 echo "Test: --skip overrides --only"
 out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only brew,node --skip node --verbose)"
@@ -123,5 +124,19 @@ echo "Test: python break-system-packages opt-in"
 "$SCRIPT" --only python --python-break-system-packages --no-emoji >/dev/null
 grep -q '^python3 -m pip list --outdated --format=json$' "$CALL_LOG"
 grep -q '^python3 -m pip install -U --break-system-packages pillow$' "$CALL_LOG"
+
+echo "Test: linux module (apt-get) runs in non-interactive mode"
+write_stub uname 'echo Linux'
+# shellcheck disable=SC2016
+write_stub sudo 'echo "sudo $*" >>"$CALL_LOG"; if [ "${1:-}" = "-n" ]; then shift; fi; "$@"'
+# shellcheck disable=SC2016
+write_stub apt-get 'echo "apt-get $*" >>"$CALL_LOG"'
+
+: >"$CALL_LOG"
+"$SCRIPT" --only linux --non-interactive --no-emoji >/dev/null
+grep -q '^sudo -n apt-get update$' "$CALL_LOG"
+grep -q '^sudo -n apt-get upgrade -y$' "$CALL_LOG"
+grep -q '^apt-get update$' "$CALL_LOG"
+grep -q '^apt-get upgrade -y$' "$CALL_LOG"
 
 echo "All tests passed."
