@@ -104,4 +104,4 @@ This is the execution plan for shipping `updates` **v0.5.0**. It focuses on clea
 - [x] Bump `UPDATES_VERSION` to `0.5.0`.
 - [x] Finalize `CHANGELOG.md` with `## [0.5.0] - YYYY-MM-DD`.
 - [x] Run `./scripts/lint.sh` and `./scripts/test.sh`.
-- [ ] Tag and push `v0.5.0`.
+- [x] Tag and push `v0.5.0`.
