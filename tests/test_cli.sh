@@ -89,15 +89,18 @@ if [ "${1:-}" = "-c" ]; then
 	exit 0
 fi
 
-if [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
-	shift 2
-	if [ "${1:-}" = "--version" ]; then
-		echo "pip 25.0 from /dev/null (python 3.12)"
-		exit 0
-	fi
-	cmd="${1:-}"
-	shift || true
-	case "$cmd" in
+	if [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
+		shift 2
+		if [ "${1:-}" = "--version" ]; then
+			echo "pip 25.0 from /dev/null (python 3.12)"
+			exit 0
+		fi
+		if [ "${1:-}" = "--disable-pip-version-check" ]; then
+			shift
+		fi
+		cmd="${1:-}"
+		shift || true
+		case "$cmd" in
 	list)
 		echo "python3 -m pip list $*" >>"$CALL_LOG"
 		echo "[{\"name\":\"pillow\"}]"
@@ -134,8 +137,8 @@ write_stub apt-get 'echo "apt-get $*" >>"$CALL_LOG"'
 
 : >"$CALL_LOG"
 "$SCRIPT" --only linux --non-interactive --no-emoji >/dev/null
-grep -q '^sudo -n apt-get update$' "$CALL_LOG"
-grep -q '^sudo -n apt-get upgrade -y$' "$CALL_LOG"
+grep -q '^sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update$' "$CALL_LOG"
+grep -q '^sudo -n env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y$' "$CALL_LOG"
 grep -q '^apt-get update$' "$CALL_LOG"
 grep -q '^apt-get upgrade -y$' "$CALL_LOG"
 

@@ -461,8 +461,13 @@ module_linux() {
 
 	case "$pm" in
 	apt-get)
-		local -a update_cmd=("${sudo_prefix[@]}" apt-get update)
-		local -a upgrade_cmd=("${sudo_prefix[@]}" apt-get upgrade)
+		local -a env_prefix=()
+		if [ "$NON_INTERACTIVE" -eq 1 ]; then
+			env_prefix=(env DEBIAN_FRONTEND=noninteractive)
+		fi
+
+		local -a update_cmd=("${sudo_prefix[@]}" "${env_prefix[@]}" apt-get update)
+		local -a upgrade_cmd=("${sudo_prefix[@]}" "${env_prefix[@]}" apt-get upgrade)
 		if [ "$NON_INTERACTIVE" -eq 1 ]; then
 			upgrade_cmd+=(-y)
 		fi
@@ -626,8 +631,8 @@ module_python() {
 		log "python: use --python-break-system-packages to override (dangerous)."
 	fi
 
-	local -a pip_list_args=(python3 -m pip list --outdated --format=json)
-	local -a pip_install_args=(python3 -m pip install -U)
+	local -a pip_list_args=(python3 -m pip --disable-pip-version-check list --outdated --format=json)
+	local -a pip_install_args=(python3 -m pip --disable-pip-version-check install -U)
 	if [ "$NON_INTERACTIVE" -eq 1 ]; then
 		pip_install_args+=(--no-input)
 	fi
