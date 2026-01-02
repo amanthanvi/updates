@@ -82,6 +82,7 @@ Install what you actually use:
 - This script updates *global* environments (`npm -g`, `pip`), which can be disruptive.
 - Use `--dry-run` first, and consider `--only`/`--skip` to control scope.
 - On WSL, updates apply to the Linux distro (not Windows itself).
+- If Python is externally-managed (PEP 668), `updates` upgrades user-site packages by default; use `--python-break-system-packages` to override (dangerous).
 
 ## Contributing
 

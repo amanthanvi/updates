@@ -89,6 +89,7 @@ Misc:
 - `--log-file <path>`: append all output to a log file.
 - `--non-interactive`: avoid interactive prompts when possible (currently affects Python `pip` upgrades only).
 - `--parallel <N>`: parallelism for Python package upgrades (default `4`, minimum `1`).
+- `--python-break-system-packages`: pass `--break-system-packages` to `pip` (unsafe; for PEP 668 environments).
 
 Homebrew flags:
 
@@ -178,13 +179,17 @@ Purpose: upgrade global Python packages with `pip`.
 
 - Requires: `python3` (and a working `pip` module under it)
 - Non-dry-run behavior:
-  - Detect outdated packages: `python3 -m pip list --outdated --format=json`
+  - Detect outdated packages:
+    - default: `python3 -m pip list --outdated --format=json`
+    - if the environment is externally-managed (PEP 668): `python3 -m pip list --outdated --format=json --user`
   - Upgrade each package:
     - `python3 -m pip install -U <pkg>`
     - With `--non-interactive`: `python3 -m pip install -U --no-input <pkg>`
+    - With PEP 668 safe mode: add `--user`
+    - With `--python-break-system-packages`: add `--break-system-packages`
   - Upgrades run in parallel batches of `--parallel <N>`.
 - Side effects:
-  - Upgrades globally-installed Python packages.
+  - Upgrades Python packages for the selected install scope (`--user` for PEP 668 safe mode; otherwise environment-wide).
 
 ### `mas`
 

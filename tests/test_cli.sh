@@ -75,4 +75,53 @@ if [ "$rc" -eq 0 ]; then
 	exit 1
 fi
 
+echo "Test: python uses --user in externally-managed env"
+# shellcheck disable=SC2016
+write_stub python3 '
+if [ "${1:-}" = "-c" ]; then
+	code="${2:-}"
+	if echo "$code" | grep -q "EXTERNALLY-MANAGED"; then
+		echo "1"
+		exit 0
+	fi
+	echo "pillow"
+	exit 0
+fi
+
+if [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
+	shift 2
+	if [ "${1:-}" = "--version" ]; then
+		echo "pip 25.0 from /dev/null (python 3.12)"
+		exit 0
+	fi
+	cmd="${1:-}"
+	shift || true
+	case "$cmd" in
+	list)
+		echo "python3 -m pip list $*" >>"$CALL_LOG"
+		echo "[{\"name\":\"pillow\"}]"
+		exit 0
+		;;
+	install)
+		echo "python3 -m pip install $*" >>"$CALL_LOG"
+		exit 0
+		;;
+	esac
+fi
+
+echo "python3 stub: unexpected args: $*" >&2
+exit 1
+'
+
+: >"$CALL_LOG"
+"$SCRIPT" --only python --no-emoji >/dev/null
+grep -q '^python3 -m pip list --outdated --format=json --user$' "$CALL_LOG"
+grep -q '^python3 -m pip install -U --user pillow$' "$CALL_LOG"
+
+echo "Test: python break-system-packages opt-in"
+: >"$CALL_LOG"
+"$SCRIPT" --only python --python-break-system-packages --no-emoji >/dev/null
+grep -q '^python3 -m pip list --outdated --format=json$' "$CALL_LOG"
+grep -q '^python3 -m pip install -U --break-system-packages pillow$' "$CALL_LOG"
+
 echo "All tests passed."

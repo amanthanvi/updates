@@ -29,10 +29,10 @@ This is the execution plan for shipping `updates` **v0.4.0**. It is a living che
 
 ### 3) Python hardening (PEP 668)
 
-- [ ] Detect externally-managed Python environments.
-- [ ] Default to `pip install --user` upgrades when externally-managed.
-- [ ] Add an explicit opt-in flag to use `--break-system-packages`.
-- [ ] Add/adjust tests to cover the new behavior.
+- [x] Detect externally-managed Python environments.
+- [x] Default to `pip install --user` upgrades when externally-managed.
+- [x] Add an explicit opt-in flag to use `--break-system-packages`.
+- [x] Add/adjust tests to cover the new behavior.
 
 ### 4) Linux system package upgrades (minimal)
 
