@@ -128,4 +128,4 @@ This is the execution plan for shipping `updates` **v0.5.1**. It adds optional, 
 - [x] Colorize boundary lines and `WARN:`/`ERROR:` prefixes when output is a TTY.
 - [x] Update `SPEC.md`, `README.md`, and `CHANGELOG.md`.
 - [x] Run `./scripts/lint.sh` and `./scripts/test.sh`.
-- [ ] Tag `v0.5.1` and push `main` + tags.
+- [x] Tag `v0.5.1` and push `main` + tags.
