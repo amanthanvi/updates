@@ -44,10 +44,10 @@ This is the execution plan for shipping `updates` **v0.4.0**. It is a living che
 
 ### 5) Release prep
 
-- [ ] Update `updates --help` and `SPEC.md` for any new flags/modules.
-- [ ] Update `CHANGELOG.md` with a `0.4.0` entry (move items out of `[Unreleased]`).
-- [ ] Bump `UPDATES_VERSION` to `0.4.0`.
-- [ ] Run `./scripts/lint.sh` and `./scripts/test.sh`.
+- [x] Update `updates --help` and `SPEC.md` for any new flags/modules.
+- [x] Update `CHANGELOG.md` with a `0.4.0` entry (move items out of `[Unreleased]`).
+- [x] Bump `UPDATES_VERSION` to `0.4.0`.
+- [x] Run `./scripts/lint.sh` and `./scripts/test.sh`.
 - [ ] Tag `v0.4.0` and push `main` + tags.
 
 ## Notes / decisions

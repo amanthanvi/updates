@@ -7,13 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-01-02
+
 ### Added
 
 - `SPEC.md` as a centralized, living specification for the CLI/module contract.
+- `PLAN.md` as the execution checklist for this release.
+- Linux support (including WSL detection).
+- `linux` module to upgrade system packages via an auto-detected package manager.
+- `--python-break-system-packages` flag to opt into unsafe PEP 668 overrides.
 
 ### Changed
 
-- Documentation now references `SPEC.md` as the source of truth for behavior.
+- `updates` now supports macOS and Linux (no longer macOS-only).
+- Python upgrades default to user-site packages when PEP 668 externally-managed is detected.
 
 ## [0.3.0] - 2025-12-30
 
