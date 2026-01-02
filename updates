@@ -11,6 +11,7 @@ STRICT=0
 QUIET=0
 VERBOSE=0
 NO_EMOJI=0
+NO_COLOR_OUTPUT=0
 NON_INTERACTIVE=0
 PYTHON_BREAK_SYSTEM_PACKAGES=0
 LOG_FILE=""
@@ -24,6 +25,16 @@ skip_modules=()
 successes=()
 skipped=()
 failures=()
+
+COLOR_STDOUT=0
+COLOR_STDERR=0
+C_RESET=""
+C_BOLD=""
+C_DIM=""
+C_RED=""
+C_GREEN=""
+C_YELLOW=""
+C_BLUE=""
 
 print() {
 	printf '%s\n' "$*"
@@ -41,12 +52,55 @@ debug() {
 	fi
 }
 
+init_colors() {
+	COLOR_STDOUT=0
+	COLOR_STDERR=0
+	C_RESET=""
+	C_BOLD=""
+	C_DIM=""
+	C_RED=""
+	C_GREEN=""
+	C_YELLOW=""
+	C_BLUE=""
+
+	if [ "$NO_COLOR_OUTPUT" -eq 1 ] || [ -n "${NO_COLOR:-}" ] || [ "${TERM:-}" = "dumb" ]; then
+		return 0
+	fi
+
+	if [ -t 1 ]; then
+		COLOR_STDOUT=1
+	fi
+	if [ -t 2 ]; then
+		COLOR_STDERR=1
+	fi
+
+	if [ "$COLOR_STDOUT" -eq 0 ] && [ "$COLOR_STDERR" -eq 0 ]; then
+		return 0
+	fi
+
+	C_RESET=$'\033[0m'
+	C_BOLD=$'\033[1m'
+	C_DIM=$'\033[2m'
+	C_RED=$'\033[31m'
+	C_GREEN=$'\033[32m'
+	C_YELLOW=$'\033[33m'
+	C_BLUE=$'\033[34m'
+}
+
 warn() {
-	print "WARN: $*" >&2
+	if [ "$COLOR_STDERR" -eq 1 ]; then
+		print "${C_YELLOW}WARN:${C_RESET} $*" >&2
+	else
+		print "WARN: $*" >&2
+	fi
 }
 
 err() {
-	print "ERROR: $*" >&2
+	if [ "$COLOR_STDERR" -eq 1 ]; then
+		print "${C_RED}ERROR:${C_RESET} $*" >&2
+	else
+		print "ERROR: $*" >&2
+	fi
 }
 
 die() {
@@ -59,6 +113,66 @@ emoji() {
 		return 0
 	fi
 	printf '%s' "$1"
+}
+
+format_boundary_start() {
+	local module="$1"
+	if [ "$COLOR_STDOUT" -eq 1 ]; then
+		printf '%s %s START' "${C_BLUE}${C_BOLD}==>${C_RESET}" "${C_BOLD}${module}${C_RESET}"
+		return 0
+	fi
+	printf '==> %s START' "$module"
+}
+
+format_boundary_end() {
+	local module="$1"
+	local status="$2"
+	local dur="$3"
+
+	if [ "$COLOR_STDOUT" -ne 1 ]; then
+		printf '==> %s END (%s) (%ss)' "$module" "$status" "$dur"
+		return 0
+	fi
+
+	local status_color=""
+	case "$status" in
+	OK) status_color="$C_GREEN" ;;
+	SKIP) status_color="$C_YELLOW" ;;
+	FAIL) status_color="$C_RED" ;;
+	esac
+
+	printf '%s %s END (%s%s%s) %s(%ss)%s' \
+		"${C_BLUE}${C_BOLD}==>${C_RESET}" \
+		"${C_BOLD}${module}${C_RESET}" \
+		"$status_color" "$status" "$C_RESET" \
+		"$C_DIM" "$dur" "$C_RESET"
+}
+
+format_summary() {
+	local ok="$1"
+	local skip="$2"
+	local fail="$3"
+	local total="$4"
+	local failures_csv="${5:-}"
+
+	if [ "$COLOR_STDOUT" -ne 1 ]; then
+		local line="==> SUMMARY ok=${ok} skip=${skip} fail=${fail} total=${total}s"
+		if [ -n "$failures_csv" ]; then
+			line="${line} failures=${failures_csv}"
+		fi
+		printf '%s' "$line"
+		return 0
+	fi
+
+	local line="${C_BLUE}${C_BOLD}==>${C_RESET} ${C_BOLD}SUMMARY${C_RESET}"
+	line="${line} ${C_GREEN}ok=${ok}${C_RESET}"
+	line="${line} ${C_YELLOW}skip=${skip}${C_RESET}"
+	line="${line} ${C_RED}fail=${fail}${C_RESET}"
+	line="${line} ${C_DIM}total=${total}s${C_RESET}"
+	if [ -n "$failures_csv" ]; then
+		line="${line} ${C_RED}failures=${failures_csv}${C_RESET}"
+	fi
+	printf '%s' "$line"
 }
 
 cmd_exists() {
@@ -200,6 +314,7 @@ Options:
   -q, --quiet              Reduce output
   -v, --verbose            Print commands as they run
       --no-emoji           Disable emoji in output
+      --no-color           Disable ANSI colors in output
       --log-file <path>    Tee output to a log file
       --non-interactive    Avoid interactive prompts when possible
       --parallel <N>       Parallelism for pip upgrades (default: ${PARALLEL})
@@ -246,6 +361,9 @@ parse_args() {
 			;;
 		--no-emoji)
 			NO_EMOJI=1
+			;;
+		--no-color)
+			NO_COLOR_OUTPUT=1
 			;;
 		--non-interactive)
 			NON_INTERACTIVE=1
@@ -801,7 +919,7 @@ run_selected_modules() {
 			continue
 		fi
 
-		log "==> $m START"
+		log "$(format_boundary_start "$m")"
 		local start="$SECONDS"
 
 		debug "Running module: $m"
@@ -812,19 +930,19 @@ run_selected_modules() {
 
 		if [ "$rc" -eq 0 ]; then
 			successes+=("$m")
-			log "==> $m END (OK) (${dur}s)"
+			log "$(format_boundary_end "$m" OK "$dur")"
 			continue
 		fi
 
 		# 2 means "skipped due to missing dependency"
 		if [ "$rc" -eq 2 ]; then
 			skipped+=("$m")
-			log "==> $m END (SKIP) (${dur}s)"
+			log "$(format_boundary_end "$m" SKIP "$dur")"
 			continue
 		fi
 
 		failures+=("$m")
-		log "==> $m END (FAIL) (${dur}s)"
+		log "$(format_boundary_end "$m" FAIL "$dur")"
 		if [ "$STRICT" -eq 1 ]; then
 			return 1
 		fi
@@ -851,6 +969,8 @@ main() {
 		exec > >(tee -a "$LOG_FILE") 2>&1
 	fi
 
+	init_colors
+
 	require_supported_platform
 	validate_only_modules_supported
 
@@ -863,17 +983,17 @@ main() {
 	local rc=0
 	if run_selected_modules; then
 		local total="${SECONDS}"
-		log "==> SUMMARY ok=${#successes[@]} skip=${#skipped[@]} fail=${#failures[@]} total=${total}s"
+		log "$(format_summary "${#successes[@]}" "${#skipped[@]}" "${#failures[@]}" "$total")"
 		log "Done in ${total}s. $(emoji "🎉")"
 		return 0
 	fi
 
 	local total="${SECONDS}"
-	local summary="==> SUMMARY ok=${#successes[@]} skip=${#skipped[@]} fail=${#failures[@]} total=${total}s"
+	local failures_csv=""
 	if [ "${#failures[@]}" -gt 0 ]; then
-		summary="${summary} failures=$(csv_join "${failures[@]}")"
+		failures_csv="$(csv_join "${failures[@]}")"
 	fi
-	log "$summary"
+	log "$(format_summary "${#successes[@]}" "${#skipped[@]}" "${#failures[@]}" "$total" "$failures_csv")"
 	err "Completed in ${total}s with failures: ${failures[*]}"
 	return 1
 }
