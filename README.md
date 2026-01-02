@@ -96,6 +96,7 @@ Install what you actually use:
 - This script updates *global* environments (`npm -g`, `pip`), which can be disruptive.
 - Use `--dry-run` first, and consider `--only`/`--skip` to control scope.
 - On WSL, updates apply to the Linux distro (not Windows itself).
+- Output uses ANSI colors when run in a TTY; disable with `--no-color` or `NO_COLOR=1`. When `--log-file` is used, colors are disabled to keep logs clean.
 - If Python is externally-managed (PEP 668), `updates` upgrades user-site packages by default; use `--python-break-system-packages` to override (dangerous).
 
 ## Contributing

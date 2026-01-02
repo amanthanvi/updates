@@ -64,6 +64,7 @@ Output is intended to be stable and easy to grep.
   - `ERROR: ...`
 - `--quiet` suppresses *normal* output, but **MUST NOT** suppress `WARN:`/`ERROR:` messages.
 - Emoji is enabled by default; `--no-emoji` removes emoji from output (useful for tests/CI/log parsing).
+- ANSI colors are enabled automatically when output is a TTY; set `NO_COLOR=1` or pass `--no-color` to disable. When `--log-file` is used, colors are disabled to keep logs clean.
 - `--log-file <path>` duplicates output to the given file by teeing **both stdout and stderr** and appending (`tee -a`).
   - The log directory is created if missing (`mkdir -p`).
 
@@ -93,6 +94,7 @@ Output verbosity:
 - `-q`, `--quiet`: reduce output (warnings/errors still print).
 - `-v`, `--verbose`: print extra debug lines (including commands, prefixed with `+`).
 - `--no-emoji`: disable emoji.
+- `--no-color`: disable ANSI colors.
 
 Misc:
 
@@ -125,6 +127,8 @@ Precedence rules:
 - `UPDATES_ALLOW_NON_DARWIN=1`
   - When set, the script runs on unsupported OSes and prints a warning.
   - Intended for tests/CI and advanced usage; behavior is not guaranteed outside macOS/Linux.
+- `NO_COLOR=1`
+  - Disables ANSI colors in output.
 
 ## Module system
 
