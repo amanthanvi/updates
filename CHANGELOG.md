@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-01-02
+
 ### Added
 
 - TTY-only ANSI colors for boundary lines and `WARN:`/`ERROR:` prefixes (disable with `--no-color` or `NO_COLOR=1`).

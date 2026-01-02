@@ -105,3 +105,27 @@ This is the execution plan for shipping `updates` **v0.5.0**. It focuses on clea
 - [x] Finalize `CHANGELOG.md` with `## [0.5.0] - YYYY-MM-DD`.
 - [x] Run `./scripts/lint.sh` and `./scripts/test.sh`.
 - [x] Tag and push `v0.5.0`.
+
+---
+
+# Plan: v0.5.1
+
+This is the execution plan for shipping `updates` **v0.5.1**. It adds optional, TTY-only ANSI coloring without changing non-TTY output.
+
+## Goals
+
+- Add user-friendly ANSI coloring for module boundary lines and `WARN:`/`ERROR:` prefixes.
+- Preserve stable, grep-friendly output when piped and keep `--log-file` output clean.
+
+## Non-goals
+
+- Adding a rich TUI or alternative output modes.
+- Colorizing third-party tool output (`brew`, `pip`, etc.).
+
+## Execution checklist
+
+- [x] Add `--no-color` flag and support `NO_COLOR=1`.
+- [x] Colorize boundary lines and `WARN:`/`ERROR:` prefixes when output is a TTY.
+- [x] Update `SPEC.md`, `README.md`, and `CHANGELOG.md`.
+- [x] Run `./scripts/lint.sh` and `./scripts/test.sh`.
+- [ ] Tag `v0.5.1` and push `main` + tags.
