@@ -24,8 +24,8 @@ This is the execution plan for shipping `updates` **v0.4.0**. It is a living che
 
 ### 2) Platform support
 
-- [ ] Replace macOS-only gating with “supported platforms: macOS + Linux”.
-- [ ] Add WSL detection and document it (WSL updates apply to the distro, not Windows).
+- [x] Replace macOS-only gating with “supported platforms: macOS + Linux”.
+- [x] Add WSL detection and document it (WSL updates apply to the distro, not Windows).
 
 ### 3) Python hardening (PEP 668)
 

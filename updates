@@ -66,15 +66,34 @@ is_macos() {
 	[ "$(uname -s)" = "Darwin" ]
 }
 
-require_macos() {
-	if is_macos; then
+is_linux() {
+	[ "$(uname -s)" = "Linux" ]
+}
+
+is_wsl() {
+	# WSL1/WSL2 detection heuristics.
+	# Prefer env var; fall back to /proc markers.
+	if [ -n "${WSL_DISTRO_NAME:-}" ]; then
+		return 0
+	fi
+	if [ -f /proc/sys/kernel/osrelease ] && grep -qi microsoft /proc/sys/kernel/osrelease; then
+		return 0
+	fi
+	if [ -f /proc/version ] && grep -qi microsoft /proc/version; then
+		return 0
+	fi
+	return 1
+}
+
+require_supported_platform() {
+	if is_macos || is_linux; then
 		return 0
 	fi
 	if [ "${UPDATES_ALLOW_NON_DARWIN:-0}" = "1" ]; then
-		warn "Non-macOS detected; continuing because UPDATES_ALLOW_NON_DARWIN=1 is set."
+		warn "Unsupported OS detected; continuing because UPDATES_ALLOW_NON_DARWIN=1 is set."
 		return 0
 	fi
-	die "This script targets macOS. Set UPDATES_ALLOW_NON_DARWIN=1 to bypass."
+	die "This script targets macOS and Linux. Set UPDATES_ALLOW_NON_DARWIN=1 to bypass."
 }
 
 run() {
@@ -582,7 +601,7 @@ main() {
 		exec > >(tee -a "$LOG_FILE") 2>&1
 	fi
 
-	require_macos
+	require_supported_platform
 
 	log "Starting updates..."
 	local start end

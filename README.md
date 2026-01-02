@@ -1,6 +1,6 @@
 # updates
 
-A small, modular Bash CLI to update common macOS tooling (Homebrew, global npm packages, global Python packages, etc.).
+A small, modular Bash CLI to update common macOS and Linux tooling (Homebrew, global npm packages, global Python packages, etc.).
 
 This script can be disruptive (it updates global environments). Use `--dry-run` and scope with `--only` / `--skip`.
 
@@ -81,6 +81,7 @@ Install what you actually use:
 
 - This script updates *global* environments (`npm -g`, `pip`), which can be disruptive.
 - Use `--dry-run` first, and consider `--only`/`--skip` to control scope.
+- On WSL, updates apply to the Linux distro (not Windows itself).
 
 ## Contributing
 

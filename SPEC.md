@@ -20,10 +20,12 @@ The key words **MUST**, **SHOULD**, and **MAY** are to be interpreted as describ
 
 ## Platform support
 
-- **Target OS:** macOS (detected by `uname -s == Darwin`).
+- **Supported OS:** macOS and Linux (detected by `uname -s`).
 - **Bash:** runs via `/bin/bash` (macOS system Bash).
 
-On non-macOS systems the script **MUST** exit with code `2`, unless the user sets `UPDATES_ALLOW_NON_DARWIN=1` (see Environment).
+WSL is treated as Linux. The script detects WSL via `WSL_DISTRO_NAME` and/or common `/proc` markers.
+
+On unsupported systems the script **MUST** exit with code `2`, unless the user sets `UPDATES_ALLOW_NON_DARWIN=1` (see Environment).
 
 ## Installation (repository-distributed)
 
@@ -109,8 +111,8 @@ Precedence rules:
 ## Environment variables
 
 - `UPDATES_ALLOW_NON_DARWIN=1`
-  - When set, the script runs on non-macOS systems and prints a warning.
-  - Intended for tests/CI and advanced usage; behavior is not guaranteed outside macOS.
+  - When set, the script runs on unsupported OSes and prints a warning.
+  - Intended for tests/CI and advanced usage; behavior is not guaranteed outside macOS/Linux.
 
 ## Module system
 
