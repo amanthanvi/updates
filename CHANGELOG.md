@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-01-04
+
+### Added
+
+- `--full` preset to enable app/system update modules (Homebrew casks, `mas`, `macos`).
+- `--brew-casks` / `--no-brew-casks` flags.
+- `--mas-upgrade` / `--no-mas-upgrade` flags.
+- `--macos-updates` / `--no-macos-updates` flags.
+
+### Changed
+
+- On macOS, Homebrew cask upgrades are disabled by default (formula upgrades still run).
+- On macOS, the `mas` and `macos` modules are disabled by default.
+
 ## [0.5.1] - 2026-01-02
 
 ### Added

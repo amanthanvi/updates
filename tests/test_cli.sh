@@ -74,7 +74,21 @@ echo "$out" | grep -q '^==> node START$'
 echo "$out" | grep -q '^==> node END (OK)'
 echo "$out" | grep -q '^==> SUMMARY ok=2 skip=0 fail=0 total='
 grep -q '^brew update$' "$CALL_LOG"
+grep -q '^brew upgrade --formula$' "$CALL_LOG"
 grep -q '^npm install -g -- npm@11.7.0$' "$CALL_LOG"
+
+echo "Test: default macOS run is safe (no mas/macos; brew formula only)"
+out="$("$SCRIPT" --dry-run --skip node,python,pipx,rustup,claude,linux --no-emoji)"
+echo "$out" | grep -q '^==> brew START$'
+echo "$out" | grep -q '^DRY RUN: brew upgrade --formula$'
+if echo "$out" | grep -q '^==> mas START$'; then
+	echo "Expected mas module to be disabled by default" >&2
+	exit 1
+fi
+if echo "$out" | grep -q '^==> macos START$'; then
+	echo "Expected macos module to be disabled by default" >&2
+	exit 1
+fi
 
 echo "Test: missing dependency errors in --only mode"
 set +e
@@ -85,6 +99,37 @@ if [ "$rc" -eq 0 ]; then
 	echo "Expected failure when --only mas but mas is missing" >&2
 	exit 1
 fi
+
+echo "Test: --brew-casks enables brew upgrade (greedy) on macOS"
+: >"$CALL_LOG"
+"$SCRIPT" --only brew --brew-casks --no-emoji >/dev/null
+grep -q '^brew upgrade --greedy$' "$CALL_LOG"
+if grep -q '^brew upgrade --formula$' "$CALL_LOG"; then
+	echo "Expected brew formula-only upgrades to be disabled when --brew-casks is set" >&2
+	exit 1
+fi
+
+echo "Test: --only mas runs even when opt-in by default"
+# shellcheck disable=SC2016
+write_stub mas 'echo "mas $*" >>"$CALL_LOG"'
+: >"$CALL_LOG"
+"$SCRIPT" --only mas --no-emoji >/dev/null
+grep -q '^mas upgrade$' "$CALL_LOG"
+
+echo "Test: --only macos runs even when opt-in by default"
+: >"$CALL_LOG"
+"$SCRIPT" --only macos --no-emoji >/dev/null
+grep -q '^softwareupdate -l$' "$CALL_LOG"
+
+echo "Test: --full enables brew casks + mas + macos"
+: >"$CALL_LOG"
+out="$("$SCRIPT" --full --skip node,python,pipx,rustup,claude,linux --no-emoji)"
+echo "$out" | grep -q '^==> brew START$'
+echo "$out" | grep -q '^==> mas START$'
+echo "$out" | grep -q '^==> macos START$'
+grep -q '^brew upgrade --greedy$' "$CALL_LOG"
+grep -q '^mas upgrade$' "$CALL_LOG"
+grep -q '^softwareupdate -l$' "$CALL_LOG"
 
 echo "Test: python uses --user in externally-managed env"
 # shellcheck disable=SC2016

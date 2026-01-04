@@ -2,7 +2,7 @@
 
 set -o pipefail
 
-UPDATES_VERSION="0.5.1"
+UPDATES_VERSION="0.6.0"
 
 SCRIPT_NAME="$(basename "$0")"
 
@@ -19,6 +19,11 @@ PARALLEL=4
 
 BREW_GREEDY=1
 BREW_CLEANUP=1
+BREW_CASKS=1
+BREW_CASKS_EXPLICIT=0
+
+MAS_UPGRADE=0
+MACOS_UPDATES=0
 
 only_modules=()
 skip_modules=()
@@ -202,6 +207,14 @@ is_wsl() {
 	return 1
 }
 
+apply_platform_defaults() {
+	# macOS 26+ introduces App Management prompts for app bundle updates (/Applications).
+	# Default to formula upgrades only unless explicitly opted in.
+	if is_macos && [ "$BREW_CASKS_EXPLICIT" -eq 0 ]; then
+		BREW_CASKS=0
+	fi
+}
+
 module_supported() {
 	# When UPDATES_ALLOW_NON_DARWIN=1 is set, allow command-driven modules to run
 	# on unknown platforms, but still treat OS-specific modules as unsupported.
@@ -274,15 +287,15 @@ is_module_known() {
 
 module_description() {
 	case "$1" in
-	brew) print "Update Homebrew formulae/casks" ;;
+	brew) print "Update Homebrew formulae (+ optional casks)" ;;
 	linux) print "Upgrade Linux system packages" ;;
 	node) print "Upgrade global npm packages via ncu" ;;
 	python) print "Upgrade global Python packages via pip" ;;
-	mas) print "Upgrade Mac App Store apps via mas" ;;
+	mas) print "Upgrade Mac App Store apps via mas (opt-in)" ;;
 	pipx) print "Upgrade pipx-managed apps via pipx" ;;
 	rustup) print "Update Rust toolchains via rustup" ;;
 	claude) print "Update Claude Code CLI" ;;
-	macos) print "List available macOS software updates" ;;
+	macos) print "List available macOS software updates (opt-in)" ;;
 	*) print "" ;;
 	esac
 }
@@ -320,8 +333,12 @@ Options:
       --parallel <N>       Parallelism for pip upgrades (default: ${PARALLEL})
       --python-break-system-packages
                             Pass --break-system-packages to pip (dangerous)
+      --full               Enable app/system update modules (casks, mas, macos)
       --[no-]brew-greedy   Include greedy cask upgrades (default: enabled)
+      --[no-]brew-casks    Upgrade Homebrew casks (default: disabled on macOS)
       --[no-]brew-cleanup  Run brew cleanup after upgrade (default: enabled)
+      --[no-]mas-upgrade   Upgrade Mac App Store apps (default: disabled)
+      --[no-]macos-updates List available macOS software updates (default: disabled)
 
 Examples:
   ${SCRIPT_NAME}
@@ -371,6 +388,12 @@ parse_args() {
 		--python-break-system-packages)
 			PYTHON_BREAK_SYSTEM_PACKAGES=1
 			;;
+		--full)
+			BREW_CASKS=1
+			BREW_CASKS_EXPLICIT=1
+			MAS_UPGRADE=1
+			MACOS_UPDATES=1
+			;;
 		--log-file)
 			shift
 			[ $# -gt 0 ] || die "--log-file requires a path"
@@ -417,11 +440,31 @@ parse_args() {
 		--no-brew-greedy)
 			BREW_GREEDY=0
 			;;
+		--brew-casks)
+			BREW_CASKS=1
+			BREW_CASKS_EXPLICIT=1
+			;;
+		--no-brew-casks)
+			BREW_CASKS=0
+			BREW_CASKS_EXPLICIT=1
+			;;
 		--brew-cleanup)
 			BREW_CLEANUP=1
 			;;
 		--no-brew-cleanup)
 			BREW_CLEANUP=0
+			;;
+		--mas-upgrade)
+			MAS_UPGRADE=1
+			;;
+		--no-mas-upgrade)
+			MAS_UPGRADE=0
+			;;
+		--macos-updates)
+			MACOS_UPDATES=1
+			;;
+		--no-macos-updates)
+			MACOS_UPDATES=0
 			;;
 		--)
 			shift
@@ -448,6 +491,14 @@ module_selected() {
 	if [ "${#only_modules[@]}" -gt 0 ]; then
 		contains_word "$name" "${only_modules[@]}"
 		return $?
+	fi
+
+	if [ "$name" = "mas" ] && [ "$MAS_UPGRADE" -eq 0 ]; then
+		return 1
+	fi
+
+	if [ "$name" = "macos" ] && [ "$MACOS_UPDATES" -eq 0 ]; then
+		return 1
 	fi
 
 	module_supported "$name"
@@ -508,9 +559,21 @@ module_brew() {
 	log "Homebrew $(emoji "🍺")"
 	ensure_cmd_or_skip brew brew || return $?
 
+	if is_macos && [ "$BREW_CASKS" -eq 0 ] && [ "$BREW_CASKS_EXPLICIT" -eq 0 ]; then
+		warn "Defaulting to brew formula upgrades only on macOS. Enable casks with --brew-casks (or --full)."
+	fi
+
+	if is_macos && [ "$BREW_CASKS" -eq 1 ]; then
+		warn "Homebrew cask upgrades may modify /Applications."
+		warn "On macOS 26+, cask upgrades may be blocked unless your terminal app is allowed under Privacy & Security → App Management."
+		warn "If you see a system notification like \"<Terminal App> tried modifying your system but was stopped/prevented\", enable App Management for your terminal app (e.g. Ghostty), or rerun with --no-brew-casks."
+	fi
+
 	if [ "$DRY_RUN" -eq 1 ]; then
 		log "DRY RUN: brew update"
-		if [ "$BREW_GREEDY" -eq 1 ]; then
+		if [ "$BREW_CASKS" -eq 0 ]; then
+			log "DRY RUN: brew upgrade --formula"
+		elif [ "$BREW_GREEDY" -eq 1 ]; then
 			log "DRY RUN: brew upgrade --greedy"
 		else
 			log "DRY RUN: brew upgrade"
@@ -523,7 +586,9 @@ module_brew() {
 
 	run brew update || return 1
 
-	if [ "$BREW_GREEDY" -eq 1 ]; then
+	if [ "$BREW_CASKS" -eq 0 ]; then
+		run brew upgrade --formula || return 1
+	elif [ "$BREW_GREEDY" -eq 1 ]; then
 		run brew upgrade --greedy || return 1
 	else
 		run brew upgrade || return 1
@@ -970,6 +1035,7 @@ main() {
 	fi
 
 	init_colors
+	apply_platform_defaults
 
 	require_supported_platform
 	validate_only_modules_supported

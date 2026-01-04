@@ -99,14 +99,21 @@ Output verbosity:
 Misc:
 
 - `--log-file <path>`: append all output to a log file.
-- `--non-interactive`: avoid interactive prompts when possible (currently affects Python `pip` upgrades only).
+- `--non-interactive`: avoid interactive prompts when possible (affects Linux system package upgrades and Python `pip` upgrades).
 - `--parallel <N>`: parallelism for Python package upgrades (default `4`, minimum `1`).
 - `--python-break-system-packages`: pass `--break-system-packages` to `pip` (unsafe; for PEP 668 environments).
+- `--full`: enable app/system update modules (Homebrew casks, `mas`, and `macos`).
 
 Homebrew flags:
 
 - `--brew-greedy` / `--no-brew-greedy`: include greedy cask upgrades (default enabled).
+- `--brew-casks` / `--no-brew-casks`: upgrade Homebrew casks (default disabled on macOS; enabled elsewhere).
 - `--brew-cleanup` / `--no-brew-cleanup`: run `brew cleanup` after upgrade (default enabled).
+
+macOS module flags:
+
+- `--mas-upgrade` / `--no-mas-upgrade`: enable the `mas` module in default runs (default disabled; `--only mas` still forces it).
+- `--macos-updates` / `--no-macos-updates`: enable the `macos` module in default runs (default disabled; `--only macos` still forces it).
 
 ### Module lists (`--only`, `--skip`)
 
@@ -137,6 +144,10 @@ Precedence rules:
 - Each module is a Bash function named `module_<name>()`.
 - Modules are run sequentially in a fixed order:
   `brew`, `linux`, `node`, `python`, `mas`, `pipx`, `rustup`, `claude`, `macos`.
+- Some modules are **opt-in** in default runs for safety:
+  - `mas` (enable with `--mas-upgrade` or `--full`)
+  - `macos` (enable with `--macos-updates` or `--full`)
+- On macOS, Homebrew casks are disabled by default (enable with `--brew-casks` or `--full`).
 - Modules are command-driven; this matrix is informational:
 
 | Module   | macOS | Linux | WSL | Notes |
@@ -177,12 +188,13 @@ Each module’s contract includes: required commands, what it runs, and side eff
 
 ### `brew`
 
-Purpose: update and upgrade Homebrew formulae/casks.
+Purpose: update and upgrade Homebrew formulae (and optionally casks).
 
 - Requires: `brew`
 - Non-dry-run commands:
   - `brew update`
-  - `brew upgrade [--greedy]`
+  - If casks are disabled (`--no-brew-casks`, default on macOS): `brew upgrade --formula`
+  - Otherwise: `brew upgrade [--greedy]`
   - optionally `brew cleanup` (controlled by `--[no-]brew-cleanup`)
 - Side effects:
   - Upgrades Homebrew-managed packages and (optionally) cleans up old versions.
@@ -241,6 +253,7 @@ Purpose: upgrade global Python packages with `pip`.
 
 Purpose: upgrade Mac App Store apps.
 
+- Disabled by default unless enabled via `--mas-upgrade` / `--full` or explicitly selected via `--only mas`.
 - Requires: `mas`
 - Non-dry-run commands:
   - `mas upgrade`
@@ -281,6 +294,7 @@ Purpose: update the Claude Code CLI.
 
 Purpose: list available macOS software updates.
 
+- Disabled by default unless enabled via `--macos-updates` / `--full` or explicitly selected via `--only macos`.
 - Requires: `softwareupdate`
 - Non-dry-run commands:
   - `softwareupdate -l`
