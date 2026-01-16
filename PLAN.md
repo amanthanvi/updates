@@ -129,3 +129,51 @@ This is the execution plan for shipping `updates` **v0.5.1**. It adds optional, 
 - [x] Update `SPEC.md`, `README.md`, and `CHANGELOG.md`.
 - [x] Run `./scripts/lint.sh` and `./scripts/test.sh`.
 - [x] Tag `v0.5.1` and push `main` + tags.
+
+---
+
+# Plan: v0.6.0
+
+This is the execution plan for shipping `updates` **v0.6.0**. It adds a minimal `shell` module for common shell customization tooling (starting with Oh My Zsh) and brings `SPEC.md` back in sync with the actual CLI.
+
+## Goals
+
+- Add a `shell` module that detects and updates:
+  - Oh My Zsh itself (git fast-forward only)
+  - Git-backed Oh My Zsh custom plugins/themes
+- Fully align `SPEC.md` with the current CLI (remove stale flags; correct module defaults; correct `--non-interactive` behavior).
+
+## Non-goals (avoid feature creep)
+
+- No rich TUI / heavy output modes.
+- No support matrix explosion (start with Oh My Zsh + git-based custom repos only).
+- No modifications to the user’s shell config (`.zshrc`, etc.).
+
+## Execution checklist
+
+### 1) Spec-first alignment
+
+- [ ] Remove stale flags from `SPEC.md` that are not implemented (`--full`, `--mas-upgrade`, `--macos-updates`, `--brew-casks`).
+- [ ] Update `SPEC.md` module selection rules and `--non-interactive` semantics to match the current code.
+
+### 2) Implement `shell` module (minimal)
+
+- [ ] Add module registration: `is_module_known()`, `module_description()`, `list_modules()`, `run_selected_modules()`, `module_supported()`.
+- [ ] Implement detection:
+  - `~/.oh-my-zsh` or `$ZSH`
+  - `$ZSH_CUSTOM` or `$ZSH/custom` for plugins/themes
+- [ ] Implement safe updates:
+  - `git pull --ff-only` for each detected repo
+  - Honor `--dry-run`
+  - In `--non-interactive`, prevent credential prompts
+
+### 3) Tests + docs
+
+- [ ] Add/extend tests for `--only shell` (using stubs + temp HOME fixtures).
+- [ ] Update `README.md`, `SPEC.md`, and `CHANGELOG.md` under `[Unreleased]`.
+
+### 4) Release
+
+- [ ] Bump `UPDATES_VERSION` to `0.6.0` and finalize `CHANGELOG.md`.
+- [ ] Run `./scripts/lint.sh` and `./scripts/test.sh`.
+- [ ] Tag `v0.6.0` and push `main` + tags.
