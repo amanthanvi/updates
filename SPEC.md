@@ -99,7 +99,7 @@ Output verbosity:
 Misc:
 
 - `--log-file <path>`: append all output to a log file.
-- `--non-interactive`: avoid interactive prompts when possible (affects Linux system package upgrades and Python `pip` upgrades).
+- `--non-interactive`: avoid interactive prompts when possible (affects Linux system package upgrades, Python `pip` upgrades, and `shell` git updates).
 - `--parallel <N>`: parallelism for Python package upgrades (default `4`, minimum `1`).
 - `--python-break-system-packages`: pass `--break-system-packages` to `pip` (unsafe; for PEP 668 environments).
 - `--full`: enable app/system update modules (Homebrew casks, `mas`, and `macos`).
