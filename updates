@@ -219,7 +219,7 @@ module_supported() {
 	# When UPDATES_ALLOW_NON_DARWIN=1 is set, allow command-driven modules to run
 	# on unknown platforms, but still treat OS-specific modules as unsupported.
 	case "$1" in
-	brew | node | python | pipx | rustup | claude) return 0 ;;
+	brew | shell | node | python | pipx | rustup | claude) return 0 ;;
 	linux) is_linux ;;
 	mas | macos) is_macos ;;
 	*) return 1 ;;
@@ -280,7 +280,7 @@ normalize_module_list() {
 
 is_module_known() {
 	case "$1" in
-	brew | linux | node | python | mas | pipx | rustup | claude | macos) return 0 ;;
+	brew | shell | linux | node | python | mas | pipx | rustup | claude | macos) return 0 ;;
 	*) return 1 ;;
 	esac
 }
@@ -288,6 +288,7 @@ is_module_known() {
 module_description() {
 	case "$1" in
 	brew) print "Update Homebrew formulae (+ optional casks)" ;;
+	shell) print "Update Oh My Zsh and custom git plugins/themes" ;;
 	linux) print "Upgrade Linux system packages" ;;
 	node) print "Upgrade global npm packages via ncu" ;;
 	python) print "Upgrade global Python packages via pip" ;;
@@ -302,7 +303,7 @@ module_description() {
 
 list_modules() {
 	local m
-	for m in brew linux node python mas pipx rustup claude macos; do
+	for m in brew shell linux node python mas pipx rustup claude macos; do
 		printf '%-8s %s\n' "$m" "$(module_description "$m")"
 	done
 }
@@ -598,6 +599,124 @@ module_brew() {
 		run brew cleanup || return 1
 	fi
 
+	return 0
+}
+
+shell_git_is_repo() {
+	local dir="$1"
+	[ -e "${dir}/.git" ]
+}
+
+shell_detect_omz_dir() {
+	if [ -n "${ZSH:-}" ] && [ -d "${ZSH}" ]; then
+		print "$ZSH"
+		return 0
+	fi
+	if [ -d "${HOME}/.oh-my-zsh" ]; then
+		print "${HOME}/.oh-my-zsh"
+		return 0
+	fi
+	return 1
+}
+
+shell_detect_omz_custom_dir() {
+	local zsh_dir="$1"
+	if [ -n "${ZSH_CUSTOM:-}" ] && [ -d "${ZSH_CUSTOM}" ]; then
+		print "$ZSH_CUSTOM"
+		return 0
+	fi
+	if [ -d "${zsh_dir}/custom" ]; then
+		print "${zsh_dir}/custom"
+		return 0
+	fi
+	return 1
+}
+
+module_shell() {
+	log "Shell customization $(emoji "🐚")"
+	ensure_cmd_or_skip git shell || return $?
+
+	local omz_dir=""
+	if ! omz_dir="$(shell_detect_omz_dir)"; then
+		log "Skipping shell: Oh My Zsh not found."
+		return 2
+	fi
+
+	local custom_dir=""
+	custom_dir="$(shell_detect_omz_custom_dir "$omz_dir" || true)"
+
+	local git_terminal_prompt_prev=""
+	local git_terminal_prompt_was_set=0
+	if [ "$NON_INTERACTIVE" -eq 1 ]; then
+		if [ -n "${GIT_TERMINAL_PROMPT+x}" ]; then
+			git_terminal_prompt_was_set=1
+			git_terminal_prompt_prev="${GIT_TERMINAL_PROMPT}"
+		fi
+		export GIT_TERMINAL_PROMPT=0
+	fi
+
+	local -a repos=()
+	if shell_git_is_repo "$omz_dir"; then
+		repos+=("$omz_dir")
+	else
+		warn "shell: Oh My Zsh is not a git repo: ${omz_dir}"
+	fi
+
+	if [ -n "$custom_dir" ]; then
+		local root
+		for root in "${custom_dir}/plugins" "${custom_dir}/themes"; do
+			if [ ! -d "$root" ]; then
+				continue
+			fi
+
+			local dir
+			for dir in "${root}"/*; do
+				[ -e "$dir" ] || continue
+				[ -d "$dir" ] || continue
+				if shell_git_is_repo "$dir"; then
+					repos+=("$dir")
+				fi
+			done
+		done
+	fi
+
+	if [ "${#repos[@]}" -eq 0 ]; then
+		log "Skipping shell: no git repos detected."
+		if [ "$NON_INTERACTIVE" -eq 1 ]; then
+			if [ "$git_terminal_prompt_was_set" -eq 1 ]; then
+				export GIT_TERMINAL_PROMPT="$git_terminal_prompt_prev"
+			else
+				unset GIT_TERMINAL_PROMPT
+			fi
+		fi
+		return 2
+	fi
+
+	local failed=0
+	local repo
+	for repo in "${repos[@]}"; do
+		if [ "$DRY_RUN" -eq 1 ]; then
+			log "DRY RUN: git -C ${repo} pull --ff-only"
+			continue
+		fi
+
+		log "Updating: ${repo}"
+		if ! run git -C "$repo" pull --ff-only; then
+			failed=1
+		fi
+	done
+
+	if [ "$NON_INTERACTIVE" -eq 1 ]; then
+		if [ "$git_terminal_prompt_was_set" -eq 1 ]; then
+			export GIT_TERMINAL_PROMPT="$git_terminal_prompt_prev"
+		else
+			unset GIT_TERMINAL_PROMPT
+		fi
+	fi
+
+	if [ "$failed" -eq 1 ]; then
+		return 1
+	fi
 	return 0
 }
 
@@ -979,7 +1098,7 @@ run_selected_modules() {
 	failures=()
 
 	local m
-	for m in brew linux node python mas pipx rustup claude macos; do
+	for m in brew shell linux node python mas pipx rustup claude macos; do
 		if ! module_selected "$m"; then
 			continue
 		fi
