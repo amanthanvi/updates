@@ -143,7 +143,7 @@ Precedence rules:
 
 - Each module is a Bash function named `module_<name>()`.
 - Modules are run sequentially in a fixed order:
-  `brew`, `linux`, `node`, `python`, `mas`, `pipx`, `rustup`, `claude`, `macos`.
+  `brew`, `shell`, `linux`, `node`, `python`, `mas`, `pipx`, `rustup`, `claude`, `macos`.
 - Some modules are **opt-in** in default runs for safety:
   - `mas` (enable with `--mas-upgrade` or `--full`)
   - `macos` (enable with `--macos-updates` or `--full`)
@@ -153,6 +153,7 @@ Precedence rules:
 | Module   | macOS | Linux | WSL | Notes |
 |----------|:-----:|:-----:|:---:|-------|
 | `brew`   |  ✅   |  ✅   | ✅  | Requires `brew` (Homebrew can be installed on Linux) |
+| `shell`  |  ✅   |  ✅   | ✅  | Requires `git`; updates Oh My Zsh + git-backed custom plugins/themes when detected |
 | `linux`  |  ❌   |  ✅   | ✅  | Requires a supported Linux package manager + optional `sudo` |
 | `node`   |  ✅   |  ✅   | ✅  | Requires `ncu` + `npm` |
 | `python` |  ✅   |  ✅   | ✅  | Requires `python3 -m pip` |
@@ -216,6 +217,25 @@ Purpose: upgrade Linux system packages using the host distro package manager.
   - `apk`: `apk update`, `apk upgrade`
 - Side effects:
   - Upgrades OS-managed packages and may require elevated privileges.
+
+### `shell`
+
+Purpose: update common shell customization tooling (currently Oh My Zsh) and its git-backed custom plugins/themes.
+
+- Requires: `git`
+- Applicable on: macOS and Linux (including WSL)
+- Detection:
+  - Oh My Zsh directory: `$ZSH` (if set and exists) or `~/.oh-my-zsh`
+  - Custom directory: `$ZSH_CUSTOM` (if set) or `<ZSH>/custom`
+  - Custom plugin/theme repos are detected in:
+    - `<custom>/plugins/*`
+    - `<custom>/themes/*`
+    - A directory is considered a repo if `<dir>/.git` exists.
+- Non-dry-run behavior:
+  - For each detected git repo, runs: `git -C <dir> pull --ff-only`
+  - With `--non-interactive`, git prompts are disabled by setting `GIT_TERMINAL_PROMPT=0`.
+- Side effects:
+  - Updates the detected repositories in-place (typically under `~/.oh-my-zsh`).
 
 ### `node`
 
