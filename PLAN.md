@@ -201,27 +201,27 @@ This is the execution plan for shipping `updates` **v0.7.0**. It adds a minimal 
 
 ### 1) Spec + docs
 
-- [ ] Update `SPEC.md` module list/matrix to include `shell`.
-- [ ] Update `README.md` module list + prerequisites.
-- [ ] Add `CHANGELOG.md` entries under `[Unreleased]`.
+- [x] Update `SPEC.md` module list/matrix to include `shell`.
+- [x] Update `README.md` module list + prerequisites.
+- [x] Add `CHANGELOG.md` entries under `[Unreleased]`.
 
 ### 2) Implement `shell` module (minimal)
 
-- [ ] Add module registration: `is_module_known()`, `module_description()`, `list_modules()`, `run_selected_modules()`, `module_supported()`.
-- [ ] Implement detection:
+- [x] Add module registration: `is_module_known()`, `module_description()`, `list_modules()`, `run_selected_modules()`, `module_supported()`.
+- [x] Implement detection:
   - `~/.oh-my-zsh` or `$ZSH`
   - `$ZSH_CUSTOM` or `$ZSH/custom` for plugins/themes
-- [ ] Implement safe updates:
+- [x] Implement safe updates:
   - `git pull --ff-only` for each detected repo
   - Honor `--dry-run`
   - In `--non-interactive`, disable git terminal prompts
 
 ### 3) Tests
 
-- [ ] Add tests for `--only shell` (using stubs + temp HOME fixtures).
+- [x] Add tests for `--only shell` (using stubs + temp HOME fixtures).
 
 ### 4) Release
 
-- [ ] Bump `UPDATES_VERSION` to `0.7.0` and finalize `CHANGELOG.md`.
-- [ ] Run `./scripts/lint.sh` and `./scripts/test.sh`.
-- [ ] Tag `v0.7.0` and push `main` + tags.
+- [x] Bump `UPDATES_VERSION` to `0.7.0` and finalize `CHANGELOG.md`.
+- [x] Run `./scripts/lint.sh` and `./scripts/test.sh`.
+- [x] Tag `v0.7.0` and push `main` + tags.
