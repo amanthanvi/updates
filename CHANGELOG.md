@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-01-17
+
 ### Added
 
 - `shell` module to update Oh My Zsh and custom git plugins/themes.
