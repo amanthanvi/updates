@@ -64,6 +64,7 @@ updates --help
 Modules are auto-detected: if the underlying command isn’t installed, the module is skipped (unless you used `--only`, in which case it’s an error).
 
 - `brew`: update/upgrade Homebrew formulae (+ casks when enabled via `--brew-casks` / `--full`)
+- `shell`: update Oh My Zsh and custom git plugins/themes (auto-detected)
 - `linux`: upgrade Linux system packages (auto-detects `apt-get`/`dnf`/`yum`/`pacman`/`zypper`/`apk`)
 - `node`: upgrade global npm packages via `ncu` + `npm`
 - `python`: upgrade global Python packages via `python3 -m pip`
@@ -78,6 +79,7 @@ Modules are auto-detected: if the underlying command isn’t installed, the modu
 Install what you actually use:
 
 - `brew` (Homebrew)
+- `git` (for the `shell` module)
 - `ncu` (npm-check-updates): `npm install -g npm-check-updates`
 - `mas`: `brew install mas`
 - `pipx`: `brew install pipx`
