@@ -132,9 +132,9 @@ This is the execution plan for shipping `updates` **v0.5.1**. It adds optional, 
 
 ---
 
-# Plan: v0.6.0
+# Plan: v0.6.0 (superseded)
 
-This is the execution plan for shipping `updates` **v0.6.0**. It adds a minimal `shell` module for common shell customization tooling (starting with Oh My Zsh) and brings `SPEC.md` back in sync with the actual CLI.
+This plan was superseded. `v0.6.0` shipped as opt-in app/system update presets; the `shell` module work moved to `v0.7.0`.
 
 ## Goals
 
@@ -177,3 +177,51 @@ This is the execution plan for shipping `updates` **v0.6.0**. It adds a minimal 
 - [ ] Bump `UPDATES_VERSION` to `0.6.0` and finalize `CHANGELOG.md`.
 - [ ] Run `./scripts/lint.sh` and `./scripts/test.sh`.
 - [ ] Tag `v0.6.0` and push `main` + tags.
+
+---
+
+# Plan: v0.7.0
+
+This is the execution plan for shipping `updates` **v0.7.0**. It adds a minimal `shell` module for common shell customization tooling (starting with Oh My Zsh) and documents it in `SPEC.md`.
+
+## Goals
+
+- Add a `shell` module that detects and updates:
+  - Oh My Zsh itself (git fast-forward only)
+  - Git-backed Oh My Zsh custom plugins/themes
+- Keep behavior safe and non-invasive (no edits to shell config files).
+
+## Non-goals (avoid feature creep)
+
+- No support matrix explosion (start with Oh My Zsh + git-based custom repos only).
+- No rich TUI / alternative output modes.
+- No modification of user dotfiles (`.zshrc`, etc.).
+
+## Execution checklist
+
+### 1) Spec + docs
+
+- [ ] Update `SPEC.md` module list/matrix to include `shell`.
+- [ ] Update `README.md` module list + prerequisites.
+- [ ] Add `CHANGELOG.md` entries under `[Unreleased]`.
+
+### 2) Implement `shell` module (minimal)
+
+- [ ] Add module registration: `is_module_known()`, `module_description()`, `list_modules()`, `run_selected_modules()`, `module_supported()`.
+- [ ] Implement detection:
+  - `~/.oh-my-zsh` or `$ZSH`
+  - `$ZSH_CUSTOM` or `$ZSH/custom` for plugins/themes
+- [ ] Implement safe updates:
+  - `git pull --ff-only` for each detected repo
+  - Honor `--dry-run`
+  - In `--non-interactive`, disable git terminal prompts
+
+### 3) Tests
+
+- [ ] Add tests for `--only shell` (using stubs + temp HOME fixtures).
+
+### 4) Release
+
+- [ ] Bump `UPDATES_VERSION` to `0.7.0` and finalize `CHANGELOG.md`.
+- [ ] Run `./scripts/lint.sh` and `./scripts/test.sh`.
+- [ ] Tag `v0.7.0` and push `main` + tags.
