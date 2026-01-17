@@ -8,6 +8,12 @@ SCRIPT="${ROOT}/updates"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
+HOME_DIR="${tmp_dir}/home"
+mkdir -p "$HOME_DIR"
+export HOME="$HOME_DIR"
+export ZSH=""
+export ZSH_CUSTOM=""
+
 stub_bin="${tmp_dir}/bin"
 mkdir -p "$stub_bin"
 
@@ -39,6 +45,8 @@ write_stub npm 'echo "npm $*" >>"$CALL_LOG"'
 # shellcheck disable=SC2016
 write_stub pipx 'echo "pipx $*" >>"$CALL_LOG"'
 # shellcheck disable=SC2016
+write_stub git 'echo "GIT_TERMINAL_PROMPT=${GIT_TERMINAL_PROMPT:-} git $*" >>"$CALL_LOG"'
+# shellcheck disable=SC2016
 write_stub rustup 'echo "rustup $*" >>"$CALL_LOG"'
 # shellcheck disable=SC2016
 write_stub claude 'echo "claude $*" >>"$CALL_LOG"'
@@ -51,6 +59,7 @@ echo "Test: help works"
 echo "Test: list-modules works"
 out="$("$SCRIPT" --list-modules)"
 echo "$out" | grep -q '^brew'
+echo "$out" | grep -q '^shell'
 echo "$out" | grep -q '^linux'
 
 echo "Test: --skip overrides --only"
@@ -80,6 +89,8 @@ grep -q '^npm install -g -- npm@11.7.0$' "$CALL_LOG"
 echo "Test: default macOS run is safe (no mas/macos; brew formula only)"
 out="$("$SCRIPT" --dry-run --skip node,python,pipx,rustup,claude,linux --no-emoji)"
 echo "$out" | grep -q '^==> brew START$'
+echo "$out" | grep -q '^==> shell START$'
+echo "$out" | grep -q '^==> shell END (SKIP)'
 echo "$out" | grep -q '^DRY RUN: brew upgrade --formula$'
 if echo "$out" | grep -q '^==> mas START$'; then
 	echo "Expected mas module to be disabled by default" >&2
@@ -125,6 +136,7 @@ echo "Test: --full enables brew casks + mas + macos"
 : >"$CALL_LOG"
 out="$("$SCRIPT" --full --skip node,python,pipx,rustup,claude,linux --no-emoji)"
 echo "$out" | grep -q '^==> brew START$'
+echo "$out" | grep -q '^==> shell START$'
 echo "$out" | grep -q '^==> mas START$'
 echo "$out" | grep -q '^==> macos START$'
 grep -q '^brew upgrade --greedy$' "$CALL_LOG"
@@ -196,5 +208,20 @@ grep -q '^sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update$' "$CALL_LOG
 grep -q '^sudo -n env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y$' "$CALL_LOG"
 grep -q '^apt-get update$' "$CALL_LOG"
 grep -q '^apt-get upgrade -y$' "$CALL_LOG"
+
+echo "Test: shell module updates Oh My Zsh repos"
+shell_home="${tmp_dir}/home-shell"
+omz_dir="${shell_home}/.oh-my-zsh"
+mkdir -p "${omz_dir}/custom/plugins/zsh-autosuggestions"
+mkdir -p "${omz_dir}/custom/themes/powerlevel10k"
+touch "${omz_dir}/.git"
+touch "${omz_dir}/custom/plugins/zsh-autosuggestions/.git"
+touch "${omz_dir}/custom/themes/powerlevel10k/.git"
+
+: >"$CALL_LOG"
+HOME="$shell_home" "$SCRIPT" --only shell --non-interactive --no-emoji >/dev/null
+grep -q "^GIT_TERMINAL_PROMPT=0 git -C ${omz_dir} pull --ff-only$" "$CALL_LOG"
+grep -q "^GIT_TERMINAL_PROMPT=0 git -C ${omz_dir}/custom/plugins/zsh-autosuggestions pull --ff-only$" "$CALL_LOG"
+grep -q "^GIT_TERMINAL_PROMPT=0 git -C ${omz_dir}/custom/themes/powerlevel10k pull --ff-only$" "$CALL_LOG"
 
 echo "All tests passed."
