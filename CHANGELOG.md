@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-01-30
+
+### Fixed
+
+- Self-update now accepts checksum entries that include a path prefix (e.g. `dist/updates`).
+- Release `SHA256SUMS` now uses basenames (enables self-update from `v0.8.0`).
+
 ## [0.8.0] - 2026-01-30
 
 ### Added

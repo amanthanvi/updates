@@ -68,7 +68,7 @@ jobs:
           tar -czf "dist/${ARCHIVE}" \
             updates README.md SPEC.md LICENSE CHANGELOG.md CONTRIBUTING.md CODE_OF_CONDUCT.md SECURITY.md
 
-          sha256sum dist/* > dist/SHA256SUMS
+          (cd dist && sha256sum updates "${ARCHIVE}" > SHA256SUMS)
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

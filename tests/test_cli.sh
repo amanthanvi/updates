@@ -227,4 +227,108 @@ grep -q "^GIT_TERMINAL_PROMPT=0 git -C ${omz_dir} pull --ff-only$" "$CALL_LOG"
 grep -q "^GIT_TERMINAL_PROMPT=0 git -C ${omz_dir}/custom/plugins/zsh-autosuggestions pull --ff-only$" "$CALL_LOG"
 grep -q "^GIT_TERMINAL_PROMPT=0 git -C ${omz_dir}/custom/themes/powerlevel10k pull --ff-only$" "$CALL_LOG"
 
+echo "Test: self-update accepts checksum paths (dist/updates)"
+self_update_home="${tmp_dir}/home-self-update"
+mkdir -p "$self_update_home"
+
+self_update_bin="${tmp_dir}/self-update-bin"
+mkdir -p "$self_update_bin"
+
+self_update_fixtures="${tmp_dir}/self-update-fixtures"
+mkdir -p "$self_update_fixtures"
+
+self_update_old="${self_update_bin}/updates"
+self_update_new="${self_update_fixtures}/updates.new"
+
+mk_versioned_copy() {
+	local src="$1"
+	local dest="$2"
+	local ver="$3"
+	local tmp="${dest}.tmp"
+
+	awk -v ver="$ver" '
+		BEGIN { done = 0 }
+		{
+			if (done == 0 && $0 ~ /^UPDATES_VERSION="/) {
+				print "UPDATES_VERSION=\"" ver "\""
+				done = 1
+				next
+			}
+			print
+		}
+	' "$src" >"$tmp"
+	mv "$tmp" "$dest"
+	chmod +x "$dest"
+}
+
+mk_versioned_copy "$SCRIPT" "$self_update_old" "0.0.1"
+mk_versioned_copy "$SCRIPT" "$self_update_new" "0.0.2"
+
+sha256_file() {
+	local f="$1"
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$f" | awk '{print $1}'
+		return 0
+	fi
+	if command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$f" | awk '{print $1}'
+		return 0
+	fi
+	echo "No sha256 tool available (sha256sum/shasum)" >&2
+	return 1
+}
+
+sha="$(sha256_file "$self_update_new")"
+printf '%s  dist/updates\n' "$sha" >"${self_update_fixtures}/SHA256SUMS"
+
+export SELF_UPDATE_FIXTURES="$self_update_fixtures"
+# shellcheck disable=SC2016
+write_stub curl '
+out=""
+url=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-o)
+		out="${2:-}"
+		shift 2
+		;;
+	http*://*)
+		url="$1"
+		shift
+		;;
+	*)
+		shift
+		;;
+	esac
+done
+
+case "$url" in
+*/releases/latest)
+	echo "{\"tag_name\":\"v0.0.2\"}"
+	;;
+*/updates)
+	cp "${SELF_UPDATE_FIXTURES}/updates.new" "$out"
+	;;
+*/SHA256SUMS)
+	cp "${SELF_UPDATE_FIXTURES}/SHA256SUMS" "$out"
+	;;
+*)
+	echo "curl stub: unexpected url: $url" >&2
+	exit 1
+	;;
+esac
+'
+
+# Ensure self-update isn't skipped due to our git stub always succeeding.
+write_stub git 'exit 1'
+
+out="$(UPDATES_SELF_UPDATE=1 CI="" UPDATES_SELF_UPDATE_REPO=fake/repo HOME="$self_update_home" "$self_update_old" --only brew --no-emoji --no-color 2>&1)"
+echo "$out" | grep -q 'updates: self-update available (0.0.1 -> 0.0.2)'
+echo "$out" | grep -q 'updates: updated to 0.0.2; restarting'
+
+if [ "$("$self_update_old" --version)" != "0.0.2" ]; then
+	echo "Expected self-update to replace the installed script" >&2
+	exit 1
+fi
+
 echo "All tests passed."

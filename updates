@@ -2,7 +2,7 @@
 
 set -o pipefail
 
-UPDATES_VERSION="0.8.0"
+UPDATES_VERSION="0.8.1"
 
 SCRIPT_NAME="$(basename "$0")"
 
@@ -424,7 +424,7 @@ maybe_self_update() {
 	fi
 
 	local expected=""
-	expected="$(awk '$2=="updates"{print $1; exit}' "$tmp_sums" 2>/dev/null || true)"
+	expected="$(awk '$2 ~ /(^|\/)updates$/{print $1; exit}' "$tmp_sums" 2>/dev/null || true)"
 	if [ -z "$expected" ]; then
 		warn "updates: self-update checksum missing; continuing"
 		rm -rf "$tmp_dir"
