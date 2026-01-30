@@ -20,6 +20,9 @@ mkdir -p "$stub_bin"
 BASE_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH="${stub_bin}:${BASE_PATH}"
 
+# Self-update hits the network by default; disable for deterministic tests.
+export UPDATES_SELF_UPDATE=0
+
 write_stub() {
 	local name="$1"
 	shift

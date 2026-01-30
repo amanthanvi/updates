@@ -93,6 +93,7 @@ Output verbosity:
 
 - `-q`, `--quiet`: reduce output (warnings/errors still print).
 - `-v`, `--verbose`: print extra debug lines (including commands, prefixed with `+`).
+- `--self-update` / `--no-self-update`: enable/disable self-update (default enabled).
 - `--no-emoji`: disable emoji.
 - `--no-color`: disable ANSI colors.
 
@@ -115,6 +116,13 @@ macOS module flags:
 - `--mas-upgrade` / `--no-mas-upgrade`: enable the `mas` module in default runs (default disabled; `--only mas` still forces it).
 - `--macos-updates` / `--no-macos-updates`: enable the `macos` module in default runs (default disabled; `--only macos` still forces it).
 
+Self-update:
+
+- When enabled, `updates` checks GitHub Releases for `UPDATES_SELF_UPDATE_REPO` (default `amanthanvi/updates`).
+- If the latest release tag is newer than `UPDATES_VERSION`, it downloads the `updates` release artifact and verifies it against `SHA256SUMS`.
+- If install succeeds, it replaces the current script and re-execs itself once (guarded by `UPDATES_SELF_UPDATED=1`).
+- Self-update is skipped in `--dry-run` mode and when `CI` is set.
+
 ### Module lists (`--only`, `--skip`)
 
 Module lists are parsed from a **single argument**:
@@ -134,6 +142,11 @@ Precedence rules:
 - `UPDATES_ALLOW_NON_DARWIN=1`
   - When set, the script runs on unsupported OSes and prints a warning.
   - Intended for tests/CI and advanced usage; behavior is not guaranteed outside macOS/Linux.
+- `UPDATES_SELF_UPDATE=0`
+  - Disables self-update (useful for tests/CI or locked-down environments).
+- `UPDATES_SELF_UPDATE_REPO=owner/repo`
+  - GitHub repository to check for releases (default: `amanthanvi/updates`).
+  - Self-update downloads the `updates` release artifact and verifies it against `SHA256SUMS`.
 - `NO_COLOR=1`
   - Disables ANSI colors in output.
 
