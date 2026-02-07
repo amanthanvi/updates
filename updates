@@ -8,8 +8,6 @@ SCRIPT_NAME="$(basename "$0")"
 
 DRY_RUN=0
 STRICT=0
-QUIET=0
-VERBOSE=0
 NO_EMOJI=0
 NO_COLOR_OUTPUT=0
 NON_INTERACTIVE=0
@@ -17,6 +15,12 @@ PYTHON_BREAK_SYSTEM_PACKAGES=0
 LOG_FILE=""
 PARALLEL=4
 SELF_UPDATE=1
+NO_CONFIG=0
+JSON=0
+
+LOG_LEVEL="info"
+LOG_LEVEL_NUM=2
+HUMAN_FD=1
 
 BREW_GREEDY=1
 BREW_CLEANUP=1
@@ -28,9 +32,12 @@ MACOS_UPDATES=0
 
 only_modules=()
 skip_modules=()
+config_skip_modules=()
 successes=()
 skipped=()
 failures=()
+
+CURRENT_MODULE="main"
 
 COLOR_STDOUT=0
 COLOR_STDERR=0
@@ -43,17 +50,158 @@ C_YELLOW=""
 C_BLUE=""
 
 print() {
-	printf '%s\n' "$*"
+	printf '%s\n' "$*" >&"$HUMAN_FD"
+}
+
+set_log_level() {
+	case "$1" in
+	error)
+		LOG_LEVEL="error"
+		LOG_LEVEL_NUM=0
+		;;
+	warn)
+		LOG_LEVEL="warn"
+		LOG_LEVEL_NUM=1
+		;;
+	info)
+		LOG_LEVEL="info"
+		LOG_LEVEL_NUM=2
+		;;
+	debug)
+		LOG_LEVEL="debug"
+		LOG_LEVEL_NUM=3
+		;;
+	*)
+		die "--log-level must be one of: error, warn, info, debug"
+		;;
+	esac
+}
+
+json_enabled() {
+	[ "$JSON" -eq 1 ]
+}
+
+json_timestamp() {
+	date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+json_escape() {
+	local s="$1"
+	s="${s//\\/\\\\}"
+	s="${s//\"/\\\"}"
+	s="${s//$'\n'/\\n}"
+	s="${s//$'\r'/\\r}"
+	s="${s//$'\t'/\\t}"
+	printf '%s' "$s"
+}
+
+json_emit_message_event() {
+	local event="$1"
+	local module="$2"
+	local message="$3"
+
+	if ! json_enabled; then
+		return 0
+	fi
+
+	local ts
+	ts="$(json_timestamp)"
+
+	printf '{"event":"%s","module":"%s","message":"%s","timestamp":"%s"}\n' \
+		"$event" \
+		"$(json_escape "$module")" \
+		"$(json_escape "$message")" \
+		"$ts"
+}
+
+json_emit_module_start() {
+	local module="$1"
+
+	if ! json_enabled; then
+		return 0
+	fi
+
+	local ts
+	ts="$(json_timestamp)"
+
+	printf '{"event":"module_start","module":"%s","timestamp":"%s"}\n' \
+		"$(json_escape "$module")" \
+		"$ts"
+}
+
+json_emit_module_end() {
+	local module="$1"
+	local status="$2"
+	local seconds="$3"
+
+	if ! json_enabled; then
+		return 0
+	fi
+
+	local ts
+	ts="$(json_timestamp)"
+
+	printf '{"event":"module_end","module":"%s","status":"%s","seconds":%s,"timestamp":"%s"}\n' \
+		"$(json_escape "$module")" \
+		"$(json_escape "$status")" \
+		"$seconds" \
+		"$ts"
+}
+
+json_array() {
+	local first=1
+	printf '['
+	local item
+	for item in "$@"; do
+		if [ "$first" -eq 0 ]; then
+			printf ','
+		fi
+		first=0
+		printf '"%s"' "$(json_escape "$item")"
+	done
+	printf ']'
+}
+
+json_emit_summary() {
+	local ok="$1"
+	local skip="$2"
+	local fail="$3"
+	local total_seconds="$4"
+	shift 4
+	local -a failures=("$@")
+
+	if ! json_enabled; then
+		return 0
+	fi
+
+	local ts
+	ts="$(json_timestamp)"
+
+	printf '{"event":"summary","ok":%s,"skip":%s,"fail":%s,"total_seconds":%s,"failures":%s,"timestamp":"%s"}\n' \
+		"$ok" \
+		"$skip" \
+		"$fail" \
+		"$total_seconds" \
+		"$(json_array "${failures[@]}")" \
+		"$ts"
+}
+
+progress() {
+	if [ "$LOG_LEVEL_NUM" -ge 1 ]; then
+		print "$*"
+	fi
 }
 
 log() {
-	if [ "$QUIET" -eq 0 ]; then
+	json_emit_message_event log "$CURRENT_MODULE" "$*"
+	if [ "$LOG_LEVEL_NUM" -ge 2 ]; then
 		print "$*"
 	fi
 }
 
 debug() {
-	if [ "$VERBOSE" -eq 1 ]; then
+	json_emit_message_event log "$CURRENT_MODULE" "$*"
+	if [ "$LOG_LEVEL_NUM" -ge 3 ]; then
 		print "$*"
 	fi
 }
@@ -94,18 +242,23 @@ init_colors() {
 }
 
 warn() {
+	json_emit_message_event warn "$CURRENT_MODULE" "$*"
+	if [ "$LOG_LEVEL_NUM" -lt 1 ]; then
+		return 0
+	fi
 	if [ "$COLOR_STDERR" -eq 1 ]; then
-		print "${C_YELLOW}WARN:${C_RESET} $*" >&2
+		printf '%s\n' "${C_YELLOW}WARN:${C_RESET} $*" >&2
 	else
-		print "WARN: $*" >&2
+		printf '%s\n' "WARN: $*" >&2
 	fi
 }
 
 err() {
+	json_emit_message_event error "$CURRENT_MODULE" "$*"
 	if [ "$COLOR_STDERR" -eq 1 ]; then
-		print "${C_RED}ERROR:${C_RESET} $*" >&2
+		printf '%s\n' "${C_RED}ERROR:${C_RESET} $*" >&2
 	else
-		print "ERROR: $*" >&2
+		printf '%s\n' "ERROR: $*" >&2
 	fi
 }
 
@@ -257,7 +410,11 @@ run() {
 	if [ "$DRY_RUN" -eq 1 ]; then
 		return 0
 	fi
-	"$@"
+	if [ "$JSON" -eq 1 ]; then
+		"$@" 1>&2
+	else
+		"$@"
+	fi
 }
 
 semver_is_valid() {
@@ -578,6 +735,166 @@ Examples:
 EOF
 }
 
+pre_scan_no_config() {
+	local arg
+	for arg in "$@"; do
+		case "$arg" in
+		--no-config)
+			NO_CONFIG=1
+			;;
+		--json)
+			JSON=1
+			;;
+		-h | --help | --version | --list-modules)
+			# These commands don't need config defaults; avoid config parse warnings
+			# polluting help/version output (and keep --json + --help sane).
+			NO_CONFIG=1
+			;;
+		esac
+	done
+	return 0
+}
+
+config_parse_module_list() {
+	local list="$1"
+	local m
+	for m in $(normalize_module_list "$list"); do
+		[ -n "$m" ] || continue
+		if ! is_module_known "$m"; then
+			warn "config: unknown module in SKIP_MODULES: $m"
+			continue
+		fi
+		config_skip_modules+=("$m")
+	done
+}
+
+read_config() {
+	if [ "$NO_CONFIG" -eq 1 ]; then
+		return 0
+	fi
+
+	local config_path="${HOME}/.updatesrc"
+	if [ ! -f "$config_path" ]; then
+		return 0
+	fi
+
+	local line key val
+	while IFS= read -r line || [ -n "$line" ]; do
+		# Trim whitespace.
+		line="${line#"${line%%[![:space:]]*}"}"
+		line="${line%"${line##*[![:space:]]}"}"
+
+		# Skip empty lines and comments.
+		[ -n "$line" ] || continue
+		case "$line" in
+		\#*) continue ;;
+		esac
+
+		if ! [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+			continue
+		fi
+
+		key="${BASH_REMATCH[1]}"
+		val="${BASH_REMATCH[2]}"
+
+		# Trim whitespace around the value.
+		val="${val#"${val%%[![:space:]]*}"}"
+		val="${val%"${val##*[![:space:]]}"}"
+
+		# Strip a single layer of surrounding quotes.
+		case "$val" in
+		\"*\")
+			val="${val#\"}"
+			val="${val%\"}"
+			;;
+		\'*\')
+			val="${val#\'}"
+			val="${val%\'}"
+			;;
+		esac
+
+		case "$key" in
+		SKIP_MODULES)
+			config_skip_modules=()
+			config_parse_module_list "$val"
+			;;
+		BREW_CLEANUP)
+			case "$val" in
+			0) BREW_CLEANUP=0 ;;
+			1) BREW_CLEANUP=1 ;;
+			*) warn "config: BREW_CLEANUP must be 0 or 1 (got: $val)" ;;
+			esac
+			;;
+		MAS_UPGRADE)
+			case "$val" in
+			0) MAS_UPGRADE=0 ;;
+			1) MAS_UPGRADE=1 ;;
+			*) warn "config: MAS_UPGRADE must be 0 or 1 (got: $val)" ;;
+			esac
+			;;
+		MACOS_UPDATES)
+			case "$val" in
+			0) MACOS_UPDATES=0 ;;
+			1) MACOS_UPDATES=1 ;;
+			*) warn "config: MACOS_UPDATES must be 0 or 1 (got: $val)" ;;
+			esac
+			;;
+		LOG_LEVEL)
+			case "$val" in
+			error | warn | info | debug) set_log_level "$val" ;;
+			*) warn "config: LOG_LEVEL must be error, warn, info, or debug (got: $val)" ;;
+			esac
+			;;
+		PARALLEL)
+			case "$val" in
+			'' | *[!0-9]*)
+				warn "config: PARALLEL must be a positive integer (got: $val)"
+				;;
+			*)
+				if [ "$val" -lt 1 ]; then
+					warn "config: PARALLEL must be >= 1 (got: $val)"
+				else
+					PARALLEL="$val"
+				fi
+				;;
+			esac
+			;;
+		PIP_FORCE)
+			case "$val" in
+			0) PYTHON_BREAK_SYSTEM_PACKAGES=0 ;;
+			1) PYTHON_BREAK_SYSTEM_PACKAGES=1 ;;
+			*) warn "config: PIP_FORCE must be 0 or 1 (got: $val)" ;;
+			esac
+			;;
+		SELF_UPDATE)
+			case "$val" in
+			0) SELF_UPDATE=0 ;;
+			1) SELF_UPDATE=1 ;;
+			*) warn "config: SELF_UPDATE must be 0 or 1 (got: $val)" ;;
+			esac
+			;;
+		NO_EMOJI)
+			case "$val" in
+			0) NO_EMOJI=0 ;;
+			1) NO_EMOJI=1 ;;
+			*) warn "config: NO_EMOJI must be 0 or 1 (got: $val)" ;;
+			esac
+			;;
+		NO_COLOR)
+			case "$val" in
+			0) NO_COLOR_OUTPUT=0 ;;
+			1) NO_COLOR_OUTPUT=1 ;;
+			*) warn "config: NO_COLOR must be 0 or 1 (got: $val)" ;;
+			esac
+			;;
+		*)
+			# Unknown keys are ignored for forward compatibility.
+			:
+			;;
+		esac
+	done <"$config_path"
+}
+
 parse_args() {
 	while [ $# -gt 0 ]; do
 		case "$1" in
@@ -600,10 +917,20 @@ parse_args() {
 			STRICT=1
 			;;
 		-q | --quiet)
-			QUIET=1
+			warn "--quiet is deprecated; use --log-level warn"
+			set_log_level warn
 			;;
 		-v | --verbose)
-			VERBOSE=1
+			warn "--verbose is deprecated; use --log-level debug"
+			set_log_level debug
+			;;
+		--log-level)
+			shift
+			[ $# -gt 0 ] || die "--log-level requires a value"
+			set_log_level "$1"
+			;;
+		--json)
+			JSON=1
 			;;
 		--self-update)
 			SELF_UPDATE=1
@@ -617,7 +944,10 @@ parse_args() {
 		--no-color)
 			NO_COLOR_OUTPUT=1
 			;;
-		--non-interactive)
+		--no-config)
+			NO_CONFIG=1
+			;;
+		-n | --non-interactive)
 			NON_INTERACTIVE=1
 			;;
 		--python-break-system-packages)
@@ -726,6 +1056,10 @@ module_selected() {
 	if [ "${#only_modules[@]}" -gt 0 ]; then
 		contains_word "$name" "${only_modules[@]}"
 		return $?
+	fi
+
+	if contains_word "$name" "${config_skip_modules[@]}"; then
+		return 1
 	fi
 
 	if [ "$name" = "mas" ] && [ "$MAS_UPGRADE" -eq 0 ]; then
@@ -1226,7 +1560,11 @@ module_python() {
 
 	for pkg in "${packages[@]}"; do
 		debug "+ ${pip_install_args[*]} $pkg"
-		"${pip_install_args[@]}" "$pkg" &
+		if [ "$JSON" -eq 1 ]; then
+			"${pip_install_args[@]}" "$pkg" 1>&2 &
+		else
+			"${pip_install_args[@]}" "$pkg" &
+		fi
 		pids+=("$!")
 		pid_pkgs+=("$pkg")
 
@@ -1337,30 +1675,36 @@ run_selected_modules() {
 			continue
 		fi
 
-		log "$(format_boundary_start "$m")"
+		json_emit_module_start "$m"
+		progress "$(format_boundary_start "$m")"
 		local start="$SECONDS"
 
+		CURRENT_MODULE="$m"
 		debug "Running module: $m"
 		local rc=0
 		"module_${m}"
 		rc=$?
+		CURRENT_MODULE="main"
 		local dur=$((SECONDS - start))
 
 		if [ "$rc" -eq 0 ]; then
 			successes+=("$m")
-			log "$(format_boundary_end "$m" OK "$dur")"
+			json_emit_module_end "$m" ok "$dur"
+			progress "$(format_boundary_end "$m" OK "$dur")"
 			continue
 		fi
 
 		# 2 means "skipped due to missing dependency"
 		if [ "$rc" -eq 2 ]; then
 			skipped+=("$m")
-			log "$(format_boundary_end "$m" SKIP "$dur")"
+			json_emit_module_end "$m" skip "$dur"
+			progress "$(format_boundary_end "$m" SKIP "$dur")"
 			continue
 		fi
 
 		failures+=("$m")
-		log "$(format_boundary_end "$m" FAIL "$dur")"
+		json_emit_module_end "$m" fail "$dur"
+		progress "$(format_boundary_end "$m" FAIL "$dur")"
 		if [ "$STRICT" -eq 1 ]; then
 			return 1
 		fi
@@ -1380,12 +1724,22 @@ on_interrupt() {
 }
 
 main() {
+	pre_scan_no_config "$@"
+	read_config
 	parse_args "$@"
+
+	if [ "$JSON" -eq 1 ]; then
+		HUMAN_FD=2
+	fi
 
 	if [ -n "$LOG_FILE" ] && [ "${UPDATES_LOG_REDIRECTED:-0}" != "1" ]; then
 		mkdir -p "$(dirname "$LOG_FILE")" || die "Failed to create log dir"
 		export UPDATES_LOG_REDIRECTED=1
-		exec > >(tee -a "$LOG_FILE") 2>&1
+		if [ "$JSON" -eq 1 ]; then
+			exec 2> >(tee -a "$LOG_FILE" >&2)
+		else
+			exec > >(tee -a "$LOG_FILE") 2>&1
+		fi
 	fi
 
 	init_colors
@@ -1399,13 +1753,16 @@ main() {
 
 	maybe_self_update "$@"
 
+	debug "log-level: ${LOG_LEVEL}"
+
 	log "Starting updates..."
 	SECONDS=0
 
 	local rc=0
 	if run_selected_modules; then
 		local total="${SECONDS}"
-		log "$(format_summary "${#successes[@]}" "${#skipped[@]}" "${#failures[@]}" "$total")"
+		json_emit_summary "${#successes[@]}" "${#skipped[@]}" "${#failures[@]}" "$total" "${failures[@]}"
+		progress "$(format_summary "${#successes[@]}" "${#skipped[@]}" "${#failures[@]}" "$total")"
 		log "Done in ${total}s. $(emoji "🎉")"
 		return 0
 	fi
@@ -1415,7 +1772,8 @@ main() {
 	if [ "${#failures[@]}" -gt 0 ]; then
 		failures_csv="$(csv_join "${failures[@]}")"
 	fi
-	log "$(format_summary "${#successes[@]}" "${#skipped[@]}" "${#failures[@]}" "$total" "$failures_csv")"
+	json_emit_summary "${#successes[@]}" "${#skipped[@]}" "${#failures[@]}" "$total" "${failures[@]}"
+	progress "$(format_summary "${#successes[@]}" "${#skipped[@]}" "${#failures[@]}" "$total" "$failures_csv")"
 	err "Completed in ${total}s with failures: ${failures[*]}"
 	return 1
 }
