@@ -153,11 +153,15 @@ Python:
 
 | Old flag | Replacement |
 |----------|-------------|
-| `--brew-casks` / `--no-brew-casks` | `--brew-mode casks` / `--brew-mode formula` |
-| `--brew-greedy` / `--no-brew-greedy` | `--brew-mode greedy` / `--brew-mode formula` |
+| `--brew-casks` | `--brew-mode greedy` | Matches v0.x default (`--brew-greedy` enabled) |
+| `--no-brew-casks` | `--brew-mode formula` | |
+| `--brew-greedy` | `--brew-mode greedy` | Only meaningful when casks are enabled |
+| `--no-brew-greedy` | `--brew-mode casks` | Keeps casks but disables greedy |
 | `-q`, `--quiet` | `--log-level warn` |
 | `-v`, `--verbose` | `--log-level debug` |
 | `--python-break-system-packages` | `--pip-force` |
+
+If you previously used `--brew-casks --no-brew-greedy`, the equivalent is `--brew-mode casks`.
 
 ### 3.4 --brew-mode details
 
@@ -485,7 +489,9 @@ Purpose: update Go binaries from a user-specified list.
 - Binary list: read from `GO_BINARIES` in `~/.updatesrc` (CSV of `module` or `module@version` entries).
   - If an entry omits `@version`, it defaults to `@latest` (hands-off).
 - Non-dry-run: `go install <module>@<version>` for each entry.
-- If `GO_BINARIES` is empty or unset, the module is skipped (return `2`).
+- If `GO_BINARIES` is empty or unset:
+  - default runs: skipped (return `2`)
+  - `--only go`: error (return `1`)
 - Side effects: rebuilds and installs Go binaries to `$GOBIN` or `$GOPATH/bin`.
 
 ### 8.13 `macos`
@@ -574,10 +580,10 @@ Ship all v1.0 features (config file, `--json`, new modules, `--brew-mode`, `--lo
 
 | v0.x flag | v1.0 replacement | Notes |
 |-----------|------------------|-------|
-| `--brew-casks` | `--brew-mode casks` | |
+| `--brew-casks` | `--brew-mode greedy` | Matches v0.x default (`--brew-greedy` enabled) |
 | `--no-brew-casks` | `--brew-mode formula` | |
 | `--brew-greedy` | `--brew-mode greedy` | |
-| `--no-brew-greedy` | `--brew-mode formula` | Greedy was the cask default |
+| `--no-brew-greedy` | `--brew-mode casks` | Disables greedy but keeps casks |
 | `-q`, `--quiet` | `--log-level warn` | |
 | `-v`, `--verbose` | `--log-level debug` | |
 | `--python-break-system-packages` | `--pip-force` | |
@@ -670,8 +676,7 @@ Maintainer workflow:
 
 ### Open questions
 
-- Should `--json` + `--log-file` log the JSONL stream to the file, or just the human stderr output?
-  - Decision needed before v0.9.0 ships because it affects backwards compatibility for log consumers.
+- None (current behavior: in `--json` mode, `--log-file` captures the human stderr stream; JSONL remains on stdout).
 
 ### Risks
 

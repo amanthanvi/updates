@@ -743,27 +743,34 @@ Options:
       --only <list>        Run only these modules (CSV; or quote a space-separated list)
       --skip <list>        Skip these modules (CSV; or quote a space-separated list)
       --strict             Stop on first failure
-  -q, --quiet              Reduce output
-  -v, --verbose            Print commands as they run
+      --log-level <level>  Output level: error, warn, info, debug (default: info)
+      --json               Emit JSONL events to stdout (human output to stderr)
       --[no-]self-update   Check GitHub for a newer version and update this script (default: enabled)
+  -n, --non-interactive    Avoid interactive prompts when possible
+      --no-config          Ignore ~/.updatesrc
       --no-emoji           Disable emoji in output
       --no-color           Disable ANSI colors in output
-      --log-file <path>    Tee output to a log file
-      --non-interactive    Avoid interactive prompts when possible
+      --log-file <path>    Append human output to a log file
       --parallel <N>       Parallelism for pip upgrades (default: ${PARALLEL})
-      --python-break-system-packages
-                            Pass --break-system-packages to pip (dangerous)
-      --full               Enable app/system update modules (casks, mas, macos)
-      --[no-]brew-greedy   Include greedy cask upgrades (default: enabled)
-      --[no-]brew-casks    Upgrade Homebrew casks (default: disabled on macOS)
+      --pip-force          Pass --break-system-packages to pip (dangerous)
+      --brew-mode <mode>   Homebrew scope: formula, casks, greedy
       --[no-]brew-cleanup  Run brew cleanup after upgrade (default: enabled)
+      --full               Enable everything (brew greedy + mas + macos + all detected modules)
       --[no-]mas-upgrade   Upgrade Mac App Store apps (default: disabled)
       --[no-]macos-updates List available macOS software updates (default: disabled)
+
+Deprecated (v0.9.x; removed in v1.0.0):
+  -q, --quiet
+  -v, --verbose
+      --python-break-system-packages
+      --[no-]brew-greedy
+      --[no-]brew-casks
 
 Examples:
   ${SCRIPT_NAME}
   ${SCRIPT_NAME} --dry-run
-  ${SCRIPT_NAME} --only brew,node
+  ${SCRIPT_NAME} --only brew,node --brew-mode formula
+  ${SCRIPT_NAME} --json -n --no-self-update --log-level warn
   ${SCRIPT_NAME} --skip python --log-file ./updates.log
 
 EOF
