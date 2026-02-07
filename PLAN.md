@@ -82,10 +82,10 @@ This is the execution plan for shipping `updates` **v1.0.0**. It is a living che
 - [x] Remove deprecated flags entirely; using them must error (exit `2`).
 - [x] Update tests to assert deprecated flags now fail.
 - [x] Update `README.md`/help text to remove deprecated flags.
-- [ ] Update `CHANGELOG.md` with `1.0.0` entry.
-- [ ] Bump `UPDATES_VERSION` to `1.0.0`.
-- [ ] Run `./scripts/lint.sh` and `./scripts/test.sh`.
-- [ ] `./scripts/release.sh 1.0.0` and push `main` + tags.
+- [x] Update `CHANGELOG.md` with `1.0.0` entry.
+- [x] Bump `UPDATES_VERSION` to `1.0.0`.
+- [x] Run `./scripts/lint.sh` and `./scripts/test.sh`.
+- [x] `./scripts/release.sh 1.0.0` and push `main` + tags.
 
 ## Notes / decisions (locked)
 

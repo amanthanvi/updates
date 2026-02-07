@@ -8,9 +8,9 @@ If anything here disagrees with other docs, update the other docs (or this spec)
 
 - **Title:** updates v1.0.0 specification
 - **Owner (DRI):** Aman Thanvi (@amanthanvi)
-- **Status:** Draft
+- **Status:** Released
 - **Last updated:** 2026-02-07
-- **Target ship date:** TBD (0.9.0 deprecation release first, then 1.0.0)
+- **Target ship date:** 2026-02-07
 - **Links:** [Repository](https://github.com/amanthanvi/updates)
 
 ## 1) Executive Summary
