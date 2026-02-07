@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-02-07
+
+### Added
+
+- `--log-level <error|warn|info|debug>` (replaces `--quiet`/`--verbose`).
+- `--json` mode: JSONL events on stdout; human output on stderr.
+- `~/.updatesrc` config file support + `--no-config`.
+- `--brew-mode <formula|casks|greedy>` (replaces `--brew-casks`/`--brew-greedy`).
+- `--pip-force` (replaces `--python-break-system-packages`).
+- `-n` alias for `--non-interactive`.
+- New modules: `uv`, `mise`, `go` (`go` reads `GO_BINARIES` from `~/.updatesrc`, defaulting to `@latest`).
+- CI runs lint/tests on macOS and Linux.
+
+### Deprecated
+
+- `-q` / `--quiet` (use `--log-level warn`).
+- `-v` / `--verbose` (use `--log-level debug`).
+- `--python-break-system-packages` (use `--pip-force`).
+- `--brew-casks`, `--brew-greedy` (use `--brew-mode`).
+
 ## [0.8.1] - 2026-01-30
 
 ### Fixed
