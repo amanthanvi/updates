@@ -1,3 +1,99 @@
+# Plan: v1.0.0
+
+This is the execution plan for shipping `updates` **v1.0.0**. It is a living checklist and should be updated as work lands.
+
+## Release sequence
+
+- `v0.9.0`: deprecation bridge + new features (old flags still accepted with `WARN:`).
+- `v1.0.0`: stable contract (deprecated flags removed; using them is an error).
+
+## Goals (v1.0)
+
+- Freeze a stable CLI contract: **flags**, **module names**, **exit codes**, **output boundaries + summary**, and **JSONL event types**.
+- Add a simple config file (`~/.updatesrc`) for defaults (with `--no-config`).
+- Add `--json` mode for automation (JSONL on stdout; human output on stderr).
+- Replace flag sprawl with enums:
+  - `--brew-mode <formula|casks|greedy>`
+  - `--log-level <error|warn|info|debug>`
+- Add modules: `uv`, `mise`, `go`.
+- Keep the script safe-by-default, deterministic in tests, and Bash 3.2 compatible.
+
+## Non-goals
+
+- No rich TUI and no new output formats beyond JSONL + current human text.
+- No new runtime dependencies.
+- No plugin system / third-party modules.
+- No auto-installation of missing tools.
+
+## Execution checklist
+
+### Milestone: v0.9.0 (deprecation bridge)
+
+#### 1) Docs + scaffolding (spec-first)
+
+- [ ] Update `SPEC.md` where decisions changed (e.g. `--full`, go `@latest` default).
+- [ ] Add/refresh this `PLAN.md` section for v0.9.0 + v1.0.0.
+- [ ] Update repo `AGENTS.md` with v1.0 dev rules (Bash 3.2, JSON stdout purity, golden commands).
+
+#### 2) Core CLI surface (v1 flags added; v0 flags deprecated)
+
+- [ ] Add `--log-level <error|warn|info|debug>` (default `info`).
+- [ ] Add `--json` (JSONL on stdout; human logs on stderr).
+- [ ] Add `--no-config` and implement `~/.updatesrc` (config < CLI flags).
+- [ ] Add `--brew-mode <formula|casks|greedy>`.
+- [ ] Add `--pip-force` (maps to pip `--break-system-packages`).
+- [ ] Add `-n` alias for `--non-interactive`.
+- [ ] Keep v0.x flags working but deprecated (print `WARN:` and map internally):
+  - [ ] `--brew-casks` / `--no-brew-casks`
+  - [ ] `--brew-greedy` / `--no-brew-greedy`
+  - [ ] `-q` / `--quiet`
+  - [ ] `-v` / `--verbose`
+  - [ ] `--python-break-system-packages`
+
+#### 3) Module work
+
+- [ ] Add module: `uv` (`uv self update` + `uv tool upgrade --all`).
+- [ ] Add module: `mise` (`mise self-update` + `mise upgrade`).
+- [ ] Add module: `go` (`go install <module>@<version>`; default to `@latest` when version omitted).
+- [ ] Update module registration everywhere (`is_module_known`, descriptions, list, supported matrix, execution order).
+- [ ] Ensure `--full` enables `mas` + `macos` and runs everything else (including `uv`/`mise`/`go` when detected/configured).
+
+#### 4) Tests + CI + docs alignment
+
+- [ ] Expand `tests/test_cli.sh`:
+  - [ ] config precedence + `--no-config`
+  - [ ] `--brew-mode` and deprecated brew flags mapping
+  - [ ] `--log-level` filtering
+  - [ ] `--json` stream purity + event sanity
+  - [ ] new module stubs: `uv`, `mise`, `go`
+  - [ ] deprecated flags emit `WARN:` (0.9.0 behavior)
+- [ ] Update `README.md` with new flags/modules/config examples.
+- [ ] Update CI to run on macOS + Linux.
+
+#### 5) Release v0.9.0
+
+- [ ] Update `CHANGELOG.md` with `0.9.0` entry.
+- [ ] Bump `UPDATES_VERSION` to `0.9.0`.
+- [ ] Run `./scripts/lint.sh` and `./scripts/test.sh`.
+- [ ] `./scripts/release.sh 0.9.0` and push `main` + tags.
+
+### Milestone: v1.0.0 (breaking cleanup)
+
+- [ ] Remove deprecated flags entirely; using them must error (exit `2`).
+- [ ] Update tests to assert deprecated flags now fail.
+- [ ] Update `README.md`/help text to remove deprecated flags.
+- [ ] Update `CHANGELOG.md` with `1.0.0` entry.
+- [ ] Bump `UPDATES_VERSION` to `1.0.0`.
+- [ ] Run `./scripts/lint.sh` and `./scripts/test.sh`.
+- [ ] `./scripts/release.sh 1.0.0` and push `main` + tags.
+
+## Notes / decisions (locked)
+
+- Go module is hands-off by default: config entries may omit `@version` and will default to `@latest`.
+- `--full` should run everything it can (including `uv`/`mise`/`go`, plus the existing opt-in modules).
+
+---
+
 # Plan: v0.4.0
 
 This is the execution plan for shipping `updates` **v0.4.0**. It is a living checklist and should be updated as work lands.
