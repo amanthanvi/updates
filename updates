@@ -369,6 +369,36 @@ apply_platform_defaults() {
 	fi
 }
 
+set_brew_mode() {
+	local mode="$1"
+	local ctx="${2:-cli}"
+
+	case "$mode" in
+	formula)
+		BREW_CASKS=0
+		BREW_GREEDY=0
+		BREW_CASKS_EXPLICIT=1
+		;;
+	casks)
+		BREW_CASKS=1
+		BREW_GREEDY=0
+		BREW_CASKS_EXPLICIT=1
+		;;
+	greedy)
+		BREW_CASKS=1
+		BREW_GREEDY=1
+		BREW_CASKS_EXPLICIT=1
+		;;
+	*)
+		if [ "$ctx" = "config" ]; then
+			warn "config: BREW_MODE must be formula, casks, or greedy (got: $mode)"
+			return 1
+		fi
+		die "--brew-mode must be one of: formula, casks, greedy"
+		;;
+	esac
+}
+
 module_supported() {
 	# When UPDATES_ALLOW_NON_DARWIN=1 is set, allow command-driven modules to run
 	# on unknown platforms, but still treat OS-specific modules as unsupported.
@@ -818,6 +848,9 @@ read_config() {
 			config_skip_modules=()
 			config_parse_module_list "$val"
 			;;
+		BREW_MODE)
+			set_brew_mode "$val" config || true
+			;;
 		BREW_CLEANUP)
 			case "$val" in
 			0) BREW_CLEANUP=0 ;;
@@ -951,11 +984,14 @@ parse_args() {
 			NON_INTERACTIVE=1
 			;;
 		--python-break-system-packages)
+			warn "--python-break-system-packages is deprecated; use --pip-force"
+			PYTHON_BREAK_SYSTEM_PACKAGES=1
+			;;
+		--pip-force)
 			PYTHON_BREAK_SYSTEM_PACKAGES=1
 			;;
 		--full)
-			BREW_CASKS=1
-			BREW_CASKS_EXPLICIT=1
+			set_brew_mode greedy
 			MAS_UPGRADE=1
 			MACOS_UPDATES=1
 			;;
@@ -999,17 +1035,26 @@ parse_args() {
 				skip_modules+=("$m")
 			done
 			;;
+		--brew-mode)
+			shift
+			[ $# -gt 0 ] || die "--brew-mode requires a value"
+			set_brew_mode "$1"
+			;;
 		--brew-greedy)
+			warn "--brew-greedy is deprecated; use --brew-mode greedy"
 			BREW_GREEDY=1
 			;;
 		--no-brew-greedy)
+			warn "--no-brew-greedy is deprecated; use --brew-mode casks"
 			BREW_GREEDY=0
 			;;
 		--brew-casks)
+			warn "--brew-casks is deprecated; use --brew-mode casks (or --brew-mode greedy)"
 			BREW_CASKS=1
 			BREW_CASKS_EXPLICIT=1
 			;;
 		--no-brew-casks)
+			warn "--no-brew-casks is deprecated; use --brew-mode formula"
 			BREW_CASKS=0
 			BREW_CASKS_EXPLICIT=1
 			;;
