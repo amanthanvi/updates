@@ -50,6 +50,12 @@ write_stub pipx 'echo "pipx $*" >>"$CALL_LOG"'
 # shellcheck disable=SC2016
 write_stub git 'echo "GIT_TERMINAL_PROMPT=${GIT_TERMINAL_PROMPT:-} git $*" >>"$CALL_LOG"'
 # shellcheck disable=SC2016
+write_stub uv 'echo "uv $*" >>"$CALL_LOG"'
+# shellcheck disable=SC2016
+write_stub mise 'echo "mise $*" >>"$CALL_LOG"'
+# shellcheck disable=SC2016
+write_stub go 'echo "go $*" >>"$CALL_LOG"'
+# shellcheck disable=SC2016
 write_stub rustup 'echo "rustup $*" >>"$CALL_LOG"'
 # shellcheck disable=SC2016
 write_stub claude 'echo "claude $*" >>"$CALL_LOG"'
@@ -64,6 +70,99 @@ out="$("$SCRIPT" --list-modules)"
 echo "$out" | grep -q '^brew'
 echo "$out" | grep -q '^shell'
 echo "$out" | grep -q '^linux'
+
+echo "Test: --log-level filters output"
+out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only brew --log-level warn --no-emoji --no-color)"
+echo "$out" | grep -q '^==> brew START$'
+echo "$out" | grep -q '^==> brew END (OK)'
+echo "$out" | grep -q '^==> SUMMARY ok=1 skip=0 fail=0 total='
+if echo "$out" | grep -q 'Starting updates...'; then
+	echo "Expected info logs to be suppressed at --log-level warn" >&2
+	exit 1
+fi
+if echo "$out" | grep -q 'Homebrew'; then
+	echo "Expected module info logs to be suppressed at --log-level warn" >&2
+	exit 1
+fi
+
+out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only brew --log-level error --no-emoji --no-color)"
+if [ -n "$out" ]; then
+	echo "Expected no stdout output at --log-level error" >&2
+	exit 1
+fi
+
+echo "Test: config defaults + --no-config"
+config_home="${tmp_dir}/home-config"
+mkdir -p "$config_home"
+cat >"${config_home}/.updatesrc" <<EOF
+BREW_CLEANUP=0
+BREW_MODE=greedy
+EOF
+
+out="$(HOME="$config_home" "$SCRIPT" --dry-run --only brew --no-emoji --no-color)"
+if echo "$out" | grep -q '^DRY RUN: brew cleanup$'; then
+	echo "Expected BREW_CLEANUP=0 to disable brew cleanup" >&2
+	exit 1
+fi
+echo "$out" | grep -q '^DRY RUN: brew upgrade --greedy$'
+
+out="$(HOME="$config_home" "$SCRIPT" --dry-run --only brew --no-config --no-emoji --no-color)"
+echo "$out" | grep -q '^DRY RUN: brew cleanup$'
+
+out="$(HOME="$config_home" "$SCRIPT" --dry-run --only brew --brew-mode formula --no-emoji --no-color)"
+echo "$out" | grep -q '^DRY RUN: brew upgrade --formula$'
+
+echo "Test: config SKIP_MODULES does not override --only"
+config_home_skip="${tmp_dir}/home-config-skip"
+mkdir -p "$config_home_skip"
+cat >"${config_home_skip}/.updatesrc" <<EOF
+SKIP_MODULES=node
+EOF
+out="$(HOME="$config_home_skip" "$SCRIPT" --dry-run --only node --no-emoji --no-color)"
+echo "$out" | grep -q '^==> node START$'
+
+echo "Test: --brew-mode validates input"
+set +e
+UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only brew --brew-mode nope >/dev/null 2>&1
+rc=$?
+set -e
+if [ "$rc" -ne 2 ]; then
+	echo "Expected exit code 2 for invalid --brew-mode" >&2
+	exit 1
+fi
+
+echo "Test: --json emits JSONL to stdout only"
+json_stderr="${tmp_dir}/json-stderr.log"
+: >"$json_stderr"
+json_out="$("$SCRIPT" --json --dry-run --only brew --no-emoji --no-color 2>"$json_stderr")"
+if echo "$json_out" | grep -q '^==>'; then
+	echo "Expected JSON stdout to contain no human boundary lines" >&2
+	exit 1
+fi
+grep -q '^==> brew START$' "$json_stderr"
+json_out_file="${tmp_dir}/json-out.jsonl"
+printf '%s\n' "$json_out" >"$json_out_file"
+python3 - "$json_out_file" <<'PY'
+import json, sys
+
+events = []
+modules = []
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    lines = f.readlines()
+
+for raw in lines:
+    raw = raw.strip()
+    if not raw:
+        continue
+    obj = json.loads(raw)
+    events.append(obj.get("event"))
+    modules.append(obj.get("module"))
+
+assert "module_start" in events
+assert "module_end" in events
+assert "summary" in events
+assert "brew" in modules
+PY
 
 echo "Test: --skip overrides --only"
 out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only brew,node --skip node --verbose)"
@@ -192,9 +291,16 @@ exit 1
 grep -q '^python3 -m pip list --outdated --format=json --user$' "$CALL_LOG"
 grep -q '^python3 -m pip install -U --user pillow$' "$CALL_LOG"
 
-echo "Test: python break-system-packages opt-in"
+echo "Test: python break-system-packages opt-in (pip-force)"
 : >"$CALL_LOG"
-"$SCRIPT" --only python --python-break-system-packages --no-emoji >/dev/null
+"$SCRIPT" --only python --pip-force --no-emoji >/dev/null
+grep -q '^python3 -m pip list --outdated --format=json$' "$CALL_LOG"
+grep -q '^python3 -m pip install -U --break-system-packages pillow$' "$CALL_LOG"
+
+echo "Test: python-break-system-packages is deprecated but works"
+: >"$CALL_LOG"
+out="$("$SCRIPT" --only python --python-break-system-packages --no-emoji 2>&1)"
+echo "$out" | grep -q 'deprecated; use --pip-force'
 grep -q '^python3 -m pip list --outdated --format=json$' "$CALL_LOG"
 grep -q '^python3 -m pip install -U --break-system-packages pillow$' "$CALL_LOG"
 
@@ -226,6 +332,42 @@ HOME="$shell_home" "$SCRIPT" --only shell --non-interactive --no-emoji >/dev/nul
 grep -q "^GIT_TERMINAL_PROMPT=0 git -C ${omz_dir} pull --ff-only$" "$CALL_LOG"
 grep -q "^GIT_TERMINAL_PROMPT=0 git -C ${omz_dir}/custom/plugins/zsh-autosuggestions pull --ff-only$" "$CALL_LOG"
 grep -q "^GIT_TERMINAL_PROMPT=0 git -C ${omz_dir}/custom/themes/powerlevel10k pull --ff-only$" "$CALL_LOG"
+
+echo "Test: uv module runs"
+: >"$CALL_LOG"
+"$SCRIPT" --only uv --no-emoji >/dev/null
+grep -q '^uv self update$' "$CALL_LOG"
+grep -q '^uv tool upgrade --all$' "$CALL_LOG"
+
+echo "Test: mise module runs"
+: >"$CALL_LOG"
+"$SCRIPT" --only mise --no-emoji >/dev/null
+grep -q '^mise self-update$' "$CALL_LOG"
+grep -q '^mise upgrade$' "$CALL_LOG"
+
+echo "Test: go module requires GO_BINARIES in --only mode"
+go_home_empty="${tmp_dir}/home-go-empty"
+mkdir -p "$go_home_empty"
+set +e
+out="$(HOME="$go_home_empty" "$SCRIPT" --only go --no-emoji --no-color 2>&1)"
+rc=$?
+set -e
+if [ "$rc" -ne 1 ]; then
+	echo "Expected exit code 1 when --only go without GO_BINARIES configured" >&2
+	exit 1
+fi
+echo "$out" | grep -q 'GO_BINARIES is not configured'
+
+echo "Test: go module installs configured binaries (defaults to @latest)"
+go_home="${tmp_dir}/home-go"
+mkdir -p "$go_home"
+cat >"${go_home}/.updatesrc" <<EOF
+GO_BINARIES="golang.org/x/tools/gopls,github.com/go-delve/delve/cmd/dlv@v1.2.3"
+EOF
+: >"$CALL_LOG"
+HOME="$go_home" "$SCRIPT" --only go --no-emoji --no-color >/dev/null
+grep -q '^go install golang.org/x/tools/gopls@latest$' "$CALL_LOG"
+grep -q '^go install github.com/go-delve/delve/cmd/dlv@v1.2.3$' "$CALL_LOG"
 
 echo "Test: self-update accepts checksum paths (dist/updates)"
 self_update_home="${tmp_dir}/home-self-update"
