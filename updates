@@ -759,13 +759,6 @@ Options:
       --[no-]mas-upgrade   Upgrade Mac App Store apps (default: disabled)
       --[no-]macos-updates List available macOS software updates (default: disabled)
 
-Deprecated (v0.9.x; removed in v1.0.0):
-  -q, --quiet
-  -v, --verbose
-      --python-break-system-packages
-      --[no-]brew-greedy
-      --[no-]brew-casks
-
 Examples:
   ${SCRIPT_NAME}
   ${SCRIPT_NAME} --dry-run
@@ -963,14 +956,6 @@ parse_args() {
 		--strict)
 			STRICT=1
 			;;
-		-q | --quiet)
-			warn "--quiet is deprecated; use --log-level warn"
-			set_log_level warn
-			;;
-		-v | --verbose)
-			warn "--verbose is deprecated; use --log-level debug"
-			set_log_level debug
-			;;
 		--log-level)
 			shift
 			[ $# -gt 0 ] || die "--log-level requires a value"
@@ -996,10 +981,6 @@ parse_args() {
 			;;
 		-n | --non-interactive)
 			NON_INTERACTIVE=1
-			;;
-		--python-break-system-packages)
-			warn "--python-break-system-packages is deprecated; use --pip-force"
-			PYTHON_BREAK_SYSTEM_PACKAGES=1
 			;;
 		--pip-force)
 			PYTHON_BREAK_SYSTEM_PACKAGES=1
@@ -1053,24 +1034,6 @@ parse_args() {
 			shift
 			[ $# -gt 0 ] || die "--brew-mode requires a value"
 			set_brew_mode "$1"
-			;;
-		--brew-greedy)
-			warn "--brew-greedy is deprecated; use --brew-mode greedy"
-			BREW_GREEDY=1
-			;;
-		--no-brew-greedy)
-			warn "--no-brew-greedy is deprecated; use --brew-mode casks"
-			BREW_GREEDY=0
-			;;
-		--brew-casks)
-			warn "--brew-casks is deprecated; use --brew-mode casks (or --brew-mode greedy)"
-			BREW_CASKS=1
-			BREW_CASKS_EXPLICIT=1
-			;;
-		--no-brew-casks)
-			warn "--no-brew-casks is deprecated; use --brew-mode formula"
-			BREW_CASKS=0
-			BREW_CASKS_EXPLICIT=1
 			;;
 		--brew-cleanup)
 			BREW_CLEANUP=1
@@ -1188,13 +1151,13 @@ module_brew() {
 	ensure_cmd_or_skip brew brew || return $?
 
 	if is_macos && [ "$BREW_CASKS" -eq 0 ] && [ "$BREW_CASKS_EXPLICIT" -eq 0 ]; then
-		warn "Defaulting to brew formula upgrades only on macOS. Enable casks with --brew-casks (or --full)."
+		warn "Defaulting to brew formula upgrades only on macOS. Enable casks with --brew-mode casks (or --full)."
 	fi
 
 	if is_macos && [ "$BREW_CASKS" -eq 1 ]; then
 		warn "Homebrew cask upgrades may modify /Applications."
 		warn "On macOS 26+, cask upgrades may be blocked unless your terminal app is allowed under Privacy & Security → App Management."
-		warn "If you see a system notification like \"<Terminal App> tried modifying your system but was stopped/prevented\", enable App Management for your terminal app (e.g. Ghostty), or rerun with --no-brew-casks."
+		warn "If you see a system notification like \"<Terminal App> tried modifying your system but was stopped/prevented\", enable App Management for your terminal app (e.g. Ghostty), or rerun with --brew-mode formula."
 	fi
 
 	if [ "$DRY_RUN" -eq 1 ]; then
@@ -1557,7 +1520,7 @@ module_python() {
 	elif python_externally_managed; then
 		use_user=1
 		log "python: externally-managed environment detected; upgrading user-site packages."
-		log "python: use --python-break-system-packages to override (dangerous)."
+		log "python: use --pip-force to override (dangerous)."
 	fi
 
 	local -a pip_list_args=(python3 -m pip --disable-pip-version-check list --outdated --format=json)
