@@ -131,6 +131,28 @@ if [ "$rc" -ne 2 ]; then
 	exit 1
 fi
 
+echo "Test: deprecated flags error (exit 2)"
+for flag in \
+	-q \
+	--quiet \
+	-v \
+	--verbose \
+	--python-break-system-packages \
+	--brew-casks \
+	--no-brew-casks \
+	--brew-greedy \
+	--no-brew-greedy; do
+	set +e
+	out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only brew "$flag" --no-emoji --no-color 2>&1)"
+	rc=$?
+	set -e
+	if [ "$rc" -ne 2 ]; then
+		echo "Expected exit code 2 for deprecated flag $flag (got $rc)" >&2
+		exit 1
+	fi
+	echo "$out" | grep -q 'Unknown option'
+done
+
 echo "Test: --json emits JSONL to stdout only"
 json_stderr="${tmp_dir}/json-stderr.log"
 : >"$json_stderr"
@@ -165,7 +187,7 @@ assert "brew" in modules
 PY
 
 echo "Test: --skip overrides --only"
-out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only brew,node --skip node --verbose)"
+out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only brew,node --skip node --log-level debug)"
 echo "$out" | grep -q 'Homebrew'
 if echo "$out" | grep -q 'npm globals'; then
 	echo "Expected node module to be skipped" >&2
@@ -213,12 +235,12 @@ if [ "$rc" -eq 0 ]; then
 	exit 1
 fi
 
-echo "Test: --brew-casks enables brew upgrade (greedy) on macOS"
+echo "Test: --brew-mode greedy enables brew upgrade (greedy) on macOS"
 : >"$CALL_LOG"
-"$SCRIPT" --only brew --brew-casks --no-emoji >/dev/null
+"$SCRIPT" --only brew --brew-mode greedy --no-emoji >/dev/null
 grep -q '^brew upgrade --greedy$' "$CALL_LOG"
 if grep -q '^brew upgrade --formula$' "$CALL_LOG"; then
-	echo "Expected brew formula-only upgrades to be disabled when --brew-casks is set" >&2
+	echo "Expected brew formula-only upgrades to be disabled when --brew-mode greedy is set" >&2
 	exit 1
 fi
 
@@ -294,13 +316,6 @@ grep -q '^python3 -m pip install -U --user pillow$' "$CALL_LOG"
 echo "Test: python break-system-packages opt-in (pip-force)"
 : >"$CALL_LOG"
 "$SCRIPT" --only python --pip-force --no-emoji >/dev/null
-grep -q '^python3 -m pip list --outdated --format=json$' "$CALL_LOG"
-grep -q '^python3 -m pip install -U --break-system-packages pillow$' "$CALL_LOG"
-
-echo "Test: python-break-system-packages is deprecated but works"
-: >"$CALL_LOG"
-out="$("$SCRIPT" --only python --python-break-system-packages --no-emoji 2>&1)"
-echo "$out" | grep -q 'deprecated; use --pip-force'
 grep -q '^python3 -m pip list --outdated --format=json$' "$CALL_LOG"
 grep -q '^python3 -m pip install -U --break-system-packages pillow$' "$CALL_LOG"
 
