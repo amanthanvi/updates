@@ -17,6 +17,7 @@ PARALLEL=4
 SELF_UPDATE=1
 NO_CONFIG=0
 JSON=0
+GO_BINARIES=""
 
 LOG_LEVEL="info"
 LOG_LEVEL_NUM=2
@@ -403,7 +404,7 @@ module_supported() {
 	# When UPDATES_ALLOW_NON_DARWIN=1 is set, allow command-driven modules to run
 	# on unknown platforms, but still treat OS-specific modules as unsupported.
 	case "$1" in
-	brew | shell | node | python | pipx | rustup | claude) return 0 ;;
+	brew | shell | node | python | uv | pipx | rustup | claude | mise | go) return 0 ;;
 	linux) is_linux ;;
 	mas | macos) is_macos ;;
 	*) return 1 ;;
@@ -694,7 +695,7 @@ normalize_module_list() {
 
 is_module_known() {
 	case "$1" in
-	brew | shell | linux | node | python | mas | pipx | rustup | claude | macos) return 0 ;;
+	brew | shell | linux | node | python | uv | mas | pipx | rustup | claude | mise | go | macos) return 0 ;;
 	*) return 1 ;;
 	esac
 }
@@ -706,10 +707,13 @@ module_description() {
 	linux) print "Upgrade Linux system packages" ;;
 	node) print "Upgrade global npm packages via ncu" ;;
 	python) print "Upgrade global Python packages via pip" ;;
+	uv) print "Update uv and uv-managed tools" ;;
 	mas) print "Upgrade Mac App Store apps via mas (opt-in)" ;;
 	pipx) print "Upgrade pipx-managed apps via pipx" ;;
 	rustup) print "Update Rust toolchains via rustup" ;;
 	claude) print "Update Claude Code CLI" ;;
+	mise) print "Update mise and upgrade installed tools" ;;
+	go) print "Update Go binaries from GO_BINARIES config" ;;
 	macos) print "List available macOS software updates (opt-in)" ;;
 	*) print "" ;;
 	esac
@@ -717,7 +721,7 @@ module_description() {
 
 list_modules() {
 	local m
-	for m in brew shell linux node python mas pipx rustup claude macos; do
+	for m in brew shell linux node python uv mas pipx rustup claude mise go macos; do
 		printf '%-8s %s\n' "$m" "$(module_description "$m")"
 	done
 }
@@ -919,6 +923,9 @@ read_config() {
 			1) NO_COLOR_OUTPUT=1 ;;
 			*) warn "config: NO_COLOR must be 0 or 1 (got: $val)" ;;
 			esac
+			;;
+		GO_BINARIES)
+			GO_BINARIES="$val"
 			;;
 		*)
 			# Unknown keys are ignored for forward compatibility.
@@ -1639,6 +1646,21 @@ module_python() {
 	return 0
 }
 
+module_uv() {
+	log "uv $(emoji "⚡")"
+	ensure_cmd_or_skip uv uv || return $?
+
+	if [ "$DRY_RUN" -eq 1 ]; then
+		log "DRY RUN: uv self update"
+		log "DRY RUN: uv tool upgrade --all"
+		return 0
+	fi
+
+	run uv self update || return 1
+	run uv tool upgrade --all || return 1
+	return 0
+}
+
 module_mas() {
 	log "Mac App Store $(emoji "🛍️")"
 	ensure_cmd_or_skip mas mas || return $?
@@ -1691,6 +1713,80 @@ module_claude() {
 	return 0
 }
 
+module_mise() {
+	log "mise $(emoji "🧩")"
+	ensure_cmd_or_skip mise mise || return $?
+
+	if [ "$DRY_RUN" -eq 1 ]; then
+		log "DRY RUN: mise self-update"
+		log "DRY RUN: mise upgrade"
+		return 0
+	fi
+
+	run mise self-update || return 1
+	run mise upgrade || return 1
+	return 0
+}
+
+module_go() {
+	log "Go binaries $(emoji "🐹")"
+	ensure_cmd_or_skip go go || return $?
+
+	if [ -z "${GO_BINARIES}" ]; then
+		if module_dependency_missing; then
+			err "go: GO_BINARIES is not configured (set GO_BINARIES=... in ~/.updatesrc)"
+			return 1
+		fi
+		log "Skipping go: GO_BINARIES not configured."
+		return 2
+	fi
+
+	local list
+	list="$(normalize_module_list "$GO_BINARIES")"
+
+	local -a specs=()
+	local entry
+	for entry in $list; do
+		[ -n "$entry" ] || continue
+		if [[ "$entry" == *@* ]]; then
+			specs+=("$entry")
+		else
+			specs+=("${entry}@latest")
+		fi
+	done
+
+	if [ "${#specs[@]}" -eq 0 ]; then
+		if module_dependency_missing; then
+			err "go: GO_BINARIES is empty (set GO_BINARIES=... in ~/.updatesrc)"
+			return 1
+		fi
+		log "Skipping go: GO_BINARIES is empty."
+		return 2
+	fi
+
+	if [ "$DRY_RUN" -eq 1 ]; then
+		local spec
+		for spec in "${specs[@]}"; do
+			log "DRY RUN: go install ${spec}"
+		done
+		return 0
+	fi
+
+	local failed=0
+	local spec
+	for spec in "${specs[@]}"; do
+		if ! run go install "${spec}"; then
+			err "go: install failed: ${spec}"
+			failed=1
+		fi
+	done
+
+	if [ "$failed" -ne 0 ]; then
+		return 1
+	fi
+	return 0
+}
+
 module_macos() {
 	log "macOS updates $(emoji "🍏")"
 	ensure_cmd_or_skip softwareupdate macos || return $?
@@ -1715,7 +1811,7 @@ run_selected_modules() {
 	failures=()
 
 	local m
-	for m in brew shell linux node python mas pipx rustup claude macos; do
+	for m in brew shell linux node python uv mas pipx rustup claude mise go macos; do
 		if ! module_selected "$m"; then
 			continue
 		fi
