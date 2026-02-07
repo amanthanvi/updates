@@ -6,19 +6,28 @@ on:
 
 jobs:
   lint-and-test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
       - name: Syntax check
         run: bash -n updates
-      - name: Install ShellCheck
+      - name: Install ShellCheck (Linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y shellcheck
-      - name: Install shfmt
+      - name: Install shfmt (Linux)
+        if: runner.os == 'Linux'
         run: |
           curl -fsSL https://github.com/mvdan/sh/releases/download/v3.12.0/shfmt_v3.12.0_linux_amd64 -o shfmt
           echo "d9fbb2a9c33d13f47e7618cf362a914d029d02a6df124064fff04fd688a745ea  shfmt" | sha256sum -c -
           chmod +x shfmt
           sudo mv shfmt /usr/local/bin/shfmt
+      - name: Install ShellCheck + shfmt (macOS)
+        if: runner.os == 'macOS'
+        run: brew install shellcheck shfmt
       - name: Lint
         run: ./scripts/lint.sh
       - name: Tests
