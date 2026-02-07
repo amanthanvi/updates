@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-02-07
+
+### Removed
+
+- Removed deprecated flags introduced in `0.9.0`: `-q`/`--quiet`, `-v`/`--verbose`, `--python-break-system-packages`, `--[no-]brew-casks`, `--[no-]brew-greedy`.
+
 ## [0.9.0] - 2026-02-07
 
 ### Added

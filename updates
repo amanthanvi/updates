@@ -2,7 +2,7 @@
 
 set -o pipefail
 
-UPDATES_VERSION="0.9.0"
+UPDATES_VERSION="1.0.0"
 
 SCRIPT_NAME="$(basename "$0")"
 
