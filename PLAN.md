@@ -31,57 +31,57 @@ This is the execution plan for shipping `updates` **v1.0.0**. It is a living che
 
 #### 1) Docs + scaffolding (spec-first)
 
-- [ ] Update `SPEC.md` where decisions changed (e.g. `--full`, go `@latest` default).
-- [ ] Add/refresh this `PLAN.md` section for v0.9.0 + v1.0.0.
-- [ ] Update repo `AGENTS.md` with v1.0 dev rules (Bash 3.2, JSON stdout purity, golden commands).
+- [x] Update `SPEC.md` where decisions changed (e.g. `--full`, go `@latest` default).
+- [x] Add/refresh this `PLAN.md` section for v0.9.0 + v1.0.0.
+- [x] Update repo `AGENTS.md` with v1.0 dev rules (Bash 3.2, JSON stdout purity, golden commands).
 
 #### 2) Core CLI surface (v1 flags added; v0 flags deprecated)
 
-- [ ] Add `--log-level <error|warn|info|debug>` (default `info`).
-- [ ] Add `--json` (JSONL on stdout; human logs on stderr).
-- [ ] Add `--no-config` and implement `~/.updatesrc` (config < CLI flags).
-- [ ] Add `--brew-mode <formula|casks|greedy>`.
-- [ ] Add `--pip-force` (maps to pip `--break-system-packages`).
-- [ ] Add `-n` alias for `--non-interactive`.
-- [ ] Keep v0.x flags working but deprecated (print `WARN:` and map internally):
-  - [ ] `--brew-casks` / `--no-brew-casks`
-  - [ ] `--brew-greedy` / `--no-brew-greedy`
-  - [ ] `-q` / `--quiet`
-  - [ ] `-v` / `--verbose`
-  - [ ] `--python-break-system-packages`
+- [x] Add `--log-level <error|warn|info|debug>` (default `info`).
+- [x] Add `--json` (JSONL on stdout; human logs on stderr).
+- [x] Add `--no-config` and implement `~/.updatesrc` (config < CLI flags).
+- [x] Add `--brew-mode <formula|casks|greedy>`.
+- [x] Add `--pip-force` (maps to pip `--break-system-packages`).
+- [x] Add `-n` alias for `--non-interactive`.
+- [x] Keep v0.x flags working but deprecated (print `WARN:` and map internally):
+  - [x] `--brew-casks` / `--no-brew-casks`
+  - [x] `--brew-greedy` / `--no-brew-greedy`
+  - [x] `-q` / `--quiet`
+  - [x] `-v` / `--verbose`
+  - [x] `--python-break-system-packages`
 
 #### 3) Module work
 
-- [ ] Add module: `uv` (`uv self update` + `uv tool upgrade --all`).
-- [ ] Add module: `mise` (`mise self-update` + `mise upgrade`).
-- [ ] Add module: `go` (`go install <module>@<version>`; default to `@latest` when version omitted).
-- [ ] Update module registration everywhere (`is_module_known`, descriptions, list, supported matrix, execution order).
-- [ ] Ensure `--full` enables `mas` + `macos` and runs everything else (including `uv`/`mise`/`go` when detected/configured).
+- [x] Add module: `uv` (`uv self update` + `uv tool upgrade --all`).
+- [x] Add module: `mise` (`mise self-update` + `mise upgrade`).
+- [x] Add module: `go` (`go install <module>@<version>`; default to `@latest` when version omitted).
+- [x] Update module registration everywhere (`is_module_known`, descriptions, list, supported matrix, execution order).
+- [x] Ensure `--full` enables `mas` + `macos` and runs everything else (including `uv`/`mise`/`go` when detected/configured).
 
 #### 4) Tests + CI + docs alignment
 
-- [ ] Expand `tests/test_cli.sh`:
-  - [ ] config precedence + `--no-config`
-  - [ ] `--brew-mode` and deprecated brew flags mapping
-  - [ ] `--log-level` filtering
-  - [ ] `--json` stream purity + event sanity
-  - [ ] new module stubs: `uv`, `mise`, `go`
-  - [ ] deprecated flags emit `WARN:` (0.9.0 behavior)
-- [ ] Update `README.md` with new flags/modules/config examples.
-- [ ] Update CI to run on macOS + Linux.
+- [x] Expand `tests/test_cli.sh`:
+  - [x] config precedence + `--no-config`
+  - [x] `--brew-mode` and deprecated brew flags mapping
+  - [x] `--log-level` filtering
+  - [x] `--json` stream purity + event sanity
+  - [x] new module stubs: `uv`, `mise`, `go`
+  - [x] deprecated flags emit `WARN:` (0.9.0 behavior)
+- [x] Update `README.md` with new flags/modules/config examples.
+- [x] Update CI to run on macOS + Linux.
 
 #### 5) Release v0.9.0
 
-- [ ] Update `CHANGELOG.md` with `0.9.0` entry.
-- [ ] Bump `UPDATES_VERSION` to `0.9.0`.
-- [ ] Run `./scripts/lint.sh` and `./scripts/test.sh`.
-- [ ] `./scripts/release.sh 0.9.0` and push `main` + tags.
+- [x] Update `CHANGELOG.md` with `0.9.0` entry.
+- [x] Bump `UPDATES_VERSION` to `0.9.0`.
+- [x] Run `./scripts/lint.sh` and `./scripts/test.sh`.
+- [x] `./scripts/release.sh 0.9.0` and push `main` + tags.
 
 ### Milestone: v1.0.0 (breaking cleanup)
 
-- [ ] Remove deprecated flags entirely; using them must error (exit `2`).
-- [ ] Update tests to assert deprecated flags now fail.
-- [ ] Update `README.md`/help text to remove deprecated flags.
+- [x] Remove deprecated flags entirely; using them must error (exit `2`).
+- [x] Update tests to assert deprecated flags now fail.
+- [x] Update `README.md`/help text to remove deprecated flags.
 - [ ] Update `CHANGELOG.md` with `1.0.0` entry.
 - [ ] Bump `UPDATES_VERSION` to `1.0.0`.
 - [ ] Run `./scripts/lint.sh` and `./scripts/test.sh`.

@@ -604,8 +604,8 @@ Ship all v1.0 features (config file, `--json`, new modules, `--brew-mode`, `--lo
   - Config file parsing tests (precedence, unknown keys, `--no-config`).
   - `--brew-mode` enum validation tests.
   - `--log-level` output filtering tests.
-  - `--json` JSONL output validation (pipe through `jq` in tests).
-  - Deprecated flag warning tests (0.9.0).
+  - `--json` JSONL output validation (parse each line as JSON in tests).
+  - Deprecated flags error tests (1.0.0).
 - **Edge cases:**
   - `GO_BINARIES` empty/unset (go module skips).
   - `--json` + `--log-file` interaction.
