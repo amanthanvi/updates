@@ -506,6 +506,12 @@ Purpose: list available macOS software updates.
 ## 9) Self-Update
 
 - When enabled, `updates` checks GitHub Releases for `UPDATES_SELF_UPDATE_REPO` (default `amanthanvi/updates`).
+- Normal eligible runs throttle the GitHub release metadata check to at most once every 24 hours per repo using a best-effort local cache:
+  - `${XDG_CACHE_HOME}/updates` when `XDG_CACHE_HOME` is set
+  - `${HOME}/Library/Caches/updates` on macOS otherwise
+  - `${HOME}/.cache/updates` on Linux/other otherwise
+- The cache stores only release-check metadata (`checked_at`, `latest_tag`) and is ignored if missing or invalid.
+- Passing `--self-update` forces a live metadata refresh even when the cache is fresh.
 - If the latest release tag is newer than `UPDATES_VERSION`, it downloads the `updates` release artifact and verifies it against `SHA256SUMS`.
 - Verification: HTTPS transport + SHA256 checksum. No GPG/cosign signatures (sufficient for v1.0).
 - If install succeeds, it replaces the current script and re-execs itself once (guarded by `UPDATES_SELF_UPDATED=1`).
@@ -515,6 +521,7 @@ Purpose: list available macOS software updates.
   - `CI` environment variable is set
   - Running from a git checkout (development)
   - Installed as a symlink
+- If a live GitHub check fails but a semver-valid cached tag exists, `updates` falls back to the cached tag for that run.
 - If the install path is not writable, self-update attempts `sudo install` (with `sudo -n` when `-n` is set).
 
 ## 10) Security & Privacy

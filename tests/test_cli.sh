@@ -70,9 +70,18 @@ out="$("$SCRIPT" --list-modules)"
 echo "$out" | grep -q '^brew'
 echo "$out" | grep -q '^shell'
 echo "$out" | grep -q '^linux'
+actual_modules="$(printf '%s\n' "$out" | awk '{print $1}' | paste -sd' ' -)"
+expected_modules='brew shell linux node python uv mas pipx rustup claude mise go macos'
+if [ "$actual_modules" != "$expected_modules" ]; then
+	echo "Expected module order: $expected_modules" >&2
+	echo "Actual module order:   $actual_modules" >&2
+	exit 1
+fi
 
 echo "Test: --log-level filters output"
-out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only brew --log-level warn --no-emoji --no-color)"
+warn_stderr="${tmp_dir}/warn-stderr.log"
+: >"$warn_stderr"
+out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only brew --log-level warn --no-emoji --no-color 2>"$warn_stderr")"
 echo "$out" | grep -q '^==> brew START$'
 echo "$out" | grep -q '^==> brew END (OK)'
 echo "$out" | grep -q '^==> SUMMARY ok=1 skip=0 fail=0 total='
@@ -84,10 +93,20 @@ if echo "$out" | grep -q 'Homebrew'; then
 	echo "Expected module info logs to be suppressed at --log-level warn" >&2
 	exit 1
 fi
+if grep -q 'Defaulting to brew formula upgrades only on macOS' "$warn_stderr"; then
+	echo "Expected brew default reminder to be info-level, not warn-level" >&2
+	exit 1
+fi
 
-out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only brew --log-level error --no-emoji --no-color)"
+error_stderr="${tmp_dir}/error-stderr.log"
+: >"$error_stderr"
+out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only brew --log-level error --no-emoji --no-color 2>"$error_stderr")"
 if [ -n "$out" ]; then
 	echo "Expected no stdout output at --log-level error" >&2
+	exit 1
+fi
+if [ -s "$error_stderr" ]; then
+	echo "Expected no stderr output at --log-level error for default brew dry-run" >&2
 	exit 1
 fi
 
@@ -162,6 +181,11 @@ if echo "$json_out" | grep -q '^==>'; then
 	exit 1
 fi
 grep -q '^==> brew START$' "$json_stderr"
+grep -q '^Defaulting to brew formula upgrades only on macOS\. Enable casks with --brew-mode casks (or --full)\.$' "$json_stderr"
+if grep -q '^WARN: Defaulting to brew formula upgrades only on macOS' "$json_stderr"; then
+	echo "Expected brew default reminder to be logged without WARN prefix" >&2
+	exit 1
+fi
 json_out_file="${tmp_dir}/json-out.jsonl"
 printf '%s\n' "$json_out" >"$json_out_file"
 python3 - "$json_out_file" <<'PY'
@@ -237,12 +261,15 @@ fi
 
 echo "Test: --brew-mode greedy enables brew upgrade (greedy) on macOS"
 : >"$CALL_LOG"
-"$SCRIPT" --only brew --brew-mode greedy --no-emoji >/dev/null
+greedy_stderr="${tmp_dir}/greedy-stderr.log"
+: >"$greedy_stderr"
+"$SCRIPT" --only brew --brew-mode greedy --no-emoji >/dev/null 2>"$greedy_stderr"
 grep -q '^brew upgrade --greedy$' "$CALL_LOG"
 if grep -q '^brew upgrade --formula$' "$CALL_LOG"; then
 	echo "Expected brew formula-only upgrades to be disabled when --brew-mode greedy is set" >&2
 	exit 1
 fi
+grep -q '^WARN: Homebrew cask upgrades may modify /Applications\.$' "$greedy_stderr"
 
 echo "Test: --only mas runs even when opt-in by default"
 # shellcheck disable=SC2016
@@ -258,7 +285,9 @@ grep -q '^softwareupdate -l$' "$CALL_LOG"
 
 echo "Test: --full enables brew casks + mas + macos"
 : >"$CALL_LOG"
-out="$("$SCRIPT" --full --skip node,python,pipx,rustup,claude,linux --no-emoji)"
+full_stderr="${tmp_dir}/full-stderr.log"
+: >"$full_stderr"
+out="$("$SCRIPT" --full --skip node,python,pipx,rustup,claude,linux --no-emoji 2>"$full_stderr")"
 echo "$out" | grep -q '^==> brew START$'
 echo "$out" | grep -q '^==> shell START$'
 echo "$out" | grep -q '^==> mas START$'
@@ -266,6 +295,7 @@ echo "$out" | grep -q '^==> macos START$'
 grep -q '^brew upgrade --greedy$' "$CALL_LOG"
 grep -q '^mas upgrade$' "$CALL_LOG"
 grep -q '^softwareupdate -l$' "$CALL_LOG"
+grep -q '^WARN: Homebrew cask upgrades may modify /Applications\.$' "$full_stderr"
 
 echo "Test: python uses --user in externally-managed env"
 # shellcheck disable=SC2016
@@ -393,8 +423,11 @@ mkdir -p "$self_update_bin"
 
 self_update_fixtures="${tmp_dir}/self-update-fixtures"
 mkdir -p "$self_update_fixtures"
+SELF_UPDATE_CURL_LOG="${tmp_dir}/self-update-curl.log"
+export SELF_UPDATE_CURL_LOG
 
 self_update_old="${self_update_bin}/updates"
+self_update_current="${self_update_bin}/updates-current"
 self_update_new="${self_update_fixtures}/updates.new"
 
 mk_versioned_copy() {
@@ -419,6 +452,7 @@ mk_versioned_copy() {
 }
 
 mk_versioned_copy "$SCRIPT" "$self_update_old" "0.0.1"
+mk_versioned_copy "$SCRIPT" "$self_update_current" "0.0.2"
 mk_versioned_copy "$SCRIPT" "$self_update_new" "0.0.2"
 
 sha256_file() {
@@ -438,7 +472,28 @@ sha256_file() {
 sha="$(sha256_file "$self_update_new")"
 printf '%s  dist/updates\n' "$sha" >"${self_update_fixtures}/SHA256SUMS"
 
-export SELF_UPDATE_FIXTURES="$self_update_fixtures"
+self_update_cache_file_for() {
+	local repo="$1"
+	local key="${repo//\//_}"
+	printf '%s/updates/self-update-%s.cache' "$SELF_UPDATE_CACHE_ROOT" "$key"
+}
+
+run_self_update_script() {
+	local script_path="$1"
+	shift
+
+	UPDATES_SELF_UPDATE=1 \
+		CI="" \
+		UPDATES_SELF_UPDATE_REPO="${UPDATES_SELF_UPDATE_REPO_TEST:-fake/repo}" \
+		XDG_CACHE_HOME="$SELF_UPDATE_CACHE_ROOT" \
+		SELF_UPDATE_FIXTURES="$self_update_fixtures" \
+		SELF_UPDATE_CURL_LOG="$SELF_UPDATE_CURL_LOG" \
+		SELF_UPDATE_LATEST_TAG="${SELF_UPDATE_LATEST_TAG:-v0.0.2}" \
+		SELF_UPDATE_LATEST_FAIL="${SELF_UPDATE_LATEST_FAIL:-0}" \
+		HOME="$self_update_home" \
+		"$script_path" "$@"
+}
+
 # shellcheck disable=SC2016
 write_stub curl '
 out=""
@@ -459,9 +514,16 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
+if [ -n "$url" ]; then
+	echo "curl $url" >>"$SELF_UPDATE_CURL_LOG"
+fi
+
 case "$url" in
 */releases/latest)
-	echo "{\"tag_name\":\"v0.0.2\"}"
+	if [ "${SELF_UPDATE_LATEST_FAIL:-0}" = "1" ]; then
+		exit 1
+	fi
+	echo "{\"tag_name\":\"${SELF_UPDATE_LATEST_TAG:-v0.0.2}\"}"
 	;;
 */updates)
 	cp "${SELF_UPDATE_FIXTURES}/updates.new" "$out"
@@ -479,7 +541,121 @@ esac
 # Ensure self-update isn't skipped due to our git stub always succeeding.
 write_stub git 'exit 1'
 
-out="$(UPDATES_SELF_UPDATE=1 CI="" UPDATES_SELF_UPDATE_REPO=fake/repo HOME="$self_update_home" "$self_update_old" --only brew --no-emoji --no-color 2>&1)"
+echo "Test: self-update cache hit skips GitHub release API call"
+SELF_UPDATE_CACHE_ROOT="${tmp_dir}/self-update-cache-hit"
+mkdir -p "$SELF_UPDATE_CACHE_ROOT/updates"
+fresh_cache_file="$(self_update_cache_file_for fake/repo)"
+fresh_epoch="$(date +%s)"
+cat >"$fresh_cache_file" <<EOF
+checked_at=${fresh_epoch}
+latest_tag=v0.0.2
+EOF
+: >"$SELF_UPDATE_CURL_LOG"
+run_self_update_script "$self_update_current" --only brew --no-emoji --no-color >/dev/null 2>&1
+if [ -s "$SELF_UPDATE_CURL_LOG" ]; then
+	echo "Expected fresh self-update cache to skip all curl calls" >&2
+	exit 1
+fi
+
+echo "Test: stale self-update cache refreshes and rewrites cache"
+SELF_UPDATE_CACHE_ROOT="${tmp_dir}/self-update-cache-stale"
+mkdir -p "$SELF_UPDATE_CACHE_ROOT/updates"
+stale_cache_file="$(self_update_cache_file_for fake/repo)"
+cat >"$stale_cache_file" <<EOF
+checked_at=0
+latest_tag=v0.0.1
+EOF
+: >"$SELF_UPDATE_CURL_LOG"
+SELF_UPDATE_LATEST_TAG="v0.0.2"
+SELF_UPDATE_LATEST_FAIL=0
+run_self_update_script "$self_update_current" --only brew --no-emoji --no-color >/dev/null 2>&1
+grep -q '^curl https://api.github.com/repos/fake/repo/releases/latest$' "$SELF_UPDATE_CURL_LOG"
+grep -q '^latest_tag=v0.0.2$' "$stale_cache_file"
+if grep -q '^checked_at=0$' "$stale_cache_file"; then
+	echo "Expected stale self-update cache to be rewritten" >&2
+	exit 1
+fi
+
+echo "Test: explicit --self-update bypasses a fresh cache"
+SELF_UPDATE_CACHE_ROOT="${tmp_dir}/self-update-cache-force"
+mkdir -p "$SELF_UPDATE_CACHE_ROOT/updates"
+force_cache_file="$(self_update_cache_file_for fake/repo)"
+force_epoch="$(date +%s)"
+cat >"$force_cache_file" <<EOF
+checked_at=${force_epoch}
+latest_tag=v0.0.2
+EOF
+: >"$SELF_UPDATE_CURL_LOG"
+run_self_update_script "$self_update_current" --self-update --only brew --no-emoji --no-color >/dev/null 2>&1
+grep -q '^curl https://api.github.com/repos/fake/repo/releases/latest$' "$SELF_UPDATE_CURL_LOG"
+
+echo "Test: repo-scoped cache does not cross repo overrides"
+SELF_UPDATE_CACHE_ROOT="${tmp_dir}/self-update-cache-repo"
+mkdir -p "$SELF_UPDATE_CACHE_ROOT/updates"
+other_repo_cache_file="$(self_update_cache_file_for fake/repo)"
+other_repo_epoch="$(date +%s)"
+cat >"$other_repo_cache_file" <<EOF
+checked_at=${other_repo_epoch}
+latest_tag=v0.0.2
+EOF
+: >"$SELF_UPDATE_CURL_LOG"
+UPDATES_SELF_UPDATE_REPO_TEST="other/repo"
+run_self_update_script "$self_update_current" --only brew --no-emoji --no-color >/dev/null 2>&1
+unset UPDATES_SELF_UPDATE_REPO_TEST
+grep -q '^curl https://api.github.com/repos/other/repo/releases/latest$' "$SELF_UPDATE_CURL_LOG"
+new_repo_cache_file="$(self_update_cache_file_for other/repo)"
+[ -f "$new_repo_cache_file" ]
+
+echo "Test: invalid self-update cache is ignored and refreshed"
+SELF_UPDATE_CACHE_ROOT="${tmp_dir}/self-update-cache-invalid"
+mkdir -p "$SELF_UPDATE_CACHE_ROOT/updates"
+invalid_cache_file="$(self_update_cache_file_for fake/repo)"
+cat >"$invalid_cache_file" <<EOF
+checked_at=not-a-number
+latest_tag=definitely-not-semver
+EOF
+: >"$SELF_UPDATE_CURL_LOG"
+run_self_update_script "$self_update_current" --only brew --no-emoji --no-color >/dev/null 2>&1
+grep -q '^curl https://api.github.com/repos/fake/repo/releases/latest$' "$SELF_UPDATE_CURL_LOG"
+grep -q '^latest_tag=v0.0.2$' "$invalid_cache_file"
+
+echo "Test: failed live self-update check falls back to cached tag"
+SELF_UPDATE_CACHE_ROOT="${tmp_dir}/self-update-cache-fallback"
+mkdir -p "$SELF_UPDATE_CACHE_ROOT/updates"
+fallback_cache_file="$(self_update_cache_file_for fake/repo)"
+cat >"$fallback_cache_file" <<EOF
+checked_at=0
+latest_tag=v0.0.2
+EOF
+: >"$SELF_UPDATE_CURL_LOG"
+SELF_UPDATE_LATEST_FAIL=1
+out="$(run_self_update_script "$self_update_old" --only brew --no-emoji --no-color 2>&1)"
+SELF_UPDATE_LATEST_FAIL=0
+echo "$out" | grep -q 'updates: self-update available (0.0.1 -> 0.0.2)'
+echo "$out" | grep -q 'updates: updated to 0.0.2; restarting'
+grep -q '^curl https://api.github.com/repos/fake/repo/releases/latest$' "$SELF_UPDATE_CURL_LOG"
+grep -q '^curl https://github.com/fake/repo/releases/download/v0.0.2/updates$' "$SELF_UPDATE_CURL_LOG"
+grep -q '^curl https://github.com/fake/repo/releases/download/v0.0.2/SHA256SUMS$' "$SELF_UPDATE_CURL_LOG"
+
+echo "Test: symlink install skips before any GitHub release API call"
+SELF_UPDATE_CACHE_ROOT="${tmp_dir}/self-update-cache-symlink"
+mkdir -p "$SELF_UPDATE_CACHE_ROOT"
+self_update_symlink="${self_update_bin}/updates-symlink"
+ln -sf "$self_update_current" "$self_update_symlink"
+: >"$SELF_UPDATE_CURL_LOG"
+run_self_update_script "$self_update_symlink" --only brew --no-emoji --no-color >/dev/null 2>&1
+if [ -s "$SELF_UPDATE_CURL_LOG" ]; then
+	echo "Expected symlink-installed self-update to skip curl entirely" >&2
+	exit 1
+fi
+
+echo "Test: self-update accepts checksum paths (dist/updates)"
+SELF_UPDATE_CACHE_ROOT="${tmp_dir}/self-update-cache-install"
+: >"$SELF_UPDATE_CURL_LOG"
+SELF_UPDATE_LATEST_TAG="v0.0.2"
+SELF_UPDATE_LATEST_FAIL=0
+mk_versioned_copy "$SCRIPT" "$self_update_old" "0.0.1"
+out="$(run_self_update_script "$self_update_old" --only brew --no-emoji --no-color 2>&1)"
 echo "$out" | grep -q 'updates: self-update available (0.0.1 -> 0.0.2)'
 echo "$out" | grep -q 'updates: updated to 0.0.2; restarting'
 

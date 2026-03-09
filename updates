@@ -2,7 +2,7 @@
 
 set -o pipefail
 
-UPDATES_VERSION="1.0.0"
+UPDATES_VERSION="1.0.1"
 
 SCRIPT_NAME="$(basename "$0")"
 
@@ -15,6 +15,7 @@ PYTHON_BREAK_SYSTEM_PACKAGES=0
 LOG_FILE=""
 PARALLEL=4
 SELF_UPDATE=1
+SELF_UPDATE_FORCE_REFRESH=0
 NO_CONFIG=0
 JSON=0
 GO_BINARIES=""
@@ -50,8 +51,66 @@ C_GREEN=""
 C_YELLOW=""
 C_BLUE=""
 
+MODULE_REGISTRY='brew|module_brew|any|0|Update Homebrew formulae (+ optional casks)
+shell|module_shell|any|0|Update Oh My Zsh and custom git plugins/themes
+linux|module_linux|linux|0|Upgrade Linux system packages
+node|module_node|any|0|Upgrade global npm packages via ncu
+python|module_python|any|0|Upgrade global Python packages via pip
+uv|module_uv|any|0|Update uv and uv-managed tools
+mas|module_mas|macos|1|Upgrade Mac App Store apps via mas (opt-in)
+pipx|module_pipx|any|0|Upgrade pipx-managed apps via pipx
+rustup|module_rustup|any|0|Update Rust toolchains via rustup
+claude|module_claude|any|0|Update Claude Code CLI
+mise|module_mise|any|0|Update mise and upgrade installed tools
+go|module_go|any|0|Update Go binaries from GO_BINARIES config
+macos|module_macos|macos|1|List available macOS software updates (opt-in)'
+
+MODULE_LOOKUP_HANDLER=""
+MODULE_LOOKUP_PLATFORM=""
+MODULE_LOOKUP_OPT_IN=""
+MODULE_LOOKUP_DESCRIPTION=""
+
+PLATFORM_CACHE_READY=0
+OS_NAME=""
+IS_MACOS=0
+IS_LINUX=0
+IS_WSL=0
+
+JSON_TS_CACHE_SECONDS=""
+JSON_TS_CACHE_VALUE=""
+
+SELF_UPDATE_CACHE_TTL=86400
+SELF_UPDATE_CACHE_CHECKED_AT=""
+SELF_UPDATE_CACHE_LATEST_TAG=""
+
+BREW_FORMULA_DEFAULT_HINT_EMITTED=0
+
 print() {
 	printf '%s\n' "$*" >&"$HUMAN_FD"
+}
+
+stdout_print() {
+	printf '%s\n' "$*"
+}
+
+module_lookup() {
+	local needle="$1"
+	local name handler platform opt_in description
+
+	while IFS='|' read -r name handler platform opt_in description; do
+		[ -n "$name" ] || continue
+		if [ "$name" != "$needle" ]; then
+			continue
+		fi
+
+		MODULE_LOOKUP_HANDLER="$handler"
+		MODULE_LOOKUP_PLATFORM="$platform"
+		MODULE_LOOKUP_OPT_IN="$opt_in"
+		MODULE_LOOKUP_DESCRIPTION="$description"
+		return 0
+	done <<<"$MODULE_REGISTRY"
+
+	return 1
 }
 
 set_log_level() {
@@ -83,7 +142,15 @@ json_enabled() {
 }
 
 json_timestamp() {
-	date -u +%Y-%m-%dT%H:%M:%SZ
+	local current_seconds="$SECONDS"
+	if [ "$JSON_TS_CACHE_SECONDS" = "$current_seconds" ] && [ -n "$JSON_TS_CACHE_VALUE" ]; then
+		printf '%s' "$JSON_TS_CACHE_VALUE"
+		return 0
+	fi
+
+	JSON_TS_CACHE_VALUE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	JSON_TS_CACHE_SECONDS="$current_seconds"
+	printf '%s' "$JSON_TS_CACHE_VALUE"
 }
 
 json_escape() {
@@ -339,27 +406,53 @@ cmd_exists() {
 	command -v "$1" >/dev/null 2>&1
 }
 
+init_platform_cache() {
+	if [ "$PLATFORM_CACHE_READY" -eq 1 ]; then
+		return 0
+	fi
+
+	OS_NAME="$(uname -s 2>/dev/null || true)"
+	case "$OS_NAME" in
+	Darwin)
+		IS_MACOS=1
+		IS_LINUX=0
+		;;
+	Linux)
+		IS_MACOS=0
+		IS_LINUX=1
+		;;
+	*)
+		IS_MACOS=0
+		IS_LINUX=0
+		;;
+	esac
+
+	if [ -n "${WSL_DISTRO_NAME:-}" ]; then
+		IS_WSL=1
+	elif [ "$IS_LINUX" -eq 1 ] && [ -f /proc/sys/kernel/osrelease ] && grep -qi microsoft /proc/sys/kernel/osrelease; then
+		IS_WSL=1
+	elif [ "$IS_LINUX" -eq 1 ] && [ -f /proc/version ] && grep -qi microsoft /proc/version; then
+		IS_WSL=1
+	else
+		IS_WSL=0
+	fi
+
+	PLATFORM_CACHE_READY=1
+}
+
 is_macos() {
-	[ "$(uname -s)" = "Darwin" ]
+	init_platform_cache
+	[ "$IS_MACOS" -eq 1 ]
 }
 
 is_linux() {
-	[ "$(uname -s)" = "Linux" ]
+	init_platform_cache
+	[ "$IS_LINUX" -eq 1 ]
 }
 
 is_wsl() {
-	# WSL1/WSL2 detection heuristics.
-	# Prefer env var; fall back to /proc markers.
-	if [ -n "${WSL_DISTRO_NAME:-}" ]; then
-		return 0
-	fi
-	if [ -f /proc/sys/kernel/osrelease ] && grep -qi microsoft /proc/sys/kernel/osrelease; then
-		return 0
-	fi
-	if [ -f /proc/version ] && grep -qi microsoft /proc/version; then
-		return 0
-	fi
-	return 1
+	init_platform_cache
+	[ "$IS_WSL" -eq 1 ]
 }
 
 apply_platform_defaults() {
@@ -400,13 +493,44 @@ set_brew_mode() {
 	esac
 }
 
+module_known() {
+	module_lookup "$1"
+}
+
+module_handler() {
+	if ! module_lookup "$1"; then
+		return 1
+	fi
+	stdout_print "$MODULE_LOOKUP_HANDLER"
+}
+
+module_enabled_by_default() {
+	if ! module_lookup "$1"; then
+		return 1
+	fi
+
+	if [ "$MODULE_LOOKUP_OPT_IN" != "1" ]; then
+		return 0
+	fi
+
+	case "$1" in
+	mas) [ "$MAS_UPGRADE" -eq 1 ] ;;
+	macos) [ "$MACOS_UPDATES" -eq 1 ] ;;
+	*) return 1 ;;
+	esac
+}
+
 module_supported() {
 	# When UPDATES_ALLOW_NON_DARWIN=1 is set, allow command-driven modules to run
 	# on unknown platforms, but still treat OS-specific modules as unsupported.
-	case "$1" in
-	brew | shell | node | python | uv | pipx | rustup | claude | mise | go) return 0 ;;
+	if ! module_lookup "$1"; then
+		return 1
+	fi
+
+	case "$MODULE_LOOKUP_PLATFORM" in
+	any) return 0 ;;
 	linux) is_linux ;;
-	mas | macos) is_macos ;;
+	macos) is_macos ;;
 	*) return 1 ;;
 	esac
 }
@@ -498,14 +622,14 @@ self_update_enabled() {
 self_update_resolve_self_path() {
 	local self="$0"
 	if [ -f "$self" ]; then
-		print "$self"
+		stdout_print "$self"
 		return 0
 	fi
 
 	self="$(command -v "$SCRIPT_NAME" 2>/dev/null || true)"
 	[ -n "$self" ] || return 1
 	[ -f "$self" ] || return 1
-	print "$self"
+	stdout_print "$self"
 	return 0
 }
 
@@ -530,7 +654,7 @@ self_update_latest_tag_github() {
 	local tag=""
 	tag="$(printf '%s' "$json" | sed -nE 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n 1)"
 	[ -n "$tag" ] || return 1
-	print "$tag"
+	stdout_print "$tag"
 }
 
 self_update_sha256_file() {
@@ -544,6 +668,134 @@ self_update_sha256_file() {
 		return 0
 	fi
 	return 1
+}
+
+self_update_current_epoch() {
+	date +%s
+}
+
+self_update_cache_root() {
+	if [ -n "${XDG_CACHE_HOME:-}" ]; then
+		stdout_print "${XDG_CACHE_HOME}/updates"
+		return 0
+	fi
+	if is_macos; then
+		stdout_print "${HOME}/Library/Caches/updates"
+		return 0
+	fi
+	stdout_print "${HOME}/.cache/updates"
+}
+
+self_update_cache_repo_key() {
+	local repo="$1"
+	local key="${repo//\//_}"
+	key="${key//[^[:alnum:]._-]/_}"
+	stdout_print "$key"
+}
+
+self_update_cache_file() {
+	local repo="$1"
+	local root=""
+	local key=""
+
+	if ! root="$(self_update_cache_root)"; then
+		return 1
+	fi
+	if ! key="$(self_update_cache_repo_key "$repo")"; then
+		return 1
+	fi
+
+	stdout_print "${root}/self-update-${key}.cache"
+}
+
+self_update_cache_reset() {
+	SELF_UPDATE_CACHE_CHECKED_AT=""
+	SELF_UPDATE_CACHE_LATEST_TAG=""
+}
+
+self_update_cache_load() {
+	local path="$1"
+	self_update_cache_reset
+
+	if [ ! -r "$path" ]; then
+		return 1
+	fi
+
+	local key value
+	while IFS='=' read -r key value; do
+		case "$key" in
+		checked_at) SELF_UPDATE_CACHE_CHECKED_AT="$value" ;;
+		latest_tag) SELF_UPDATE_CACHE_LATEST_TAG="$value" ;;
+		esac
+	done <"$path"
+
+	case "$SELF_UPDATE_CACHE_CHECKED_AT" in
+	'' | *[!0-9]*)
+		return 2
+		;;
+	esac
+
+	local latest="${SELF_UPDATE_CACHE_LATEST_TAG#v}"
+	if ! semver_is_valid "$latest"; then
+		return 2
+	fi
+
+	return 0
+}
+
+self_update_cache_is_fresh() {
+	local current_epoch="$1"
+	local checked_at="$2"
+
+	case "$current_epoch" in
+	'' | *[!0-9]*)
+		return 1
+		;;
+	esac
+	case "$checked_at" in
+	'' | *[!0-9]*)
+		return 1
+		;;
+	esac
+
+	if [ "$checked_at" -gt "$current_epoch" ]; then
+		return 1
+	fi
+
+	[ $((current_epoch - checked_at)) -lt "$SELF_UPDATE_CACHE_TTL" ]
+}
+
+self_update_cache_write() {
+	local path="$1"
+	local checked_at="$2"
+	local latest_tag="$3"
+	local dir=""
+	local tmp=""
+
+	dir="$(dirname "$path")"
+	if ! mkdir -p "$dir"; then
+		debug "self-update: failed to create cache dir: $dir"
+		return 1
+	fi
+
+	tmp="${path}.tmp.$$"
+	if ! (
+		umask 077
+		printf 'checked_at=%s\n' "$checked_at" >"$tmp"
+		printf 'latest_tag=%s\n' "$latest_tag" >>"$tmp"
+	); then
+		debug "self-update: failed to write cache temp file: $tmp"
+		rm -f "$tmp"
+		return 1
+	fi
+
+	if ! mv "$tmp" "$path"; then
+		debug "self-update: failed to move cache file into place: $path"
+		rm -f "$tmp"
+		return 1
+	fi
+
+	return 0
 }
 
 maybe_self_update() {
@@ -571,11 +823,56 @@ maybe_self_update() {
 		return 0
 	fi
 
+	if [ -L "$self_path" ]; then
+		debug "self-update: installed as symlink; skipping (${self_path})"
+		return 0
+	fi
+
 	local repo="${UPDATES_SELF_UPDATE_REPO:-amanthanvi/updates}"
 	local tag=""
-	if ! tag="$(self_update_latest_tag_github "$repo")"; then
-		debug "self-update: failed to fetch latest release tag; skipping"
-		return 0
+	local cache_file=""
+	if ! cache_file="$(self_update_cache_file "$repo")"; then
+		debug "self-update: failed to resolve cache file; proceeding without cache"
+		cache_file=""
+	fi
+	local current_epoch=""
+	current_epoch="$(self_update_current_epoch 2>/dev/null || true)"
+	local cache_state=1
+	local live_check_needed=1
+
+	if [ -n "$cache_file" ]; then
+		self_update_cache_load "$cache_file"
+		cache_state=$?
+
+		if [ "$cache_state" -eq 0 ]; then
+			if [ "$SELF_UPDATE_FORCE_REFRESH" -eq 1 ]; then
+				debug "self-update: forcing live release check via --self-update"
+			elif self_update_cache_is_fresh "$current_epoch" "$SELF_UPDATE_CACHE_CHECKED_AT"; then
+				tag="$SELF_UPDATE_CACHE_LATEST_TAG"
+				live_check_needed=0
+				debug "self-update: using cached release tag (${tag}) from ${cache_file}"
+			else
+				debug "self-update: cached release tag is stale; refreshing (${cache_file})"
+			fi
+		elif [ "$cache_state" -eq 2 ]; then
+			debug "self-update: ignoring invalid cache file: ${cache_file}"
+		else
+			debug "self-update: cache miss: ${cache_file}"
+		fi
+	fi
+
+	if [ "$live_check_needed" -eq 1 ]; then
+		if tag="$(self_update_latest_tag_github "$repo")"; then
+			if [ -n "$cache_file" ] && [ -n "$current_epoch" ]; then
+				self_update_cache_write "$cache_file" "$current_epoch" "$tag" || true
+			fi
+		elif [ "$cache_state" -eq 0 ]; then
+			tag="$SELF_UPDATE_CACHE_LATEST_TAG"
+			debug "self-update: live check failed; using cached release tag (${tag})"
+		else
+			debug "self-update: failed to fetch latest release tag; skipping"
+			return 0
+		fi
 	fi
 
 	local latest="${tag#v}"
@@ -637,12 +934,6 @@ maybe_self_update() {
 		return 0
 	fi
 
-	if [ -L "$self_path" ]; then
-		warn "updates: self-update skipped (installed as symlink): $self_path"
-		rm -rf "$tmp_dir"
-		return 0
-	fi
-
 	if [ -w "$self_path" ]; then
 		if ! install -m 0755 "$tmp_updates" "$self_path"; then
 			warn "updates: self-update install failed; continuing"
@@ -690,40 +981,28 @@ normalize_module_list() {
 	# Converts a CSV list like "brew, mas,python" to space-separated words.
 	local s="$1"
 	s="${s//,/ }"
-	print "$s"
+	stdout_print "$s"
 }
 
 is_module_known() {
-	case "$1" in
-	brew | shell | linux | node | python | uv | mas | pipx | rustup | claude | mise | go | macos) return 0 ;;
-	*) return 1 ;;
-	esac
+	module_known "$1"
 }
 
 module_description() {
-	case "$1" in
-	brew) print "Update Homebrew formulae (+ optional casks)" ;;
-	shell) print "Update Oh My Zsh and custom git plugins/themes" ;;
-	linux) print "Upgrade Linux system packages" ;;
-	node) print "Upgrade global npm packages via ncu" ;;
-	python) print "Upgrade global Python packages via pip" ;;
-	uv) print "Update uv and uv-managed tools" ;;
-	mas) print "Upgrade Mac App Store apps via mas (opt-in)" ;;
-	pipx) print "Upgrade pipx-managed apps via pipx" ;;
-	rustup) print "Update Rust toolchains via rustup" ;;
-	claude) print "Update Claude Code CLI" ;;
-	mise) print "Update mise and upgrade installed tools" ;;
-	go) print "Update Go binaries from GO_BINARIES config" ;;
-	macos) print "List available macOS software updates (opt-in)" ;;
-	*) print "" ;;
-	esac
+	if ! module_lookup "$1"; then
+		print ""
+		return 1
+	fi
+
+	print "$MODULE_LOOKUP_DESCRIPTION"
 }
 
 list_modules() {
-	local m
-	for m in brew shell linux node python uv mas pipx rustup claude mise go macos; do
-		printf '%-8s %s\n' "$m" "$(module_description "$m")"
-	done
+	local name handler platform opt_in description
+	while IFS='|' read -r name handler platform opt_in description; do
+		[ -n "$name" ] || continue
+		printf '%-8s %s\n' "$name" "$description"
+	done <<<"$MODULE_REGISTRY"
 }
 
 usage() {
@@ -966,6 +1245,7 @@ parse_args() {
 			;;
 		--self-update)
 			SELF_UPDATE=1
+			SELF_UPDATE_FORCE_REFRESH=1
 			;;
 		--no-self-update)
 			SELF_UPDATE=0
@@ -1084,18 +1364,14 @@ module_selected() {
 		return 1
 	fi
 
-	if [ "$name" = "mas" ] && [ "$MAS_UPGRADE" -eq 0 ]; then
-		return 1
-	fi
-
-	if [ "$name" = "macos" ] && [ "$MACOS_UPDATES" -eq 0 ]; then
+	if ! module_enabled_by_default "$name"; then
 		return 1
 	fi
 
 	module_supported "$name"
 }
 
-module_dependency_missing() {
+missing_dependency_is_error() {
 	# In --only mode, missing deps should be treated as an error.
 	if [ "${#only_modules[@]}" -gt 0 ]; then
 		return 0
@@ -1110,7 +1386,7 @@ ensure_cmd_or_skip() {
 		return 0
 	fi
 
-	if module_dependency_missing; then
+	if missing_dependency_is_error; then
 		err "$module: required command not found: $cmd"
 		return 1
 	fi
@@ -1150,8 +1426,9 @@ module_brew() {
 	log "Homebrew $(emoji "🍺")"
 	ensure_cmd_or_skip brew brew || return $?
 
-	if is_macos && [ "$BREW_CASKS" -eq 0 ] && [ "$BREW_CASKS_EXPLICIT" -eq 0 ]; then
-		warn "Defaulting to brew formula upgrades only on macOS. Enable casks with --brew-mode casks (or --full)."
+	if is_macos && [ "$BREW_CASKS" -eq 0 ] && [ "$BREW_CASKS_EXPLICIT" -eq 0 ] && [ "$BREW_FORMULA_DEFAULT_HINT_EMITTED" -eq 0 ]; then
+		log "Defaulting to brew formula upgrades only on macOS. Enable casks with --brew-mode casks (or --full)."
+		BREW_FORMULA_DEFAULT_HINT_EMITTED=1
 	fi
 
 	if is_macos && [ "$BREW_CASKS" -eq 1 ]; then
@@ -1199,11 +1476,11 @@ shell_git_is_repo() {
 
 shell_detect_omz_dir() {
 	if [ -n "${ZSH:-}" ] && [ -d "${ZSH}" ]; then
-		print "$ZSH"
+		stdout_print "$ZSH"
 		return 0
 	fi
 	if [ -d "${HOME}/.oh-my-zsh" ]; then
-		print "${HOME}/.oh-my-zsh"
+		stdout_print "${HOME}/.oh-my-zsh"
 		return 0
 	fi
 	return 1
@@ -1212,11 +1489,11 @@ shell_detect_omz_dir() {
 shell_detect_omz_custom_dir() {
 	local zsh_dir="$1"
 	if [ -n "${ZSH_CUSTOM:-}" ] && [ -d "${ZSH_CUSTOM}" ]; then
-		print "$ZSH_CUSTOM"
+		stdout_print "$ZSH_CUSTOM"
 		return 0
 	fi
 	if [ -d "${zsh_dir}/custom" ]; then
-		print "${zsh_dir}/custom"
+		stdout_print "${zsh_dir}/custom"
 		return 0
 	fi
 	return 1
@@ -1331,7 +1608,7 @@ module_linux() {
 	elif cmd_exists apk; then
 		pm="apk"
 	else
-		if module_dependency_missing; then
+		if missing_dependency_is_error; then
 			err "linux: no supported package manager found (apt-get/dnf/yum/pacman/zypper/apk)"
 			return 1
 		fi
@@ -1505,7 +1782,7 @@ module_python() {
 	ensure_cmd_or_skip python3 python || return $?
 
 	if ! python3 -m pip --version >/dev/null 2>&1; then
-		if module_dependency_missing; then
+		if missing_dependency_is_error; then
 			err "python: required module not found: pip (python3 -m pip)"
 			return 1
 		fi
@@ -1703,7 +1980,7 @@ module_go() {
 	ensure_cmd_or_skip go go || return $?
 
 	if [ -z "${GO_BINARIES}" ]; then
-		if module_dependency_missing; then
+		if missing_dependency_is_error; then
 			err "go: GO_BINARIES is not configured (set GO_BINARIES=... in ~/.updatesrc)"
 			return 1
 		fi
@@ -1726,7 +2003,7 @@ module_go() {
 	done
 
 	if [ "${#specs[@]}" -eq 0 ]; then
-		if module_dependency_missing; then
+		if missing_dependency_is_error; then
 			err "go: GO_BINARIES is empty (set GO_BINARIES=... in ~/.updatesrc)"
 			return 1
 		fi
@@ -1772,7 +2049,24 @@ module_macos() {
 
 csv_join() {
 	local IFS=,
-	print "$*"
+	stdout_print "$*"
+}
+
+module_dispatch() {
+	local name="$1"
+	local handler=""
+
+	if ! handler="$(module_handler "$name")"; then
+		err "$name: module is registered without a handler"
+		return 1
+	fi
+
+	if ! declare -F "$handler" >/dev/null 2>&1; then
+		err "$name: handler not implemented: $handler"
+		return 1
+	fi
+
+	"$handler"
 }
 
 run_selected_modules() {
@@ -1780,8 +2074,10 @@ run_selected_modules() {
 	skipped=()
 	failures=()
 
-	local m
-	for m in brew shell linux node python uv mas pipx rustup claude mise go macos; do
+	local m handler platform opt_in description
+	while IFS='|' read -r m handler platform opt_in description; do
+		[ -n "$m" ] || continue
+
 		if ! module_selected "$m"; then
 			continue
 		fi
@@ -1793,7 +2089,7 @@ run_selected_modules() {
 		CURRENT_MODULE="$m"
 		debug "Running module: $m"
 		local rc=0
-		"module_${m}"
+		module_dispatch "$m"
 		rc=$?
 		CURRENT_MODULE="main"
 		local dur=$((SECONDS - start))
@@ -1819,7 +2115,7 @@ run_selected_modules() {
 		if [ "$STRICT" -eq 1 ]; then
 			return 1
 		fi
-	done
+	done <<<"$MODULE_REGISTRY"
 
 	if [ "${#failures[@]}" -gt 0 ]; then
 		return 1
@@ -1853,6 +2149,7 @@ main() {
 		fi
 	fi
 
+	init_platform_cache
 	init_colors
 	apply_platform_defaults
 

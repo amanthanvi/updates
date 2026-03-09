@@ -124,7 +124,7 @@ Install what you actually use:
 
 - This script updates *global* environments (`npm -g`, `pip`), which can be disruptive.
 - Use `--dry-run` first, and consider `--only`/`--skip` to control scope.
-- `updates` can self-update from GitHub Releases; disable with `--no-self-update` or `UPDATES_SELF_UPDATE=0`. Self-update works best when installed to a user-writable location (e.g. `PREFIX=$HOME/.local`).
+- `updates` can self-update from GitHub Releases; disable with `--no-self-update` or `UPDATES_SELF_UPDATE=0`. Normal runs throttle GitHub release checks to about once every 24 hours per repo using a small local cache under `XDG_CACHE_HOME`, `~/Library/Caches`, or `~/.cache`; explicit `--self-update` forces a live check. Self-update works best when installed to a user-writable location (e.g. `PREFIX=$HOME/.local`).
 - On macOS, Homebrew casks are disabled by default; enable with `--brew-mode casks` or `--brew-mode greedy` (or `--full`). On macOS 26+, cask upgrades may be blocked unless your terminal app is allowed under **Privacy & Security → App Management** (e.g. Ghostty). If you see a system notification like “\<Terminal App\> tried modifying your system…”, enable App Management or rerun with `--brew-mode formula`.
 - On WSL, updates apply to the Linux distro (not Windows itself).
 - Output uses ANSI colors when run in a TTY; disable with `--no-color` or `NO_COLOR=1`. When `--log-file` is used, colors are disabled to keep logs clean.

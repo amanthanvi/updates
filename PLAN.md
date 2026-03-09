@@ -1,3 +1,23 @@
+# Plan: v1.0.1
+
+This is the execution plan for shipping `updates` **v1.0.1**. It is a small patch release focused on maintainability and self-update throttling.
+
+## Goals (v1.0.1)
+
+- Remove duplicated module metadata and keep module selection/dispatch aligned from one registry.
+- Reduce avoidable subprocess work without changing the public CLI contract.
+- Throttle self-update GitHub release checks with a small persistent cache while preserving checksum verification and explicit `--self-update`.
+
+## Execution checklist
+
+- [x] Centralize module metadata in one registry and route validation/listing/dispatch through it.
+- [x] Cache cheap runtime facts (`uname` result, JSON timestamps) and keep JSON stdout pure.
+- [x] Add repo-scoped self-update metadata caching with 24-hour throttling, forced refresh on `--self-update`, and cached fallback on live-check failure.
+- [x] Update `README.md`, `SPEC.md`, and `tests/test_cli.sh`.
+- [x] Run `./scripts/lint.sh` and `./scripts/test.sh`.
+
+---
+
 # Plan: v1.0.0
 
 This is the execution plan for shipping `updates` **v1.0.0**. It is a living checklist and should be updated as work lands.

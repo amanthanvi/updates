@@ -38,3 +38,7 @@ Source-of-truth docs:
 
 - Avoid changing user environments unexpectedly. Default behavior should remain predictable.
 - Prefer `--dry-run` support for anything that might mutate state.
+
+## Self-Correction Log
+
+- 2026-03-09: For installed-copy verification, stub module commands like `brew`; `--dry-run` disables self-update and non-stubbed runs can escape into real tool execution.

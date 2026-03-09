@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-03-09
+
+### Changed
+
+- Centralized module metadata into a single registry so module validation, listing, platform support, and dispatch stay in sync.
+- Normal self-update checks now use a best-effort per-repo cache for GitHub release metadata and `--self-update` forces a live refresh.
+- On macOS, the default Homebrew formula-only reminder is now info-level; cask/App Management advisories remain warnings.
+
+### Fixed
+
+- JSON mode now keeps stdout pure while reusing cached timestamps and internal stdout-only helpers.
+- Self-update now skips git checkouts and symlink installs before network checks and falls back to cached release metadata when the live GitHub tag lookup fails.
+
 ## [1.0.0] - 2026-02-07
 
 ### Removed
