@@ -2,7 +2,7 @@
 
 set -o pipefail
 
-UPDATES_VERSION="1.0.1"
+UPDATES_VERSION="1.0.2"
 
 SCRIPT_NAME="$(basename "$0")"
 
@@ -97,7 +97,7 @@ module_lookup() {
 	local needle="$1"
 	local name handler platform opt_in description
 
-	while IFS='|' read -r name handler platform opt_in description; do
+	while IFS='|' read -r -u3 name handler platform opt_in description; do
 		[ -n "$name" ] || continue
 		if [ "$name" != "$needle" ]; then
 			continue
@@ -108,7 +108,7 @@ module_lookup() {
 		MODULE_LOOKUP_OPT_IN="$opt_in"
 		MODULE_LOOKUP_DESCRIPTION="$description"
 		return 0
-	done <<<"$MODULE_REGISTRY"
+	done 3<<<"$MODULE_REGISTRY"
 
 	return 1
 }
@@ -999,10 +999,10 @@ module_description() {
 
 list_modules() {
 	local name handler platform opt_in description
-	while IFS='|' read -r name handler platform opt_in description; do
+	while IFS='|' read -r -u3 name handler platform opt_in description; do
 		[ -n "$name" ] || continue
 		printf '%-8s %s\n' "$name" "$description"
-	done <<<"$MODULE_REGISTRY"
+	done 3<<<"$MODULE_REGISTRY"
 }
 
 usage() {
@@ -2075,7 +2075,7 @@ run_selected_modules() {
 	failures=()
 
 	local m handler platform opt_in description
-	while IFS='|' read -r m handler platform opt_in description; do
+	while IFS='|' read -r -u3 m handler platform opt_in description; do
 		[ -n "$m" ] || continue
 
 		if ! module_selected "$m"; then
@@ -2115,7 +2115,7 @@ run_selected_modules() {
 		if [ "$STRICT" -eq 1 ]; then
 			return 1
 		fi
-	done <<<"$MODULE_REGISTRY"
+	done 3<<<"$MODULE_REGISTRY"
 
 	if [ "${#failures[@]}" -gt 0 ]; then
 		return 1
