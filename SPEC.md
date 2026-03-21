@@ -6,7 +6,7 @@ If anything here disagrees with other docs, update the other docs (or this spec)
 
 ## 0) Metadata
 
-- **Title:** updates v1.0.0 specification
+- **Title:** updates v1.1.0 specification
 - **Owner (DRI):** Aman Thanvi (@amanthanvi)
 - **Status:** Released
 - **Last updated:** 2026-03-21
