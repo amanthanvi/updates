@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-03-21
+
+### Added
+
+- 15 new test cases: `--strict`, `--log-file`, `--parallel` validation, Linux dnf/pacman/zypper/apk modules, config quoted values, config boolean keys, pipx/rustup/claude module assertions, empty ncu output handling. Test count: 33 → 48.
+- 11 navigable section markers (`grep '^# SECTION:' updates`) for codebase orientation.
+- `config_set_bool()` helper to DRY 7 identical boolean config patterns.
+
+### Fixed
+
+- Python parallel pip upgrades no longer interleave output across packages. Each process writes to a temp file and output is replayed sequentially.
+- Self-update re-exec now uses original CLI args captured at script entry instead of `main()`'s `$@`, ensuring consistent behavior when config changes between versions.
+
+### Changed
+
+- Bug report template now supports Linux (renamed "macOS version" → "Operating system").
+
+## [1.0.2] - 2026-03-21
+
+### Fixed
+
+- Use fd 3 for MODULE_REGISTRY reads to preserve stdin for interactive commands.
+
 ## [1.0.1] - 2026-03-09
 
 ### Changed

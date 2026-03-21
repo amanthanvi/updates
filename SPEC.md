@@ -6,10 +6,10 @@ If anything here disagrees with other docs, update the other docs (or this spec)
 
 ## 0) Metadata
 
-- **Title:** updates v1.0.0 specification
+- **Title:** updates v1.1.0 specification
 - **Owner (DRI):** Aman Thanvi (@amanthanvi)
 - **Status:** Released
-- **Last updated:** 2026-02-07
+- **Last updated:** 2026-03-21
 - **Target ship date:** 2026-02-07
 - **Links:** [Repository](https://github.com/amanthanvi/updates)
 
@@ -650,7 +650,25 @@ Maintainer workflow:
 - `./scripts/release.sh X.Y.Z` (validates invariants, runs lint/tests, creates annotated tag).
 - Push `main` and tags; GitHub Actions builds and publishes release artifacts.
 
-## 16) Decision Log
+## 16) Internal Structure
+
+The script uses navigable section markers for organization:
+
+```
+grep '^# SECTION:' updates
+```
+
+Sections: globals, output, colors, platform, registry, utilities, self-update, cli, selection, modules, runner.
+
+### Config helpers
+
+- `config_set_bool <CONFIG_KEY> <value> <VARIABLE>` — validates and sets boolean config values. Used by `read_config()` for 7 boolean keys.
+
+### File size convention
+
+The script exceeds the project's 500-line guideline. This is an intentional exception: the single-file distribution model (self-update downloads one file, `make install` copies one file) makes multi-file splitting impractical for this project.
+
+## 17) Decision Log
 
 | Date | Decision | Alternatives | Rationale | Consequences |
 |------|----------|--------------|-----------|--------------|
@@ -672,7 +690,7 @@ Maintainer workflow:
 | 2026-02-07 | 0.9.0 deprecation release, then 1.0.0 | Direct to 1.0; incremental 0.9.x | Gives users a migration window for renamed flags | Two releases to manage |
 | 2026-02-07 | Test bar: current level + new module stubs | Full split suite + Linux CI | Practical for a single-maintainer project | No Linux CI; limited edge-case coverage |
 
-## 17) Assumptions, Open Questions, Risks
+## 18) Assumptions, Open Questions, Risks
 
 ### Assumptions
 

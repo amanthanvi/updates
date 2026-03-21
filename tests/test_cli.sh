@@ -664,4 +664,199 @@ if [ "$("$self_update_old" --version)" != "0.0.2" ]; then
 	exit 1
 fi
 
+echo "Test: pipx module logs correct commands"
+write_stub uname 'echo Darwin'
+# shellcheck disable=SC2016
+write_stub git 'echo "GIT_TERMINAL_PROMPT=${GIT_TERMINAL_PROMPT:-} git $*" >>"$CALL_LOG"'
+: >"$CALL_LOG"
+"$SCRIPT" --only pipx --no-emoji >/dev/null
+grep -q '^pipx upgrade-all$' "$CALL_LOG"
+
+echo "Test: rustup module logs correct commands"
+: >"$CALL_LOG"
+"$SCRIPT" --only rustup --no-emoji >/dev/null
+grep -q '^rustup update$' "$CALL_LOG"
+
+echo "Test: claude module logs correct commands"
+: >"$CALL_LOG"
+"$SCRIPT" --only claude --no-emoji >/dev/null
+grep -q '^claude update$' "$CALL_LOG"
+
+echo "Test: empty ncu output means node module reports up-to-date"
+rm -f "${stub_bin}/python3"
+write_stub ncu 'echo "{}"'
+out="$("$SCRIPT" --only node --no-emoji --no-color)"
+echo "$out" | grep -q 'All global npm packages are up-to-date'
+write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
+
+echo "Test: Linux dnf module (non-interactive dry-run)"
+write_stub uname 'echo Linux'
+# shellcheck disable=SC2016
+write_stub dnf 'echo "dnf $*" >>"$CALL_LOG"'
+rm -f "${stub_bin}/apt-get"
+# shellcheck disable=SC2016
+write_stub sudo 'echo "sudo $*" >>"$CALL_LOG"; if [ "${1:-}" = "-n" ]; then shift; fi; "$@"'
+: >"$CALL_LOG"
+out="$("$SCRIPT" --only linux --non-interactive --dry-run --no-emoji --no-color)"
+echo "$out" | grep -q 'DRY RUN:.*dnf upgrade'
+
+echo "Test: Linux pacman module (non-interactive dry-run)"
+write_stub uname 'echo Linux'
+# shellcheck disable=SC2016
+write_stub pacman 'echo "pacman $*" >>"$CALL_LOG"'
+rm -f "${stub_bin}/apt-get" "${stub_bin}/dnf"
+# shellcheck disable=SC2016
+write_stub sudo 'echo "sudo $*" >>"$CALL_LOG"; if [ "${1:-}" = "-n" ]; then shift; fi; "$@"'
+: >"$CALL_LOG"
+out="$("$SCRIPT" --only linux --non-interactive --dry-run --no-emoji --no-color)"
+echo "$out" | grep -q 'DRY RUN:.*pacman -Syu'
+
+echo "Test: Linux zypper module (non-interactive dry-run)"
+write_stub uname 'echo Linux'
+# shellcheck disable=SC2016
+write_stub zypper 'echo "zypper $*" >>"$CALL_LOG"'
+rm -f "${stub_bin}/apt-get" "${stub_bin}/dnf" "${stub_bin}/pacman"
+# shellcheck disable=SC2016
+write_stub sudo 'echo "sudo $*" >>"$CALL_LOG"; if [ "${1:-}" = "-n" ]; then shift; fi; "$@"'
+: >"$CALL_LOG"
+out="$("$SCRIPT" --only linux --non-interactive --dry-run --no-emoji --no-color)"
+echo "$out" | grep -q 'DRY RUN:.*zypper refresh'
+echo "$out" | grep -q 'DRY RUN:.*zypper update'
+
+echo "Test: Linux apk module (non-interactive dry-run)"
+write_stub uname 'echo Linux'
+# shellcheck disable=SC2016
+write_stub apk 'echo "apk $*" >>"$CALL_LOG"'
+rm -f "${stub_bin}/apt-get" "${stub_bin}/dnf" "${stub_bin}/pacman" "${stub_bin}/zypper"
+# shellcheck disable=SC2016
+write_stub sudo 'echo "sudo $*" >>"$CALL_LOG"; if [ "${1:-}" = "-n" ]; then shift; fi; "$@"'
+: >"$CALL_LOG"
+out="$("$SCRIPT" --only linux --non-interactive --dry-run --no-emoji --no-color)"
+echo "$out" | grep -q 'DRY RUN:.*apk update'
+echo "$out" | grep -q 'DRY RUN:.*apk upgrade'
+
+# Restore Darwin uname and clean up Linux-only stubs
+write_stub uname 'echo Darwin'
+rm -f "${stub_bin}/dnf" "${stub_bin}/pacman" "${stub_bin}/zypper" "${stub_bin}/apk" "${stub_bin}/sudo"
+# shellcheck disable=SC2016
+write_stub apt-get 'echo "apt-get $*" >>"$CALL_LOG"'
+
+echo "Test: config quoted values parse correctly"
+config_home_quoted="${tmp_dir}/home-config-quoted"
+mkdir -p "$config_home_quoted"
+cat >"${config_home_quoted}/.updatesrc" <<EOF
+BREW_MODE="greedy"
+EOF
+out="$(HOME="$config_home_quoted" "$SCRIPT" --dry-run --only brew --no-emoji --no-color)"
+echo "$out" | grep -q '^DRY RUN: brew upgrade --greedy$'
+
+config_home_squoted="${tmp_dir}/home-config-squoted"
+mkdir -p "$config_home_squoted"
+cat >"${config_home_squoted}/.updatesrc" <<EOF
+BREW_MODE='greedy'
+EOF
+out="$(HOME="$config_home_squoted" "$SCRIPT" --dry-run --only brew --no-emoji --no-color)"
+echo "$out" | grep -q '^DRY RUN: brew upgrade --greedy$'
+
+echo "Test: config boolean keys work from config file"
+config_home_bools="${tmp_dir}/home-config-bools"
+mkdir -p "$config_home_bools"
+cat >"${config_home_bools}/.updatesrc" <<EOF
+MAS_UPGRADE=1
+MACOS_UPDATES=1
+EOF
+# shellcheck disable=SC2016
+write_stub mas 'echo "mas $*" >>"$CALL_LOG"'
+out="$(HOME="$config_home_bools" "$SCRIPT" --dry-run --skip node,python,pipx,rustup,claude,linux --no-emoji --no-color)"
+echo "$out" | grep -q '^==> mas START$'
+echo "$out" | grep -q '^==> macos START$'
+
+echo "Test: --strict stops on first module failure"
+write_stub uname 'echo Darwin'
+write_stub brew 'exit 1'
+set +e
+strict_out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --strict --only brew,node --no-emoji --no-color 2>&1)"
+strict_rc=$?
+set -e
+if [ "$strict_rc" -ne 1 ]; then
+	echo "Expected exit code 1 for --strict with failing module (got $strict_rc)" >&2
+	exit 1
+fi
+echo "$strict_out" | grep -q '==> brew END (FAIL)'
+if echo "$strict_out" | grep -q '==> node START'; then
+	echo "Expected --strict to stop before node module" >&2
+	exit 1
+fi
+# Restore brew stub
+# shellcheck disable=SC2016
+write_stub brew 'echo "brew $*" >>"$CALL_LOG"'
+
+echo "Test: --log-file writes output to file"
+write_stub uname 'echo Darwin'
+log_file="${tmp_dir}/test-log-file.log"
+logfile_out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only brew --log-file "$log_file" --no-emoji --no-color 2>&1)"
+if [ ! -f "$log_file" ]; then
+	echo "Expected log file to exist" >&2
+	exit 1
+fi
+grep -q 'brew START' "$log_file"
+echo "$logfile_out" | grep -q 'brew START'
+
+echo "Test: --log-file + --json interaction"
+log_file_json="${tmp_dir}/test-log-file-json.log"
+json_log_stderr="${tmp_dir}/json-log-stderr.log"
+json_log_stdout="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --json --dry-run --only brew --log-file "$log_file_json" --no-emoji --no-color 2>"$json_log_stderr")"
+printf '%s\n' "$json_log_stdout" | python3 -c "
+import json, sys
+found = False
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    obj = json.loads(line)
+    if obj.get('event') == 'module_start':
+        found = True
+assert found, 'Expected module_start event in JSON stdout'
+"
+grep -q '==> brew START' "$log_file_json"
+
+echo "Test: --parallel validation"
+write_stub uname 'echo Darwin'
+set +e
+UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --parallel 0 --dry-run --only brew --no-emoji --no-color >/dev/null 2>&1
+rc=$?
+set -e
+if [ "$rc" -ne 2 ]; then
+	echo "Expected exit code 2 for --parallel 0 (got $rc)" >&2
+	exit 1
+fi
+set +e
+UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --parallel abc --dry-run --only brew --no-emoji --no-color >/dev/null 2>&1
+rc=$?
+set -e
+if [ "$rc" -ne 2 ]; then
+	echo "Expected exit code 2 for --parallel abc (got $rc)" >&2
+	exit 1
+fi
+set +e
+UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --parallel 2 --dry-run --only brew --no-emoji --no-color >/dev/null 2>&1
+rc=$?
+set -e
+if [ "$rc" -ne 0 ]; then
+	echo "Expected exit code 0 for --parallel 2 (got $rc)" >&2
+	exit 1
+fi
+
+echo "Test: --only linux on macOS exits with error"
+write_stub uname 'echo Darwin'
+set +e
+linux_on_mac_out="$("$SCRIPT" --only linux --no-emoji --no-color 2>&1)"
+rc=$?
+set -e
+if [ "$rc" -ne 2 ]; then
+	echo "Expected exit code 2 for --only linux on macOS (got $rc)" >&2
+	exit 1
+fi
+echo "$linux_on_mac_out" | grep -q 'not supported'
+
 echo "All tests passed."

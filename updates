@@ -2,7 +2,11 @@
 
 set -o pipefail
 
-UPDATES_VERSION="1.0.2"
+###############################################################################
+# SECTION: globals — version, state variables, module registry
+###############################################################################
+
+UPDATES_VERSION="1.1.0"
 
 SCRIPT_NAME="$(basename "$0")"
 
@@ -84,6 +88,10 @@ SELF_UPDATE_CACHE_CHECKED_AT=""
 SELF_UPDATE_CACHE_LATEST_TAG=""
 
 BREW_FORMULA_DEFAULT_HINT_EMITTED=0
+
+###############################################################################
+# SECTION: output — print, log, warn, err, emoji, JSON emission
+###############################################################################
 
 print() {
 	printf '%s\n' "$*" >&"$HUMAN_FD"
@@ -274,6 +282,10 @@ debug() {
 	fi
 }
 
+###############################################################################
+# SECTION: colors — ANSI init, boundary lines, summary formatting
+###############################################################################
+
 init_colors() {
 	COLOR_STDOUT=0
 	COLOR_STDERR=0
@@ -402,6 +414,10 @@ format_summary() {
 	printf '%s' "$line"
 }
 
+###############################################################################
+# SECTION: platform — detection, defaults, brew mode
+###############################################################################
+
 cmd_exists() {
 	command -v "$1" >/dev/null 2>&1
 }
@@ -493,6 +509,10 @@ set_brew_mode() {
 	esac
 }
 
+###############################################################################
+# SECTION: registry — module lookup, validation, support checks
+###############################################################################
+
 module_known() {
 	module_lookup "$1"
 }
@@ -560,6 +580,10 @@ validate_only_modules_supported() {
 	done
 }
 
+###############################################################################
+# SECTION: utilities — run wrapper, semver comparison
+###############################################################################
+
 run() {
 	debug "+ $*"
 	if [ "$DRY_RUN" -eq 1 ]; then
@@ -598,6 +622,10 @@ semver_lt() {
 	[ "$a3" -lt "$b3" ]
 	return $?
 }
+
+###############################################################################
+# SECTION: self-update — GitHub release check, download, verify, re-exec
+###############################################################################
 
 self_update_enabled() {
 	if [ "$SELF_UPDATE" -ne 1 ]; then
@@ -962,8 +990,12 @@ maybe_self_update() {
 
 	warn "updates: updated to ${latest}; restarting"
 	export UPDATES_SELF_UPDATED=1
-	exec "$self_path" "$@"
+	exec "$self_path" "${ORIGINAL_ARGS[@]}"
 }
+
+###############################################################################
+# SECTION: cli — usage, config parsing, argument parsing
+###############################################################################
 
 contains_word() {
 	local needle="$1"
@@ -1081,6 +1113,15 @@ config_parse_module_list() {
 	done
 }
 
+config_set_bool() {
+	local config_key="$1" val="$2" varname="$3"
+	case "$val" in
+	0) eval "$varname=0" ;;
+	1) eval "$varname=1" ;;
+	*) warn "config: $config_key must be 0 or 1 (got: $val)" ;;
+	esac
+}
+
 read_config() {
 	if [ "$NO_CONFIG" -eq 1 ]; then
 		return 0
@@ -1135,25 +1176,13 @@ read_config() {
 			set_brew_mode "$val" config || true
 			;;
 		BREW_CLEANUP)
-			case "$val" in
-			0) BREW_CLEANUP=0 ;;
-			1) BREW_CLEANUP=1 ;;
-			*) warn "config: BREW_CLEANUP must be 0 or 1 (got: $val)" ;;
-			esac
+			config_set_bool BREW_CLEANUP "$val" BREW_CLEANUP
 			;;
 		MAS_UPGRADE)
-			case "$val" in
-			0) MAS_UPGRADE=0 ;;
-			1) MAS_UPGRADE=1 ;;
-			*) warn "config: MAS_UPGRADE must be 0 or 1 (got: $val)" ;;
-			esac
+			config_set_bool MAS_UPGRADE "$val" MAS_UPGRADE
 			;;
 		MACOS_UPDATES)
-			case "$val" in
-			0) MACOS_UPDATES=0 ;;
-			1) MACOS_UPDATES=1 ;;
-			*) warn "config: MACOS_UPDATES must be 0 or 1 (got: $val)" ;;
-			esac
+			config_set_bool MACOS_UPDATES "$val" MACOS_UPDATES
 			;;
 		LOG_LEVEL)
 			case "$val" in
@@ -1176,32 +1205,16 @@ read_config() {
 			esac
 			;;
 		PIP_FORCE)
-			case "$val" in
-			0) PYTHON_BREAK_SYSTEM_PACKAGES=0 ;;
-			1) PYTHON_BREAK_SYSTEM_PACKAGES=1 ;;
-			*) warn "config: PIP_FORCE must be 0 or 1 (got: $val)" ;;
-			esac
+			config_set_bool PIP_FORCE "$val" PYTHON_BREAK_SYSTEM_PACKAGES
 			;;
 		SELF_UPDATE)
-			case "$val" in
-			0) SELF_UPDATE=0 ;;
-			1) SELF_UPDATE=1 ;;
-			*) warn "config: SELF_UPDATE must be 0 or 1 (got: $val)" ;;
-			esac
+			config_set_bool SELF_UPDATE "$val" SELF_UPDATE
 			;;
 		NO_EMOJI)
-			case "$val" in
-			0) NO_EMOJI=0 ;;
-			1) NO_EMOJI=1 ;;
-			*) warn "config: NO_EMOJI must be 0 or 1 (got: $val)" ;;
-			esac
+			config_set_bool NO_EMOJI "$val" NO_EMOJI
 			;;
 		NO_COLOR)
-			case "$val" in
-			0) NO_COLOR_OUTPUT=0 ;;
-			1) NO_COLOR_OUTPUT=1 ;;
-			*) warn "config: NO_COLOR must be 0 or 1 (got: $val)" ;;
-			esac
+			config_set_bool NO_COLOR "$val" NO_COLOR_OUTPUT
 			;;
 		GO_BINARIES)
 			GO_BINARIES="$val"
@@ -1348,6 +1361,10 @@ parse_args() {
 	done
 }
 
+###############################################################################
+# SECTION: selection — module filtering, dependency checks, helpers
+###############################################################################
+
 module_selected() {
 	local name="$1"
 
@@ -1407,6 +1424,11 @@ json_pairs() {
 	fi
 	return 1
 }
+
+###############################################################################
+# SECTION: modules — brew, shell, linux, node, python, uv, mas, pipx,
+#                     rustup, claude, mise, go, macos
+###############################################################################
 
 python_externally_managed() {
 	if ! cmd_exists python3; then
@@ -1853,17 +1875,19 @@ module_python() {
 
 	log "Upgrading ${#packages[@]} Python packages (parallel: ${PARALLEL})..."
 
+	local pip_log_dir=""
+	pip_log_dir="$(mktemp -d 2>/dev/null || mktemp -d -t updates-pip)" || {
+		err "python: failed to create temp dir for pip logs"
+		return 1
+	}
+
 	local -a pids=()
 	local -a pid_pkgs=()
 	local failed=0
 
 	for pkg in "${packages[@]}"; do
 		debug "+ ${pip_install_args[*]} $pkg"
-		if [ "$JSON" -eq 1 ]; then
-			"${pip_install_args[@]}" "$pkg" 1>&2 &
-		else
-			"${pip_install_args[@]}" "$pkg" &
-		fi
+		"${pip_install_args[@]}" "$pkg" >"${pip_log_dir}/${pkg}.log" 2>&1 &
 		pids+=("$!")
 		pid_pkgs+=("$pkg")
 
@@ -1873,6 +1897,9 @@ module_python() {
 			if ! wait "$pid"; then
 				err "python: pip upgrade failed: $pid_pkg"
 				failed=1
+			fi
+			if [ -s "${pip_log_dir}/${pid_pkg}.log" ]; then
+				cat "${pip_log_dir}/${pid_pkg}.log" >&"$HUMAN_FD"
 			fi
 			pids=("${pids[@]:1}")
 			pid_pkgs=("${pid_pkgs[@]:1}")
@@ -1885,7 +1912,12 @@ module_python() {
 			err "python: pip upgrade failed: ${pid_pkgs[$i]}"
 			failed=1
 		fi
+		if [ -s "${pip_log_dir}/${pid_pkgs[$i]}.log" ]; then
+			cat "${pip_log_dir}/${pid_pkgs[$i]}.log" >&"$HUMAN_FD"
+		fi
 	done
+
+	rm -rf "$pip_log_dir"
 
 	if [ "$failed" -ne 0 ]; then
 		return 1
@@ -2047,6 +2079,10 @@ module_macos() {
 	return 0
 }
 
+###############################################################################
+# SECTION: runner — module dispatch, execution loop, main
+###############################################################################
+
 csv_join() {
 	local IFS=,
 	stdout_print "$*"
@@ -2186,4 +2222,5 @@ main() {
 	return 1
 }
 
+ORIGINAL_ARGS=("$@")
 main "$@"
