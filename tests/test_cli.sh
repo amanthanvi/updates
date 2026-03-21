@@ -689,6 +689,25 @@ out="$("$SCRIPT" --only node --no-emoji --no-color)"
 echo "$out" | grep -q 'All global npm packages are up-to-date'
 write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
 
+# Build a clean system PATH that excludes all Linux package managers so that
+# PM variant tests can control which manager is detected first.  This prevents
+# real system binaries (e.g. /usr/bin/apt-get on Ubuntu CI) from interfering.
+linux_sys_bin="${tmp_dir}/linux-sys-bin"
+mkdir -p "$linux_sys_bin"
+for dir in /usr/bin /bin /usr/sbin /sbin; do
+	[ -d "$dir" ] || continue
+	for f in "$dir"/*; do
+		[ -x "$f" ] || continue
+		name="$(basename "$f")"
+		case "$name" in
+		apt-get | dnf | yum | pacman | zypper | apk) continue ;;
+		esac
+		[ ! -e "${linux_sys_bin}/${name}" ] || continue
+		ln -s "$f" "${linux_sys_bin}/${name}" 2>/dev/null || true
+	done
+done
+LINUX_PM_PATH="${stub_bin}:${linux_sys_bin}"
+
 echo "Test: Linux dnf module (non-interactive dry-run)"
 write_stub uname 'echo Linux'
 # shellcheck disable=SC2016
@@ -697,7 +716,7 @@ rm -f "${stub_bin}/apt-get"
 # shellcheck disable=SC2016
 write_stub sudo 'echo "sudo $*" >>"$CALL_LOG"; if [ "${1:-}" = "-n" ]; then shift; fi; "$@"'
 : >"$CALL_LOG"
-out="$("$SCRIPT" --only linux --non-interactive --dry-run --no-emoji --no-color)"
+out="$(PATH="$LINUX_PM_PATH" "$SCRIPT" --only linux --non-interactive --dry-run --no-emoji --no-color)"
 echo "$out" | grep -q 'DRY RUN:.*dnf upgrade'
 
 echo "Test: Linux pacman module (non-interactive dry-run)"
@@ -708,7 +727,7 @@ rm -f "${stub_bin}/apt-get" "${stub_bin}/dnf"
 # shellcheck disable=SC2016
 write_stub sudo 'echo "sudo $*" >>"$CALL_LOG"; if [ "${1:-}" = "-n" ]; then shift; fi; "$@"'
 : >"$CALL_LOG"
-out="$("$SCRIPT" --only linux --non-interactive --dry-run --no-emoji --no-color)"
+out="$(PATH="$LINUX_PM_PATH" "$SCRIPT" --only linux --non-interactive --dry-run --no-emoji --no-color)"
 echo "$out" | grep -q 'DRY RUN:.*pacman -Syu'
 
 echo "Test: Linux zypper module (non-interactive dry-run)"
@@ -719,7 +738,7 @@ rm -f "${stub_bin}/apt-get" "${stub_bin}/dnf" "${stub_bin}/pacman"
 # shellcheck disable=SC2016
 write_stub sudo 'echo "sudo $*" >>"$CALL_LOG"; if [ "${1:-}" = "-n" ]; then shift; fi; "$@"'
 : >"$CALL_LOG"
-out="$("$SCRIPT" --only linux --non-interactive --dry-run --no-emoji --no-color)"
+out="$(PATH="$LINUX_PM_PATH" "$SCRIPT" --only linux --non-interactive --dry-run --no-emoji --no-color)"
 echo "$out" | grep -q 'DRY RUN:.*zypper refresh'
 echo "$out" | grep -q 'DRY RUN:.*zypper update'
 
@@ -731,7 +750,7 @@ rm -f "${stub_bin}/apt-get" "${stub_bin}/dnf" "${stub_bin}/pacman" "${stub_bin}/
 # shellcheck disable=SC2016
 write_stub sudo 'echo "sudo $*" >>"$CALL_LOG"; if [ "${1:-}" = "-n" ]; then shift; fi; "$@"'
 : >"$CALL_LOG"
-out="$("$SCRIPT" --only linux --non-interactive --dry-run --no-emoji --no-color)"
+out="$(PATH="$LINUX_PM_PATH" "$SCRIPT" --only linux --non-interactive --dry-run --no-emoji --no-color)"
 echo "$out" | grep -q 'DRY RUN:.*apk update'
 echo "$out" | grep -q 'DRY RUN:.*apk upgrade'
 
