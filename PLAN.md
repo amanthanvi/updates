@@ -265,6 +265,8 @@ This plan was superseded. `v0.6.0` shipped as opt-in app/system update presets; 
 - No support matrix explosion (start with Oh My Zsh + git-based custom repos only).
 - No modifications to the user’s shell config (`.zshrc`, etc.).
 
+**Note:** This plan was superseded; work moved to later releases.
+
 ## Execution checklist
 
 ### 1) Spec-first alignment

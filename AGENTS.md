@@ -42,3 +42,31 @@ Source-of-truth docs:
 ## Self-Correction Log
 
 - 2026-03-09: For installed-copy verification, stub module commands like `brew`; `--dry-run` disables self-update and non-stubbed runs can escape into real tool execution.
+
+## Structural Conventions
+
+### Section markers
+
+Every logical section starts with a triple-hash banner:
+
+```bash
+###############################################################################
+# SECTION: <name> — <description>
+###############################################################################
+```
+
+Run `grep '^# SECTION:' updates` for the table of contents.
+
+### Adding boolean config keys
+
+Use `config_set_bool`:
+
+```bash
+MY_KEY)
+    config_set_bool MY_KEY "$val" MY_VARIABLE
+    ;;
+```
+
+### 500-line exception
+
+The `updates` script intentionally exceeds 500 lines. The single-file distribution model (self-update, make install, curl) prevents splitting. Keep code DRY and use section markers for navigation.
