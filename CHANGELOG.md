@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-03-21
+
+### Fixed
+
+- Use fd 3 for MODULE_REGISTRY reads to preserve stdin for interactive commands.
+
 ## [1.0.1] - 2026-03-09
 
 ### Changed

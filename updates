@@ -990,7 +990,7 @@ maybe_self_update() {
 
 	warn "updates: updated to ${latest}; restarting"
 	export UPDATES_SELF_UPDATED=1
-	exec "$self_path" "$@"
+	exec "$self_path" "${ORIGINAL_ARGS[@]}"
 }
 
 ###############################################################################
@@ -1875,17 +1875,19 @@ module_python() {
 
 	log "Upgrading ${#packages[@]} Python packages (parallel: ${PARALLEL})..."
 
+	local pip_log_dir=""
+	pip_log_dir="$(mktemp -d 2>/dev/null || mktemp -d -t updates-pip)" || {
+		err "python: failed to create temp dir for pip logs"
+		return 1
+	}
+
 	local -a pids=()
 	local -a pid_pkgs=()
 	local failed=0
 
 	for pkg in "${packages[@]}"; do
 		debug "+ ${pip_install_args[*]} $pkg"
-		if [ "$JSON" -eq 1 ]; then
-			"${pip_install_args[@]}" "$pkg" 1>&2 &
-		else
-			"${pip_install_args[@]}" "$pkg" &
-		fi
+		"${pip_install_args[@]}" "$pkg" >"${pip_log_dir}/${pkg}.log" 2>&1 &
 		pids+=("$!")
 		pid_pkgs+=("$pkg")
 
@@ -1895,6 +1897,9 @@ module_python() {
 			if ! wait "$pid"; then
 				err "python: pip upgrade failed: $pid_pkg"
 				failed=1
+			fi
+			if [ -s "${pip_log_dir}/${pid_pkg}.log" ]; then
+				cat "${pip_log_dir}/${pid_pkg}.log" >&"$HUMAN_FD"
 			fi
 			pids=("${pids[@]:1}")
 			pid_pkgs=("${pid_pkgs[@]:1}")
@@ -1907,7 +1912,12 @@ module_python() {
 			err "python: pip upgrade failed: ${pid_pkgs[$i]}"
 			failed=1
 		fi
+		if [ -s "${pip_log_dir}/${pid_pkgs[$i]}.log" ]; then
+			cat "${pip_log_dir}/${pid_pkgs[$i]}.log" >&"$HUMAN_FD"
+		fi
 	done
+
+	rm -rf "$pip_log_dir"
 
 	if [ "$failed" -ne 0 ]; then
 		return 1
@@ -2212,4 +2222,5 @@ main() {
 	return 1
 }
 
+ORIGINAL_ARGS=("$@")
 main "$@"
