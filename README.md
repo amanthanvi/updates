@@ -68,6 +68,7 @@ Modules are auto-detected: if the underlying command isn’t installed, the modu
 
 - `brew`: update/upgrade Homebrew formulae (+ casks when enabled via `--brew-mode casks` / `--brew-mode greedy` / `--full`)
 - `shell`: update Oh My Zsh and custom git plugins/themes (auto-detected)
+- `repos`: update aman dev repos under `~/GitRepos` (auto-detected `aman-*-setup` dirs)
 - `linux`: upgrade Linux system packages (auto-detects `apt-get`/`dnf`/`yum`/`pacman`/`zypper`/`apk`)
 - `node`: upgrade global npm packages via `ncu` + `npm`
 - `python`: upgrade global Python packages via `python3 -m pip`
@@ -102,7 +103,7 @@ For `GO_BINARIES`, entries may be `module` or `module@version`. If `@version` is
 Install what you actually use:
 
 - `brew` (Homebrew)
-- `git` (for the `shell` module)
+- `git` (for the `shell` and `repos` modules)
 - `ncu` (npm-check-updates): `npm install -g npm-check-updates`
 - `uv`: https://github.com/astral-sh/uv
 - `mas`: `brew install mas`

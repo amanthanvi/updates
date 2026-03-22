@@ -9,7 +9,7 @@ If anything here disagrees with other docs, update the other docs (or this spec)
 - **Title:** updates v1.1.0 specification
 - **Owner (DRI):** Aman Thanvi (@amanthanvi)
 - **Status:** Released
-- **Last updated:** 2026-03-21
+- **Last updated:** 2026-03-22
 - **Target ship date:** 2026-02-07
 - **Links:** [Repository](https://github.com/amanthanvi/updates)
 
@@ -17,7 +17,7 @@ If anything here disagrees with other docs, update the other docs (or this spec)
 
 ### 1.1 What we're building
 
-A modular Bash CLI that updates common macOS and Linux development tooling (Homebrew, npm, pip, uv, mise, Go binaries, pipx, rustup, Claude Code, shell customization, Mac App Store, and macOS system updates) with a single command.
+A modular Bash CLI that updates common macOS and Linux development tooling (Homebrew, npm, pip, uv, mise, Go binaries, pipx, rustup, Claude Code, shell customization, development repos, Mac App Store, and macOS system updates) with a single command.
 
 ### 1.2 Problem statement / why now
 
@@ -28,7 +28,7 @@ v1.0 signals a stable CLI contract: flag names, module names, exit codes, output
 ### 1.3 Success metrics
 
 - **Primary KPIs:**
-  - All 13 modules pass lint + stub tests on macOS and Linux (CI matrix).
+  - All 14 modules pass lint + stub tests on macOS and Linux (CI matrix).
   - JSONL output is parseable by `jq` for all event types.
   - Config file (`~/.updatesrc`) correctly sets defaults overridden by CLI flags.
 - **Guardrails:**
@@ -254,6 +254,7 @@ The file is skipped if it does not exist. Pass `--no-config` to ignore it entire
 | `NO_EMOJI` | 0/1 | `--no-emoji` | `NO_EMOJI=1` |
 | `NO_COLOR` | 0/1 | `--no-color` | `NO_COLOR=1` |
 | `GO_BINARIES` | CSV (module[@version]) | go module binary list | `GO_BINARIES="golang.org/x/tools/gopls,github.com/go-delve/delve/cmd/dlv"` |
+| `REPOS_DIR` | path | repos module base directory | `REPOS_DIR=/home/user/projects` |
 
 Unknown keys are silently ignored (forward compatibility).
 
@@ -326,12 +327,13 @@ When `--json` is active, the log file receives the human-readable stderr output,
 
 ### 7.2 Module list & platform matrix
 
-Execution order: `brew`, `shell`, `linux`, `node`, `python`, `uv`, `mas`, `pipx`, `rustup`, `claude`, `mise`, `go`, `macos`.
+Execution order: `brew`, `shell`, `repos`, `linux`, `node`, `python`, `uv`, `mas`, `pipx`, `rustup`, `claude`, `mise`, `go`, `macos`.
 
 | Module   | macOS | Linux | WSL | Notes |
 |----------|:-----:|:-----:|:---:|-------|
 | `brew`   |  Yes  |  Yes  | Yes | Requires `brew` |
 | `shell`  |  Yes  |  Yes  | Yes | Requires `git`; updates Oh My Zsh + custom plugins/themes |
+| `repos`  |  Yes  |  Yes  | Yes | Requires `git`; updates `aman-*-setup` repos under `REPOS_DIR` or `~/GitRepos` |
 | `linux`  |  No   |  Yes  | Yes | Requires a supported package manager + optional `sudo` |
 | `node`   |  Yes  |  Yes  | Yes | Requires `ncu` + `npm` |
 | `python` |  Yes  |  Yes  | Yes | Requires `python3 -m pip` |
@@ -346,9 +348,9 @@ Execution order: `brew`, `shell`, `linux`, `node`, `python`, `uv`, `mas`, `pipx`
 
 ### 7.3 Module execution order
 
-Fixed: `brew` > `shell` > `linux` > `node` > `python` > `uv` > `mas` > `pipx` > `rustup` > `claude` > `mise` > `go` > `macos`.
+Fixed: `brew` > `shell` > `repos` > `linux` > `node` > `python` > `uv` > `mas` > `pipx` > `rustup` > `claude` > `mise` > `go` > `macos`.
 
-Rationale: package managers first (brew, linux), then language-specific tools, then opt-in system modules last.
+Rationale: core package managers first (`brew`), then git-backed local repos (`shell`, `repos`), then OS/language-specific tools, then opt-in system modules last.
 
 ### 7.4 Skip vs failure semantics
 
@@ -394,7 +396,22 @@ Purpose: update common shell customization tooling (Oh My Zsh) and its git-backe
 - With `-n`: sets `GIT_TERMINAL_PROMPT=0`.
 - Side effects: updates repos in-place.
 
-### 8.3 `linux`
+### 8.3 `repos`
+
+Purpose: update development git repos matching `aman-*-setup` under a base directory.
+
+- Requires: `git`
+- Detection:
+  - Base directory from `REPOS_DIR` config key, or defaults to `~/GitRepos`.
+  - Globs `${base}/aman-*-setup` for directories containing `.git`.
+  - Skips non-existent or non-git directories silently.
+- Non-dry-run: `git -C <dir> pull --ff-only` for each detected repo.
+  - If `./scripts/update.sh` exists and is executable in the repo, runs it after a successful pull.
+  - Post-pull script failure emits a warning but does not fail the module.
+- With `-n`: sets `GIT_TERMINAL_PROMPT=0`.
+- Side effects: updates repos in-place; may run post-pull scripts.
+
+### 8.4 `linux`
 
 Purpose: upgrade Linux system packages using the host distro package manager.
 
@@ -409,7 +426,7 @@ Purpose: upgrade Linux system packages using the host distro package manager.
   - `apk`: `apk update` + `apk upgrade`
 - Side effects: upgrades OS-managed packages.
 
-### 8.4 `node`
+### 8.5 `node`
 
 Purpose: upgrade global npm packages using `npm-check-updates`.
 
@@ -417,7 +434,7 @@ Purpose: upgrade global npm packages using `npm-check-updates`.
 - Non-dry-run: `ncu -g --jsonUpgraded` to detect upgrades, then `npm install -g -- <name@version>...`.
 - Side effects: upgrades global npm packages.
 
-### 8.5 `python`
+### 8.6 `python`
 
 Purpose: upgrade global Python packages with `pip`.
 
@@ -428,7 +445,7 @@ Purpose: upgrade global Python packages with `pip`.
 - With `-n`: adds `--no-input` to pip calls.
 - Side effects: upgrades Python packages.
 
-### 8.6 `uv`
+### 8.7 `uv`
 
 Purpose: update the `uv` tool itself and all uv-managed tools.
 
@@ -438,7 +455,7 @@ Purpose: update the `uv` tool itself and all uv-managed tools.
   - `uv tool upgrade --all`
 - Side effects: updates uv binary and all uv-installed tools.
 
-### 8.7 `mas`
+### 8.8 `mas`
 
 Purpose: upgrade Mac App Store apps.
 
@@ -447,7 +464,7 @@ Purpose: upgrade Mac App Store apps.
 - Non-dry-run: `mas upgrade`
 - Side effects: upgrades App Store apps.
 
-### 8.8 `pipx`
+### 8.9 `pipx`
 
 Purpose: upgrade pipx-managed apps.
 
@@ -455,7 +472,7 @@ Purpose: upgrade pipx-managed apps.
 - Non-dry-run: `pipx upgrade-all`
 - Side effects: upgrades pipx-installed tools.
 
-### 8.9 `rustup`
+### 8.10 `rustup`
 
 Purpose: update Rust toolchains.
 
@@ -463,7 +480,7 @@ Purpose: update Rust toolchains.
 - Non-dry-run: `rustup update`
 - Side effects: updates installed Rust toolchains/components.
 
-### 8.10 `claude`
+### 8.11 `claude`
 
 Purpose: update the Claude Code CLI.
 
@@ -471,7 +488,7 @@ Purpose: update the Claude Code CLI.
 - Non-dry-run: `claude update`
 - Side effects: updates the Claude Code CLI.
 
-### 8.11 `mise`
+### 8.12 `mise`
 
 Purpose: update mise itself and upgrade all installed tool versions.
 
@@ -481,7 +498,7 @@ Purpose: update mise itself and upgrade all installed tool versions.
   - `mise upgrade`
 - Side effects: updates mise binary and installed tool versions to latest matching constraints.
 
-### 8.12 `go`
+### 8.13 `go`
 
 Purpose: update Go binaries from a user-specified list.
 
@@ -494,7 +511,7 @@ Purpose: update Go binaries from a user-specified list.
   - `--only go`: error (return `1`)
 - Side effects: rebuilds and installs Go binaries to `$GOBIN` or `$GOPATH/bin`.
 
-### 8.13 `macos`
+### 8.14 `macos`
 
 Purpose: list available macOS software updates.
 
@@ -607,7 +624,7 @@ Ship all v1.0 features (config file, `--json`, new modules, `--brew-mode`, `--lo
 
 - **Unit/integration (stub-based):**
   - Existing tests for brew, node, python, linux, shell, mas, macos, self-update.
-  - New stubs for: uv, mise, go modules.
+  - New stubs for: uv, mise, go, repos modules.
   - Config file parsing tests (precedence, unknown keys, `--no-config`).
   - `--brew-mode` enum validation tests.
   - `--log-level` output filtering tests.
