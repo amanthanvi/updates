@@ -71,7 +71,7 @@ echo "$out" | grep -q '^brew'
 echo "$out" | grep -q '^shell'
 echo "$out" | grep -q '^linux'
 actual_modules="$(printf '%s\n' "$out" | awk '{print $1}' | paste -sd' ' -)"
-expected_modules='brew shell linux node python uv mas pipx rustup claude mise go macos'
+expected_modules='brew shell repos linux node python uv mas pipx rustup claude mise go macos'
 if [ "$actual_modules" != "$expected_modules" ]; then
 	echo "Expected module order: $expected_modules" >&2
 	echo "Actual module order:   $actual_modules" >&2
@@ -413,6 +413,49 @@ EOF
 HOME="$go_home" "$SCRIPT" --only go --no-emoji --no-color >/dev/null
 grep -q '^go install golang.org/x/tools/gopls@latest$' "$CALL_LOG"
 grep -q '^go install github.com/go-delve/delve/cmd/dlv@v1.2.3$' "$CALL_LOG"
+
+echo "Test: repos module updates git repos"
+repos_home="${tmp_dir}/home-repos"
+repos_dir="${repos_home}/GitRepos"
+mkdir -p "${repos_dir}/aman-claude-code-setup"
+mkdir -p "${repos_dir}/aman-codex-setup"
+mkdir -p "${repos_dir}/aman-claude-code-setup/.git"
+mkdir -p "${repos_dir}/aman-codex-setup/.git"
+write_stub git 'echo "git $*" >>"$CALL_LOG"'
+: >"$CALL_LOG"
+HOME="$repos_home" "$SCRIPT" --only repos --non-interactive --no-emoji --no-color >/dev/null 2>&1
+grep -q "git -C ${repos_dir}/aman-claude-code-setup pull --ff-only" "$CALL_LOG"
+grep -q "git -C ${repos_dir}/aman-codex-setup pull --ff-only" "$CALL_LOG"
+
+echo "Test: repos module respects REPOS_DIR config"
+repos_config_home="${tmp_dir}/home-repos-config"
+repos_config_dir="${repos_config_home}/custom-repos"
+mkdir -p "${repos_config_dir}/aman-test-setup"
+mkdir -p "${repos_config_dir}/aman-test-setup/.git"
+cat >"${repos_config_home}/.updatesrc" <<UPDATESRC
+REPOS_DIR=${repos_config_dir}
+UPDATESRC
+write_stub git 'echo "git $*" >>"$CALL_LOG"'
+: >"$CALL_LOG"
+HOME="$repos_config_home" "$SCRIPT" --only repos --non-interactive --no-emoji --no-color >/dev/null 2>&1
+grep -q "git -C ${repos_config_dir}/aman-test-setup pull --ff-only" "$CALL_LOG"
+
+echo "Test: repos module skips when no repos exist"
+repos_empty_home="${tmp_dir}/home-repos-empty"
+mkdir -p "${repos_empty_home}/GitRepos"
+out="$(HOME="$repos_empty_home" "$SCRIPT" --only repos --non-interactive --no-emoji --no-color 2>&1)" || true
+echo "$out" | grep -q 'repos END (SKIP)'
+
+echo "Test: repos module dry-run shows post-pull script"
+repos_dry_home="${tmp_dir}/home-repos-dry"
+repos_dry_dir="${repos_dry_home}/GitRepos"
+mkdir -p "${repos_dry_dir}/aman-dry-setup/.git"
+mkdir -p "${repos_dry_dir}/aman-dry-setup/scripts"
+printf '#!/bin/bash\necho ok\n' >"${repos_dry_dir}/aman-dry-setup/scripts/update.sh"
+chmod +x "${repos_dry_dir}/aman-dry-setup/scripts/update.sh"
+out="$(HOME="$repos_dry_home" "$SCRIPT" --dry-run --only repos --no-emoji --no-color 2>&1)"
+echo "$out" | grep -q "DRY RUN: git -C ${repos_dry_dir}/aman-dry-setup pull --ff-only"
+echo "$out" | grep -q "DRY RUN: (cd ${repos_dry_dir}/aman-dry-setup && ./scripts/update.sh)"
 
 echo "Test: self-update accepts checksum paths (dist/updates)"
 self_update_home="${tmp_dir}/home-self-update"

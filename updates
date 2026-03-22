@@ -23,6 +23,7 @@ SELF_UPDATE_FORCE_REFRESH=0
 NO_CONFIG=0
 JSON=0
 GO_BINARIES=""
+REPOS_DIR=""
 
 LOG_LEVEL="info"
 LOG_LEVEL_NUM=2
@@ -57,6 +58,7 @@ C_BLUE=""
 
 MODULE_REGISTRY='brew|module_brew|any|0|Update Homebrew formulae (+ optional casks)
 shell|module_shell|any|0|Update Oh My Zsh and custom git plugins/themes
+repos|module_repos|any|0|Update aman dev repos under ~/GitRepos
 linux|module_linux|linux|0|Upgrade Linux system packages
 node|module_node|any|0|Upgrade global npm packages via ncu
 python|module_python|any|0|Upgrade global Python packages via pip
@@ -1219,6 +1221,9 @@ read_config() {
 		GO_BINARIES)
 			GO_BINARIES="$val"
 			;;
+		REPOS_DIR)
+			REPOS_DIR="$val"
+			;;
 		*)
 			# Unknown keys are ignored for forward compatibility.
 			:
@@ -1591,6 +1596,86 @@ module_shell() {
 
 		log "Updating: ${repo}"
 		if ! run git -C "$repo" pull --ff-only; then
+			failed=1
+		fi
+	done
+
+	if [ "$NON_INTERACTIVE" -eq 1 ]; then
+		if [ "$git_terminal_prompt_was_set" -eq 1 ]; then
+			export GIT_TERMINAL_PROMPT="$git_terminal_prompt_prev"
+		else
+			unset GIT_TERMINAL_PROMPT
+		fi
+	fi
+
+	if [ "$failed" -eq 1 ]; then
+		return 1
+	fi
+	return 0
+}
+
+module_repos() {
+	log "Development repos $(emoji "📦")"
+	ensure_cmd_or_skip git repos || return $?
+
+	local base_dir="${REPOS_DIR:-${HOME}/GitRepos}"
+	if [ ! -d "$base_dir" ]; then
+		log "Skipping repos: base directory not found: ${base_dir}"
+		return 2
+	fi
+
+	local git_terminal_prompt_prev=""
+	local git_terminal_prompt_was_set=0
+	if [ "$NON_INTERACTIVE" -eq 1 ]; then
+		if [ -n "${GIT_TERMINAL_PROMPT+x}" ]; then
+			git_terminal_prompt_was_set=1
+			git_terminal_prompt_prev="${GIT_TERMINAL_PROMPT}"
+		fi
+		export GIT_TERMINAL_PROMPT=0
+	fi
+
+	local -a repos=()
+	local dir
+	for dir in "${base_dir}"/aman-*-setup; do
+		[ -e "$dir" ] || continue
+		[ -d "$dir" ] || continue
+		if shell_git_is_repo "$dir"; then
+			repos+=("$dir")
+		fi
+	done
+
+	if [ "${#repos[@]}" -eq 0 ]; then
+		log "Skipping repos: no aman-*-setup repos found in ${base_dir}."
+		if [ "$NON_INTERACTIVE" -eq 1 ]; then
+			if [ "$git_terminal_prompt_was_set" -eq 1 ]; then
+				export GIT_TERMINAL_PROMPT="$git_terminal_prompt_prev"
+			else
+				unset GIT_TERMINAL_PROMPT
+			fi
+		fi
+		return 2
+	fi
+
+	local failed=0
+	local repo
+	for repo in "${repos[@]}"; do
+		if [ "$DRY_RUN" -eq 1 ]; then
+			log "DRY RUN: git -C ${repo} pull --ff-only"
+			if [ -x "${repo}/scripts/update.sh" ]; then
+				log "DRY RUN: (cd ${repo} && ./scripts/update.sh)"
+			fi
+			continue
+		fi
+
+		log "Updating: ${repo}"
+		if run git -C "$repo" pull --ff-only; then
+			if [ -x "${repo}/scripts/update.sh" ]; then
+				log "Running post-pull: ./scripts/update.sh"
+				if ! (cd "$repo" && run ./scripts/update.sh); then
+					warn "repos: post-pull script failed: ${repo}/scripts/update.sh"
+				fi
+			fi
+		else
 			failed=1
 		fi
 	done
