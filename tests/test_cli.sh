@@ -421,6 +421,7 @@ mkdir -p "${repos_dir}/aman-claude-code-setup"
 mkdir -p "${repos_dir}/aman-codex-setup"
 mkdir -p "${repos_dir}/aman-claude-code-setup/.git"
 mkdir -p "${repos_dir}/aman-codex-setup/.git"
+# shellcheck disable=SC2016
 write_stub git 'echo "git $*" >>"$CALL_LOG"'
 : >"$CALL_LOG"
 HOME="$repos_home" "$SCRIPT" --only repos --non-interactive --no-emoji --no-color >/dev/null 2>&1
@@ -435,6 +436,7 @@ mkdir -p "${repos_config_dir}/aman-test-setup/.git"
 cat >"${repos_config_home}/.updatesrc" <<UPDATESRC
 REPOS_DIR=${repos_config_dir}
 UPDATESRC
+# shellcheck disable=SC2016
 write_stub git 'echo "git $*" >>"$CALL_LOG"'
 : >"$CALL_LOG"
 HOME="$repos_config_home" "$SCRIPT" --only repos --non-interactive --no-emoji --no-color >/dev/null 2>&1

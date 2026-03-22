@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-03-22
+
+### Added
+
+- `repos` module: auto-discovers and updates `aman-*-setup` git repos under `~/GitRepos`, with optional `./scripts/update.sh` post-pull execution.
+- `REPOS_DIR` config key in `~/.updatesrc` to override the default repos base directory.
+
 ## [1.1.0] - 2026-03-21
 
 ### Added
