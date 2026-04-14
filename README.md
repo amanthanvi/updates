@@ -77,6 +77,7 @@ Modules are auto-detected: if the underlying command isn’t installed, the modu
 - `pipx`: upgrade pipx-managed apps via `pipx upgrade-all`
 - `rustup`: update Rust toolchains via `rustup update`
 - `claude`: update Claude Code CLI via `claude update`
+- `pi`: update pi AI CLI extensions via `pi update`
 - `mise`: update mise and upgrade installed tools (`mise self-update`, `mise upgrade`)
 - `go`: update Go binaries from `GO_BINARIES` in `~/.updatesrc` (entries default to `@latest`)
 - `macos`: list available macOS software updates via `softwareupdate -l` (disabled by default; enable with `--macos-updates` or `--full`)
@@ -111,6 +112,7 @@ Install what you actually use:
 - `pipx`: `brew install pipx`
 - `rustup`: from https://rustup.rs
 - `claude` (Claude Code CLI) for the `claude` module
+- `pi` (npm-installed AI coding CLI) for the `pi` module
 - `go` (for the `go` module)
 - On Linux: a supported system package manager (`apt-get`, `dnf`, `yum`, `pacman`, `zypper`, or `apk`) and `sudo` (if not running as root)
 
@@ -123,7 +125,7 @@ Install what you actually use:
 
 ## Notes / Safety
 
-- This script updates *global* environments (`npm -g`, `pip`), which can be disruptive.
+- This script updates _global_ environments (`npm -g`, `pip`), which can be disruptive.
 - Use `--dry-run` first, and consider `--only`/`--skip` to control scope.
 - `updates` can self-update from GitHub Releases; disable with `--no-self-update` or `UPDATES_SELF_UPDATE=0`. Normal runs throttle GitHub release checks to about once every 24 hours per repo using a small local cache under `XDG_CACHE_HOME`, `~/Library/Caches`, or `~/.cache`; explicit `--self-update` forces a live check. Self-update works best when installed to a user-writable location (e.g. `PREFIX=$HOME/.local`).
 - On macOS, Homebrew casks are disabled by default; enable with `--brew-mode casks` or `--brew-mode greedy` (or `--full`). On macOS 26+, cask upgrades may be blocked unless your terminal app is allowed under **Privacy & Security → App Management** (e.g. Ghostty). If you see a system notification like “\<Terminal App\> tried modifying your system…”, enable App Management or rerun with `--brew-mode formula`.
