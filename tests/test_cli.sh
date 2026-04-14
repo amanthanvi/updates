@@ -60,6 +60,8 @@ write_stub rustup 'echo "rustup $*" >>"$CALL_LOG"'
 # shellcheck disable=SC2016
 write_stub claude 'echo "claude $*" >>"$CALL_LOG"'
 # shellcheck disable=SC2016
+write_stub pi 'echo "pi $*" >>"$CALL_LOG"'
+# shellcheck disable=SC2016
 write_stub softwareupdate 'echo "softwareupdate $*" >>"$CALL_LOG"'
 
 echo "Test: help works"
@@ -71,7 +73,7 @@ echo "$out" | grep -q '^brew'
 echo "$out" | grep -q '^shell'
 echo "$out" | grep -q '^linux'
 actual_modules="$(printf '%s\n' "$out" | awk '{print $1}' | paste -sd' ' -)"
-expected_modules='brew shell repos linux node python uv mas pipx rustup claude mise go macos'
+expected_modules='brew shell repos linux node python uv mas pipx rustup claude pi mise go macos'
 if [ "$actual_modules" != "$expected_modules" ]; then
 	echo "Expected module order: $expected_modules" >&2
 	echo "Actual module order:   $actual_modules" >&2
@@ -235,7 +237,7 @@ grep -q '^brew upgrade --formula$' "$CALL_LOG"
 grep -q '^npm install -g -- npm@11.7.0$' "$CALL_LOG"
 
 echo "Test: default macOS run is safe (no mas/macos; brew formula only)"
-out="$("$SCRIPT" --dry-run --skip node,python,pipx,rustup,claude,linux --no-emoji)"
+out="$("$SCRIPT" --dry-run --skip node,python,pipx,rustup,claude,pi,linux --no-emoji)"
 echo "$out" | grep -q '^==> brew START$'
 echo "$out" | grep -q '^==> shell START$'
 echo "$out" | grep -q '^==> shell END (SKIP)'
@@ -287,7 +289,7 @@ echo "Test: --full enables brew casks + mas + macos"
 : >"$CALL_LOG"
 full_stderr="${tmp_dir}/full-stderr.log"
 : >"$full_stderr"
-out="$("$SCRIPT" --full --skip node,python,pipx,rustup,claude,linux --no-emoji 2>"$full_stderr")"
+out="$("$SCRIPT" --full --skip node,python,pipx,rustup,claude,pi,linux --no-emoji 2>"$full_stderr")"
 echo "$out" | grep -q '^==> brew START$'
 echo "$out" | grep -q '^==> shell START$'
 echo "$out" | grep -q '^==> mas START$'
@@ -727,6 +729,11 @@ echo "Test: claude module logs correct commands"
 "$SCRIPT" --only claude --no-emoji >/dev/null
 grep -q '^claude update$' "$CALL_LOG"
 
+echo "Test: pi module logs correct commands"
+: >"$CALL_LOG"
+"$SCRIPT" --only pi --no-emoji >/dev/null
+grep -q '^pi update$' "$CALL_LOG"
+
 echo "Test: empty ncu output means node module reports up-to-date"
 rm -f "${stub_bin}/python3"
 write_stub ncu 'echo "{}"'
@@ -831,7 +838,7 @@ MACOS_UPDATES=1
 EOF
 # shellcheck disable=SC2016
 write_stub mas 'echo "mas $*" >>"$CALL_LOG"'
-out="$(HOME="$config_home_bools" "$SCRIPT" --dry-run --skip node,python,pipx,rustup,claude,linux --no-emoji --no-color)"
+out="$(HOME="$config_home_bools" "$SCRIPT" --dry-run --skip node,python,pipx,rustup,claude,pi,linux --no-emoji --no-color)"
 echo "$out" | grep -q '^==> mas START$'
 echo "$out" | grep -q '^==> macos START$'
 

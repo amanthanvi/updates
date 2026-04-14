@@ -67,6 +67,7 @@ mas|module_mas|macos|1|Upgrade Mac App Store apps via mas (opt-in)
 pipx|module_pipx|any|0|Upgrade pipx-managed apps via pipx
 rustup|module_rustup|any|0|Update Rust toolchains via rustup
 claude|module_claude|any|0|Update Claude Code CLI
+pi|module_pi|any|0|Update pi AI CLI extensions via pi update
 mise|module_mise|any|0|Update mise and upgrade installed tools
 go|module_go|any|0|Update Go binaries from GO_BINARIES config
 macos|module_macos|macos|1|List available macOS software updates (opt-in)'
@@ -2074,6 +2075,19 @@ module_claude() {
 	fi
 
 	run claude update || return 1
+	return 0
+}
+
+module_pi() {
+	log "pi $(emoji "🥧")"
+	ensure_cmd_or_skip pi pi || return $?
+
+	if [ "$DRY_RUN" -eq 1 ]; then
+		log "DRY RUN: pi update"
+		return 0
+	fi
+
+	run pi update || return 1
 	return 0
 }
 
