@@ -29,6 +29,7 @@ esac
 release_validate_version "$VERSION"
 release_require_command gh
 release_require_command jq
+bash "$RELEASE_REPO_ROOT/scripts/release-verify-dist.sh" "$VERSION" "$DIST_DIR"
 
 RELEASE_JSON="$(gh api "repos/$REPO/releases/tags/$TAG")"
 DRAFT_STATE="$(printf '%s' "$RELEASE_JSON" | jq -r '.draft')"

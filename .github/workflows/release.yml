@@ -25,11 +25,13 @@ jobs:
       - name: Resolve release tag
         id: meta
         shell: bash
+        env:
+          INPUT_TAG_RAW: ${{ inputs.tag }}
         run: |
           set -euo pipefail
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ inputs.tag }}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG="${INPUT_TAG_RAW}"
           else
             TAG="${GITHUB_REF_NAME}"
           fi
@@ -55,14 +57,23 @@ jobs:
           TAG="${{ steps.meta.outputs.tag }}"
           VERSION="${{ steps.meta.outputs.version }}"
           SCRIPT_VERSION="$(awk -F'\"' '/^UPDATES_VERSION=/{print $2; exit}' updates)"
+          WINDOWS_VERSION="$(awk -F"'" '/^\$script:UpdatesVersion[[:space:]]*=/{print $2; exit}' updates-main.ps1)"
 
           if [ -z "$SCRIPT_VERSION" ]; then
             echo "Failed to detect UPDATES_VERSION in updates" >&2
             exit 1
           fi
+          if [ -z "$WINDOWS_VERSION" ]; then
+            echo "Failed to detect UpdatesVersion in updates-main.ps1" >&2
+            exit 1
+          fi
 
           if [ "$SCRIPT_VERSION" != "$VERSION" ]; then
             echo "Tag version ($VERSION) does not match UPDATES_VERSION ($SCRIPT_VERSION)" >&2
+            exit 1
+          fi
+          if [ "$WINDOWS_VERSION" != "$VERSION" ]; then
+            echo "Tag version ($VERSION) does not match UpdatesVersion ($WINDOWS_VERSION)" >&2
             exit 1
           fi
 

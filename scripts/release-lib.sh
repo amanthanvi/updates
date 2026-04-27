@@ -51,6 +51,23 @@ release_script_version() {
 	awk -F'"' '/^UPDATES_VERSION=/{print $2; exit}' updates
 }
 
+release_windows_payload_version() {
+	local path="${1:-updates-main.ps1}"
+	awk -F"'" '/^\$script:UpdatesVersion[[:space:]]*=/{print $2; exit}' "$path"
+}
+
+release_resolve_path() {
+	local path="$1"
+	case "$path" in
+	/* | [A-Za-z]:/* | [A-Za-z]:\\*)
+		printf '%s\n' "$path"
+		;;
+	*)
+		printf '%s\n' "$RELEASE_REPO_ROOT/$path"
+		;;
+	esac
+}
+
 release_sha256() {
 	local path="$1"
 	if command -v sha256sum >/dev/null 2>&1; then

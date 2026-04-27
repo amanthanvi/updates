@@ -122,4 +122,9 @@ assert_json_field_equals "$WINDOWS_MANIFEST" '.version' "$VERSION" "Windows payl
 assert_json_field_equals "$WINDOWS_MANIFEST" '.bootstrap_min | tostring' "$RELEASE_BOOTSTRAP_MIN" "Windows payload manifest missing bootstrap_min"
 assert_json_field_equals "$WINDOWS_MANIFEST" '.entry_script' 'updates-main.ps1' "Windows payload manifest missing entry_script"
 
+WINDOWS_PAYLOAD_VERSION="$(release_windows_payload_version "$TMP_DIR/versions/$VERSION/updates-main.ps1")"
+if [ "$WINDOWS_PAYLOAD_VERSION" != "$VERSION" ]; then
+	release_fail "Windows payload updates-main.ps1 version does not match $VERSION"
+fi
+
 echo "Verified release artifacts in $DIST_DIR" >&2

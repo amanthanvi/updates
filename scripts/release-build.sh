@@ -29,6 +29,12 @@ SCRIPT_VERSION="$(release_script_version)"
 if [ "$SCRIPT_VERSION" != "$VERSION" ]; then
 	release_fail "UPDATES_VERSION (${SCRIPT_VERSION}) does not match requested version (${VERSION})"
 fi
+WINDOWS_VERSION="$(release_windows_payload_version "$WINDOWS_PAYLOAD_SOURCE")"
+if [ "$WINDOWS_VERSION" != "$VERSION" ]; then
+	release_fail "UpdatesVersion (${WINDOWS_VERSION}) does not match requested version (${VERSION})"
+fi
+
+DIST_DIR_ABS="$(release_resolve_path "$DIST_DIR")"
 
 TMP_DIR="$(release_make_tmpdir)"
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -54,7 +60,7 @@ release_manifest_file "$VERSION" "$DIST_DIR/$RELEASE_ASSET_MANIFEST"
 
 (
 	cd "$WINDOWS_ROOT"
-	zip -q -r "$RELEASE_REPO_ROOT/$DIST_DIR/$RELEASE_ASSET_WINDOWS_ZIP" .
+	zip -q -r "$DIST_DIR_ABS/$RELEASE_ASSET_WINDOWS_ZIP" .
 )
 
 {
