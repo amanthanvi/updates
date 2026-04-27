@@ -5,12 +5,20 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 ensure_windows_cli_aliases_on_path() {
+	local links_dir=""
+
 	case "$(uname -s)" in
-	MINGW* | MSYS* | CYGWIN*) ;;
+	MINGW* | MSYS* | CYGWIN*)
+		# Native Windows shells can translate LOCALAPPDATA directly.
+		if [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1; then
+			links_dir="$(cygpath -u "${LOCALAPPDATA}\\Microsoft\\WinGet\\Links" 2>/dev/null || true)"
+		fi
+		;;
 	Linux)
 		[ -n "${WSL_INTEROP:-}" ] || return 0
 		if command -v powershell.exe >/dev/null 2>&1; then
 			local localappdata_win=""
+			# WSL needs the Windows LOCALAPPDATA path translated into /mnt/<drive>/...
 			# shellcheck disable=SC2016
 			localappdata_win="$(powershell.exe -NoLogo -NoProfile -Command '[Console]::Write($env:LOCALAPPDATA)' 2>/dev/null | tr -d '\r')"
 			if [ -n "$localappdata_win" ]; then
@@ -28,11 +36,6 @@ ensure_windows_cli_aliases_on_path() {
 		;;
 	*) return 0 ;;
 	esac
-
-	local links_dir="${links_dir:-}"
-	if [ -z "$links_dir" ] && [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1; then
-		links_dir="$(cygpath -u "${LOCALAPPDATA}\\Microsoft\\WinGet\\Links" 2>/dev/null || true)"
-	fi
 
 	[ -n "$links_dir" ] || return 0
 	[ -d "$links_dir" ] || return 0

@@ -51,7 +51,7 @@ $script:NoConfig = $false
 $script:SelfUpdate = $true
 $script:ForceSelfUpdate = $false
 $script:PipForce = $false
-$script:Parallel = 4
+$script:Parallel = $null
 $script:LogFile = $null
 $script:GoBinaries = ''
 $script:ReposDir = ''
@@ -283,7 +283,7 @@ Options:
       --no-emoji           Disable emoji in output
       --no-color           Disable ANSI colors in output
       --log-file <path>    Append human output to a log file
-      --parallel <N>       Parallelism hint for pip upgrades (default: $($script:Parallel))
+      --parallel <N>       Reserved for Bash pip upgrades; unsupported on native Windows
       --pip-force          Pass --break-system-packages to pip when supported
       --full               Enable all supported Windows modules
 "@
@@ -373,7 +373,7 @@ function Read-Config {
             }
             'PARALLEL' {
                 if ($value -match '^\d+$' -and [int]$value -ge 1) {
-                    $script:Parallel = [int]$value
+                    Write-WarnLine 'config: PARALLEL is ignored on native Windows.'
                 } else {
                     Write-WarnLine ("config: PARALLEL must be >= 1 (got: {0})" -f $value)
                 }
@@ -431,7 +431,7 @@ function Parse-Args {
                 if ($CliInput[$i] -notmatch '^\d+$' -or [int]$CliInput[$i] -lt 1) {
                     Fail-Usage '--parallel must be >= 1'
                 }
-                $script:Parallel = [int]$CliInput[$i]
+                Fail-Usage '--parallel is not supported on native Windows.'
             }
             '--only' {
                 $i++
@@ -629,7 +629,11 @@ function Invoke-LoggedProcess {
     $result = Invoke-CapturedProcess -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory
     if (-not $Capture) {
         if ($result.Stdout) {
-            [Console]::Out.Write($result.Stdout)
+            if ($script:JsonMode) {
+                [Console]::Error.Write($result.Stdout)
+            } else {
+                [Console]::Out.Write($result.Stdout)
+            }
         }
         if ($result.Stderr) {
             [Console]::Error.Write($result.Stderr)

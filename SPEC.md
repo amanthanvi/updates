@@ -152,7 +152,7 @@ Module presets:
 Python:
 
 - `--pip-force`: pass `--break-system-packages` to `pip` (unsafe; for PEP 668 environments).
-- `--parallel <N>`: parallelism for pip upgrades (default `4`, minimum `1`).
+- `--parallel <N>`: parallelism for Bash pip upgrades (default `4`, minimum `1`). Native Windows rejects the CLI flag and warns+ignores `PARALLEL` in config.
 
 **Deprecated flags (accepted with WARN in 0.9.0; removed in 1.0.0):**
 
@@ -264,6 +264,8 @@ The file is skipped if it does not exist. Pass `--no-config` to ignore it entire
 | `REPOS_DIR`     | path                   | repos module base directory | `REPOS_DIR=/home/user/projects`                                            |
 
 Unknown keys are silently ignored (forward compatibility).
+
+Native Windows note: `PARALLEL` is only honored by the Bash implementation. The PowerShell runtime warns and ignores `PARALLEL`, and explicit `--parallel <N>` CLI usage exits `2`.
 
 ### 4.3 --no-config flag
 

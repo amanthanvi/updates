@@ -301,6 +301,101 @@ if (Should-RunTest 'native payload dry-run covers winget, node fallback, bun, py
     }
 }
 
+if (Should-RunTest 'native payload keeps stdout JSON-only when child tools emit output') {
+    Invoke-TestCase 'native payload keeps stdout JSON-only when child tools emit output' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'winget.cmd') -Lines @(
+                'echo winget-stdout',
+                'echo winget-stderr 1>&2'
+            )
+
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
+                '--json',
+                '--no-self-update',
+                '--only', 'winget',
+                '--no-color',
+                '--no-emoji'
+            ) -Environment @{
+                PATH        = $stubDir
+                HOME        = $installRoot
+                USERPROFILE = $installRoot
+            }
+
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'JSON-mode winget run should succeed'
+            Assert-Match -Text $result.Stderr -Pattern 'winget-stdout' -Message 'child stdout should be redirected to stderr in JSON mode'
+            Assert-Match -Text $result.Stderr -Pattern 'winget-stderr' -Message 'child stderr should remain on stderr in JSON mode'
+            if ($result.Stdout -match 'winget-stdout|winget-stderr') {
+                throw "child process output leaked into stdout JSON stream:`n$($result.Stdout)"
+            }
+            foreach ($line in @($result.Stdout -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+                try {
+                    $event = $line | ConvertFrom-Json -ErrorAction Stop
+                } catch {
+                    throw "stdout line was not valid JSON:`n$line"
+                }
+                Assert-True -Condition ($null -ne $event.event) -Message 'each stdout line should be a JSON event object'
+            }
+        }
+    }
+}
+
+if (Should-RunTest 'native payload rejects --parallel on Windows') {
+    Invoke-TestCase 'native payload rejects --parallel on Windows' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
+                '--no-self-update',
+                '--parallel', '2',
+                '--only', 'python',
+                '--no-color',
+                '--no-emoji'
+            )
+
+            Assert-Equal -Expected 2 -Actual $result.ExitCode -Message '--parallel should be rejected on native Windows'
+            Assert-Match -Text $result.Output -Pattern '(?i)--parallel.*not supported.*native Windows' -Message 'unsupported parallel error should be explicit'
+        }
+    }
+}
+
+if (Should-RunTest 'native payload warns and ignores PARALLEL from config on Windows') {
+    Invoke-TestCase 'native payload warns and ignores PARALLEL from config on Windows' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'winget.cmd') -Lines @()
+            Write-Utf8NoBom -Path (Join-Path $installRoot '.updatesrc') -Content "PARALLEL=8`n"
+
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
+                '--no-self-update',
+                '--dry-run',
+                '--only', 'winget',
+                '--no-color',
+                '--no-emoji'
+            ) -Environment @{
+                PATH        = $stubDir
+                HOME        = $installRoot
+                USERPROFILE = $installRoot
+            }
+
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'config PARALLEL should warn and continue on native Windows'
+            Assert-Match -Text $result.Output -Pattern '(?i)config: PARALLEL is ignored on native Windows' -Message 'config PARALLEL warning should be explicit'
+            Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*winget(\.cmd)? upgrade --all --silent --accept-source-agreements --accept-package-agreements' -Message 'warning should not block the requested module run'
+        }
+    }
+}
+
 if (Should-RunTest 'updates.ps1 falls back to previous.txt when current payload is invalid') {
     Invoke-TestCase 'updates.ps1 falls back to previous.txt when current payload is invalid' {
         Invoke-WithTempInstall {

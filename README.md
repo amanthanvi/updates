@@ -104,6 +104,8 @@ Native Windows `v2.0.0` default-on modules: `winget`, `node`, `bun`, `python`, `
 
 `updates` optionally reads `~/.updatesrc` for defaults (CLI flags override; pass `--no-config` to ignore). The file is parsed as line-oriented `KEY=value`, tolerates a UTF-8 BOM, and resolves home via `HOME` or `USERPROFILE` on Windows.
 
+Native Windows note: `PARALLEL` remains part of the shared config surface for the Bash implementation, but the PowerShell runtime warns and ignores it; explicit `--parallel <N>` is rejected on native Windows.
+
 Example:
 
 ```bash
