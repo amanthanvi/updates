@@ -1208,11 +1208,11 @@ maybe_self_update() {
 			elif self_update_cache_is_fresh "$current_epoch" "$SELF_UPDATE_CACHE_CHECKED_AT"; then
 				tag="$SELF_UPDATE_CACHE_LATEST_TAG"
 				if self_update_cache_latest_is_newer_than_current "$tag"; then
-					debug "self-update: cached release tag (${tag}) is newer; fetching live metadata"
+					debug "self-update: cached release tag (${tag}) is newer; deferring live metadata check until cache expires"
 				else
-					live_check_needed=0
 					debug "self-update: using cached release tag (${tag}) from ${cache_file}"
 				fi
+				return 0
 			else
 				debug "self-update: cached release tag is stale; refreshing (${cache_file})"
 			fi

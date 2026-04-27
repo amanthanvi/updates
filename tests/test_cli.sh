@@ -23,17 +23,183 @@ export PATH="${stub_bin}:${BASE_PATH}"
 # Self-update hits the network by default; disable for deterministic tests.
 export UPDATES_SELF_UPDATE=0
 
-write_stub() {
-	local name="$1"
-	shift
+write_stub_to_dir() {
+	local dir="$1"
+	local name="$2"
+	shift 2
 	local body="$*"
 
-	cat >"${stub_bin}/${name}" <<EOF
+	cat >"${dir}/${name}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 ${body}
 EOF
-	chmod +x "${stub_bin}/${name}"
+	chmod +x "${dir}/${name}"
+}
+
+write_stub() {
+	write_stub_to_dir "$stub_bin" "$@"
+}
+
+sha256_file_test() {
+	local path="$1"
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$path" | awk '{print $1}'
+		return 0
+	fi
+	if command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$path" | awk '{print $1}'
+		return 0
+	fi
+	echo "Missing sha256 tool for test fixture generation" >&2
+	exit 1
+}
+
+make_installed_copy() {
+	local install_root="$1"
+	mkdir -p "$install_root"
+	cp "$SCRIPT" "${install_root}/updates"
+	chmod +x "${install_root}/updates"
+	printf '%s\n' "${install_root}/updates"
+}
+
+write_self_update_curl_stub() {
+	local dir="$1"
+	cat >"${dir}/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+out=""
+url=""
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-o)
+		out="$2"
+		shift 2
+		;;
+	--connect-timeout | --max-time)
+		shift 2
+		;;
+	-f | -s | -S | -L | -fsSL | -fsS | -sSL)
+		shift
+		;;
+	-*)
+		shift
+		;;
+	*)
+		url="$1"
+		shift
+		;;
+	esac
+done
+
+if [ -n "${SELF_UPDATE_CALL_LOG:-}" ]; then
+	printf 'curl %s\n' "$url" >>"$SELF_UPDATE_CALL_LOG"
+fi
+
+case "$url" in
+https://api.github.com/repos/amanthanvi/updates/releases/latest)
+	cat "${SELF_UPDATE_FIXTURE_DIR}/release.json"
+	;;
+https://example.invalid/updates)
+	if [ -n "$out" ]; then
+		cp "${SELF_UPDATE_FIXTURE_DIR}/updates" "$out"
+	else
+		cat "${SELF_UPDATE_FIXTURE_DIR}/updates"
+	fi
+	;;
+https://example.invalid/updates-release.json)
+	if [ -n "$out" ]; then
+		cp "${SELF_UPDATE_FIXTURE_DIR}/updates-release.json" "$out"
+	else
+		cat "${SELF_UPDATE_FIXTURE_DIR}/updates-release.json"
+	fi
+	;;
+https://example.invalid/SHA256SUMS)
+	if [ -n "$out" ]; then
+		cp "${SELF_UPDATE_FIXTURE_DIR}/SHA256SUMS" "$out"
+	else
+		cat "${SELF_UPDATE_FIXTURE_DIR}/SHA256SUMS"
+	fi
+	;;
+*)
+	echo "Unexpected curl URL: $url" >&2
+	exit 1
+	;;
+esac
+EOF
+	chmod +x "${dir}/curl"
+}
+
+create_self_update_fixture() {
+	local dir="$1"
+	local version="$2"
+	local mode="${3:-valid}"
+	local manifest_source_repo="amanthanvi/updates"
+	local updates_path="${dir}/updates"
+	local manifest_path="${dir}/updates-release.json"
+	local sums_path="${dir}/SHA256SUMS"
+	local updates_digest=""
+	local manifest_digest=""
+	local manifest_release_digest=""
+	local sums_digest=""
+
+	mkdir -p "$dir"
+	sed "s/^UPDATES_VERSION=\"[^\"]*\"/UPDATES_VERSION=\"${version}\"/" "$SCRIPT" >"$updates_path"
+	chmod +x "$updates_path"
+
+	if [ "$mode" = "invalid-manifest" ]; then
+		manifest_source_repo="example/invalid"
+	fi
+
+	cat >"$manifest_path" <<EOF
+{
+  "version": "${version}",
+  "source_repo": "${manifest_source_repo}",
+  "channel": "github-release",
+  "bootstrap_min": "0",
+  "windows_asset": "updates-windows.zip",
+  "unix_asset": "updates",
+  "checksum_asset": "SHA256SUMS"
+}
+EOF
+
+	updates_digest="$(sha256_file_test "$updates_path")"
+	printf '%s  updates\n' "$updates_digest" >"$sums_path"
+	manifest_digest="$(sha256_file_test "$manifest_path")"
+	manifest_release_digest="sha256:${manifest_digest}"
+	sums_digest="$(sha256_file_test "$sums_path")"
+
+	if [ "$mode" = "unsupported-digest" ]; then
+		manifest_release_digest="md5:deadbeef"
+	fi
+
+	cat >"${dir}/release.json" <<EOF
+{
+  "tag_name": "v${version}",
+  "draft": false,
+  "prerelease": false,
+  "immutable": true,
+  "assets": [
+    {
+      "name": "updates",
+      "digest": "sha256:${updates_digest}",
+      "browser_download_url": "https://example.invalid/updates"
+    },
+    {
+      "name": "updates-release.json",
+      "digest": "${manifest_release_digest}",
+      "browser_download_url": "https://example.invalid/updates-release.json"
+    },
+    {
+      "name": "SHA256SUMS",
+      "digest": "sha256:${sums_digest}",
+      "browser_download_url": "https://example.invalid/SHA256SUMS"
+    }
+  ]
+}
+EOF
 }
 
 CALL_LOG="${tmp_dir}/calls.log"
@@ -521,6 +687,81 @@ echo "$self_update_override_out" | grep -Eq 'no longer supported|fixed to'
 if echo "$self_update_override_out" | grep -q '^DRY RUN:'; then
 	echo "Expected UPDATES_SELF_UPDATE_REPO validation to stop before any dry-run action" >&2
 	echo "$self_update_override_out" >&2
+	exit 1
+fi
+
+echo "Test: Unix self-update fresh newer-version cache suppresses live lookup"
+self_update_cache_install="${tmp_dir}/self-update-install-cache"
+self_update_cache_script="$(make_installed_copy "$self_update_cache_install")"
+self_update_cache_bin="${tmp_dir}/self-update-bin-cache"
+self_update_cache_fixture="${tmp_dir}/self-update-fixture-cache"
+self_update_cache_xdg="${tmp_dir}/self-update-xdg-cache"
+self_update_cache_http_log="${tmp_dir}/self-update-http-cache.log"
+mkdir -p "${self_update_cache_xdg}/updates" "$self_update_cache_fixture" "$self_update_cache_bin"
+write_stub_to_dir "$self_update_cache_bin" uname 'echo Darwin'
+# shellcheck disable=SC2016
+write_stub_to_dir "$self_update_cache_bin" brew 'echo "brew $*" >>"$CALL_LOG"'
+write_self_update_curl_stub "$self_update_cache_bin"
+printf 'checked_at=%s\nlatest_tag=%s\n' "$(date +%s)" 'v2.0.1' >"${self_update_cache_xdg}/updates/self-update-amanthanvi_updates.cache"
+: >"$self_update_cache_http_log"
+: >"$CALL_LOG"
+out="$(UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_cache_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_cache_fixture" SELF_UPDATE_CALL_LOG="$self_update_cache_http_log" PATH="${self_update_cache_bin}:${BASE_PATH}" "$self_update_cache_script" --only brew --no-emoji --no-color 2>&1)"
+if [ -s "$self_update_cache_http_log" ]; then
+	echo "Expected fresh self-update cache to suppress live curl calls" >&2
+	cat "$self_update_cache_http_log" >&2
+	exit 1
+fi
+if echo "$out" | grep -q 'self-update available'; then
+	echo "Expected fresh self-update cache to suppress self-update warnings" >&2
+	echo "$out" >&2
+	exit 1
+fi
+grep -q '^brew update$' "$CALL_LOG"
+
+echo "Test: Unix self-update skips when a release asset digest is unsupported"
+self_update_digest_install="${tmp_dir}/self-update-install-digest"
+self_update_digest_script="$(make_installed_copy "$self_update_digest_install")"
+self_update_digest_bin="${tmp_dir}/self-update-bin-digest"
+self_update_digest_fixture="${tmp_dir}/self-update-fixture-digest"
+self_update_digest_xdg="${tmp_dir}/self-update-xdg-digest"
+self_update_digest_http_log="${tmp_dir}/self-update-http-digest.log"
+mkdir -p "$self_update_digest_bin" "$self_update_digest_xdg"
+write_stub_to_dir "$self_update_digest_bin" uname 'echo Darwin'
+# shellcheck disable=SC2016
+write_stub_to_dir "$self_update_digest_bin" brew 'echo "brew $*" >>"$CALL_LOG"'
+write_self_update_curl_stub "$self_update_digest_bin"
+create_self_update_fixture "$self_update_digest_fixture" '2.0.1' 'unsupported-digest'
+: >"$self_update_digest_http_log"
+: >"$CALL_LOG"
+out="$(UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_digest_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_digest_fixture" SELF_UPDATE_CALL_LOG="$self_update_digest_http_log" PATH="${self_update_digest_bin}:${BASE_PATH}" "$self_update_digest_script" --only brew --no-emoji --no-color 2>&1)"
+echo "$out" | grep -q 'self-update manifest digest missing or unsupported; continuing'
+grep -q '^curl https://api.github.com/repos/amanthanvi/updates/releases/latest$' "$self_update_digest_http_log"
+grep -q '^curl https://example.invalid/updates-release.json$' "$self_update_digest_http_log"
+if [ "$("$self_update_digest_script" --version)" != "2.0.0" ]; then
+	echo "Expected unsupported digest metadata to leave installed version unchanged" >&2
+	exit 1
+fi
+
+echo "Test: Unix self-update skips when release manifest is invalid"
+self_update_manifest_install="${tmp_dir}/self-update-install-manifest"
+self_update_manifest_script="$(make_installed_copy "$self_update_manifest_install")"
+self_update_manifest_bin="${tmp_dir}/self-update-bin-manifest"
+self_update_manifest_fixture="${tmp_dir}/self-update-fixture-manifest"
+self_update_manifest_xdg="${tmp_dir}/self-update-xdg-manifest"
+self_update_manifest_http_log="${tmp_dir}/self-update-http-manifest.log"
+mkdir -p "$self_update_manifest_bin" "$self_update_manifest_xdg"
+write_stub_to_dir "$self_update_manifest_bin" uname 'echo Darwin'
+# shellcheck disable=SC2016
+write_stub_to_dir "$self_update_manifest_bin" brew 'echo "brew $*" >>"$CALL_LOG"'
+write_self_update_curl_stub "$self_update_manifest_bin"
+create_self_update_fixture "$self_update_manifest_fixture" '2.0.1' 'invalid-manifest'
+: >"$self_update_manifest_http_log"
+: >"$CALL_LOG"
+out="$(UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_manifest_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_manifest_fixture" SELF_UPDATE_CALL_LOG="$self_update_manifest_http_log" PATH="${self_update_manifest_bin}:${BASE_PATH}" "$self_update_manifest_script" --only brew --no-emoji --no-color 2>&1)"
+echo "$out" | grep -q 'self-update manifest is invalid; continuing'
+grep -q '^curl https://example.invalid/updates$' "$self_update_manifest_http_log"
+if [ "$("$self_update_manifest_script" --version)" != "2.0.0" ]; then
+	echo "Expected invalid manifest to leave installed version unchanged" >&2
 	exit 1
 fi
 
