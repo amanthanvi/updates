@@ -595,6 +595,89 @@ if (Should-RunTest 'native payload self-update applies a verified Windows releas
     }
 }
 
+if (Should-RunTest 'native payload self-update skips live metadata fetch when cache is fresh') {
+    Invoke-TestCase 'native payload self-update skips live metadata fetch when cache is fresh' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -WithReceipt
+            $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
+            $localAppData = Join-Path $installRoot 'localappdata'
+            $null = New-Item -ItemType Directory -Path $localAppData -Force
+
+            & {
+                . $payloadSource
+                $script:InstallRoot = $installRoot
+                $script:JsonMode = $false
+                $script:LogLevel = 'debug'
+                $script:LogLevelNum = 3
+                $script:DryRun = $false
+                $script:SelfUpdate = $true
+                $script:ForceSelfUpdate = $false
+                $env:LOCALAPPDATA = $localAppData
+
+                function Test-InstallRootWritable { return $true }
+                function Test-GitCheckout { return $false }
+                function Test-SymlinkedInstall { return $false }
+                function Get-LatestReleaseMetadata { throw 'Get-LatestReleaseMetadata should not run with a fresh cache' }
+
+                $cachePath = Get-SelfUpdateCachePath
+                $null = Write-SelfUpdateCache -Path $cachePath -CheckedAt (Get-SelfUpdateEpoch) -LatestTag 'v2.0.0'
+                $result = Invoke-WindowsSelfUpdate -OriginalArgs @()
+                Assert-True -Condition ($null -eq $result) -Message 'fresh current-version cache should skip self-update work'
+            }
+        }
+    }
+}
+
+if (Should-RunTest 'native payload force self-update bypasses fresh cache') {
+    Invoke-TestCase 'native payload force self-update bypasses fresh cache' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -WithReceipt
+            $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
+            $localAppData = Join-Path $installRoot 'localappdata'
+            $markerPath = Join-Path $installRoot 'force-self-update-marker.txt'
+            $null = New-Item -ItemType Directory -Path $localAppData -Force
+
+            & {
+                . $payloadSource
+                $script:InstallRoot = $installRoot
+                $script:JsonMode = $false
+                $script:LogLevel = 'debug'
+                $script:LogLevelNum = 3
+                $script:DryRun = $false
+                $script:SelfUpdate = $true
+                $script:ForceSelfUpdate = $true
+                $env:LOCALAPPDATA = $localAppData
+
+                function Test-InstallRootWritable { return $true }
+                function Test-GitCheckout { return $false }
+                function Test-SymlinkedInstall { return $false }
+                function Get-LatestReleaseMetadata {
+                    [System.IO.File]::WriteAllText($markerPath, 'fetched')
+                    return [pscustomobject]@{
+                        tag_name   = 'v2.0.0'
+                        draft      = $false
+                        prerelease = $false
+                        immutable  = $true
+                        assets     = @()
+                    }
+                }
+
+                $cachePath = Get-SelfUpdateCachePath
+                $null = Write-SelfUpdateCache -Path $cachePath -CheckedAt (Get-SelfUpdateEpoch) -LatestTag 'v2.0.0'
+                $result = Invoke-WindowsSelfUpdate -OriginalArgs @('--self-update')
+                Assert-True -Condition ($null -eq $result) -Message 'force-refresh current-version check should still exit cleanly'
+            }
+
+            Assert-FileExists -Path $markerPath -Message '--self-update should bypass a fresh cache and fetch live metadata'
+            Assert-Equal -Expected 'fetched' -Actual ((Get-Content -LiteralPath $markerPath -Raw).Trim()) -Message 'live metadata marker mismatch'
+        }
+    }
+}
+
 if (Should-RunTest 'native payload hard-errors when UPDATES_SELF_UPDATE_REPO is set') {
     Invoke-TestCase 'native payload hard-errors when UPDATES_SELF_UPDATE_REPO is set' {
         Invoke-WithTempInstall {

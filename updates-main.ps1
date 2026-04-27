@@ -25,6 +25,8 @@ $script:ReleaseChannel = 'github-release'
 $script:ReleaseManifestName = 'updates-release.json'
 $script:WindowsAssetName = 'updates-windows.zip'
 $script:ChecksumAssetName = 'SHA256SUMS'
+$script:SelfUpdateCacheTtl = 86400
+$script:SelfUpdateCacheFileName = 'self-update-amanthanvi_updates.cache'
 $script:InstallRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $script:CurrentModule = 'main'
 $script:OnlyModules = New-Object System.Collections.Generic.List[string]
@@ -1246,6 +1248,102 @@ function Write-VersionPointer {
     Move-Item -LiteralPath $temp -Destination $target -Force
 }
 
+function Get-SelfUpdateEpoch {
+    return [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+}
+
+function Get-SelfUpdateCacheRoot {
+    if ($env:LOCALAPPDATA) {
+        return (Join-Path $env:LOCALAPPDATA 'updates')
+    }
+
+    $homeDir = Get-HomeDir
+    if (-not $homeDir) {
+        return $null
+    }
+
+    return (Join-Path $homeDir 'AppData\Local\updates')
+}
+
+function Get-SelfUpdateCachePath {
+    $root = Get-SelfUpdateCacheRoot
+    if (-not $root) {
+        return $null
+    }
+
+    return (Join-Path $root $script:SelfUpdateCacheFileName)
+}
+
+function Read-SelfUpdateCache {
+    param([string]$Path)
+
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $null
+    }
+
+    try {
+        $checkedAt = $null
+        $latestTag = $null
+        foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
+            if ($line -match '^(checked_at|latest_tag)=(.*)$') {
+                switch ($Matches[1]) {
+                    'checked_at' { $checkedAt = $Matches[2] }
+                    'latest_tag' { $latestTag = $Matches[2] }
+                }
+            }
+        }
+
+        if ($checkedAt -notmatch '^\d+$' -or [string]::IsNullOrWhiteSpace($latestTag)) {
+            return $null
+        }
+
+        return [pscustomobject]@{
+            CheckedAt = [int64]$checkedAt
+            LatestTag = $latestTag
+        }
+    } catch {
+        return $null
+    }
+}
+
+function Test-SelfUpdateCacheFresh {
+    param(
+        [int64]$CurrentEpoch,
+        [int64]$CheckedAt
+    )
+
+    if ($CheckedAt -lt 0 -or $CheckedAt -gt $CurrentEpoch) {
+        return $false
+    }
+
+    return (($CurrentEpoch - $CheckedAt) -lt $script:SelfUpdateCacheTtl)
+}
+
+function Write-SelfUpdateCache {
+    param(
+        [string]$Path,
+        [int64]$CheckedAt,
+        [string]$LatestTag
+    )
+
+    if (-not $Path -or [string]::IsNullOrWhiteSpace($LatestTag)) {
+        return $false
+    }
+
+    try {
+        $dir = Split-Path -Parent $Path
+        if ($dir) {
+            $null = New-Item -ItemType Directory -Path $dir -Force
+        }
+        $temp = Join-Path $dir ('.cache-{0}.tmp' -f [guid]::NewGuid().ToString('N'))
+        [System.IO.File]::WriteAllText($temp, ("checked_at={0}`nlatest_tag={1}`n" -f $CheckedAt, $LatestTag), [System.Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temp -Destination $Path -Force
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 function Invoke-SelfUpdatedRelaunch {
     param([string[]]$OriginalArgs)
 
@@ -1280,6 +1378,19 @@ function Invoke-WindowsSelfUpdate {
         return
     }
 
+    $cachePath = Get-SelfUpdateCachePath
+    $currentEpoch = Get-SelfUpdateEpoch
+    if (-not $script:ForceSelfUpdate) {
+        $cache = Read-SelfUpdateCache -Path $cachePath
+        if ($cache -and (Test-SelfUpdateCacheFresh -CurrentEpoch $currentEpoch -CheckedAt $cache.CheckedAt)) {
+            $cachedTag = [string]$cache.LatestTag
+            if ($cachedTag -match '^v?(\d+\.\d+\.\d+)$' -and [version]$Matches[1] -le [version]$script:UpdatesVersion) {
+                Write-DebugLine ("self-update: using cached release tag ({0}) from {1}" -f $cachedTag, $cachePath)
+                return
+            }
+        }
+    }
+
     $release = $null
     try {
         $release = Get-LatestReleaseMetadata
@@ -1293,6 +1404,7 @@ function Invoke-WindowsSelfUpdate {
         Write-WarnLine 'updates: self-update metadata returned an invalid tag; continuing.'
         return
     }
+    $null = Write-SelfUpdateCache -Path $cachePath -CheckedAt $currentEpoch -LatestTag $latestTag
     $latestVersion = $Matches[1]
     if ([version]$latestVersion -le [version]$script:UpdatesVersion) {
         return
