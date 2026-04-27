@@ -866,6 +866,27 @@ if [ -n "$SYSTEM_NODE" ]; then
 	grep -q '^brew update$' "$CALL_LOG"
 fi
 
+if command -v perl >/dev/null 2>&1; then
+	echo "Test: shell JSON unescape handles standard escapes"
+	actual="$(
+		TEST_SCRIPT="$SCRIPT" bash <<'EOF'
+set -e
+probe="$(mktemp)"
+trap 'rm -f "$probe"' EXIT
+sed '/^ORIGINAL_ARGS=(/,$d' "$TEST_SCRIPT" >"$probe"
+. "$probe"
+self_update_json_unescape 'line\npath\u002Ffile\tquote:\"'
+EOF
+	)"
+	expected="$(printf 'line\npath/file\tquote:"')"
+	if [ "$actual" != "$expected" ]; then
+		echo "Expected shell JSON unescape helper to decode standard escapes" >&2
+		printf 'expected: [%s]\n' "$expected" >&2
+		printf 'actual:   [%s]\n' "$actual" >&2
+		exit 1
+	fi
+fi
+
 echo "Test: config BOM is tolerated"
 config_home_bom="${tmp_dir}/home-config-bom"
 mkdir -p "$config_home_bom"

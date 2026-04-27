@@ -879,7 +879,31 @@ self_update_json_compact() {
 }
 
 self_update_json_unescape() {
-	printf '%s' "$1" | sed 's/\\\\/\\/g; s/\\"/"/g; s#\\/#/#g'
+	local value="$1"
+	local decoded=""
+
+	if cmd_exists perl; then
+		decoded="$(
+			printf '"%s"' "$value" |
+				perl -MJSON::PP -e '
+					use strict;
+					use warnings;
+					use utf8;
+					binmode STDOUT, ":utf8";
+					local $/;
+					my $json = <STDIN>;
+					my $decoded = eval { JSON::PP::decode_json($json) };
+					exit 1 if $@;
+					print $decoded;
+				' 2>/dev/null
+		)" || decoded=""
+		if [ -n "$decoded" ] || [ "$value" = "" ]; then
+			stdout_print "$decoded"
+			return 0
+		fi
+	fi
+
+	printf '%s' "$value" | sed 's/\\\\/\\/g; s/\\"/"/g; s#\\/#/#g'
 }
 
 self_update_json_extract_string() {
