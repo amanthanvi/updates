@@ -6,7 +6,7 @@ set -o pipefail
 # SECTION: globals — version, state variables, module registry
 ###############################################################################
 
-UPDATES_VERSION="1.3.0"
+UPDATES_VERSION="2.0.0"
 
 SCRIPT_NAME="$(basename "$0")"
 
@@ -56,20 +56,22 @@ C_GREEN=""
 C_YELLOW=""
 C_BLUE=""
 
-MODULE_REGISTRY='brew|module_brew|any|0|Update Homebrew formulae (+ optional casks)
-shell|module_shell|any|0|Update Oh My Zsh and custom git plugins/themes
-repos|module_repos|any|0|Update aman dev repos under ~/GitRepos
+MODULE_REGISTRY='brew|module_brew|macos,linux|0|Update Homebrew formulae (+ optional casks)
+shell|module_shell|macos,linux|0|Update Oh My Zsh and custom git plugins/themes
+repos|module_repos|macos,linux|0|Update aman dev repos under ~/GitRepos
 linux|module_linux|linux|0|Upgrade Linux system packages
-node|module_node|any|0|Upgrade global npm packages via ncu
-python|module_python|any|0|Upgrade global Python packages via pip
-uv|module_uv|any|0|Update uv and uv-managed tools
+winget|module_winget|windows|0|Upgrade Windows packages via winget
+node|module_node|macos,linux|0|Upgrade global npm packages via npm-check-updates
+bun|module_bun|macos,linux|0|Update Bun globals (and Bun itself when standalone-installed)
+python|module_python|macos,linux|0|Upgrade global Python packages via pip
+uv|module_uv|macos,linux|0|Update uv and uv-managed tools
 mas|module_mas|macos|1|Upgrade Mac App Store apps via mas (opt-in)
-pipx|module_pipx|any|0|Upgrade pipx-managed apps via pipx
-rustup|module_rustup|any|0|Update Rust toolchains via rustup
-claude|module_claude|any|0|Update Claude Code CLI
-pi|module_pi|any|0|Update pi AI CLI extensions via pi update
-mise|module_mise|any|0|Update mise and upgrade installed tools
-go|module_go|any|0|Update Go binaries from GO_BINARIES config
+pipx|module_pipx|macos,linux|0|Upgrade pipx-managed apps via pipx
+rustup|module_rustup|macos,linux|0|Update Rust toolchains via rustup
+claude|module_claude|macos,linux|0|Update Claude Code CLI
+pi|module_pi|macos,linux|0|Update pi AI CLI extensions via pi update
+mise|module_mise|macos,linux|0|Update mise and upgrade installed tools
+go|module_go|macos,linux|0|Update Go binaries from GO_BINARIES config
 macos|module_macos|macos|1|List available macOS software updates (opt-in)'
 
 MODULE_LOOKUP_HANDLER=""
@@ -89,8 +91,33 @@ JSON_TS_CACHE_VALUE=""
 SELF_UPDATE_CACHE_TTL=86400
 SELF_UPDATE_CACHE_CHECKED_AT=""
 SELF_UPDATE_CACHE_LATEST_TAG=""
+SELF_UPDATE_CACHE_RELEASE_DRAFT=""
+SELF_UPDATE_CACHE_RELEASE_PRERELEASE=""
+SELF_UPDATE_CACHE_RELEASE_IMMUTABLE=""
+SELF_UPDATE_CACHE_UPDATES_URL=""
+SELF_UPDATE_CACHE_UPDATES_DIGEST=""
+SELF_UPDATE_CACHE_MANIFEST_URL=""
+SELF_UPDATE_CACHE_MANIFEST_DIGEST=""
+SELF_UPDATE_CACHE_SUMS_URL=""
+SELF_UPDATE_CACHE_SUMS_DIGEST=""
 
 BREW_FORMULA_DEFAULT_HINT_EMITTED=0
+
+SELF_UPDATE_REPO="amanthanvi/updates"
+SELF_UPDATE_RELEASE_CHANNEL="github-release"
+SELF_UPDATE_RELEASE_MANIFEST_NAME="updates-release.json"
+SELF_UPDATE_UNIX_ASSET_NAME="updates"
+SELF_UPDATE_WINDOWS_ASSET_NAME="updates-windows.zip"
+SELF_UPDATE_CHECKSUM_ASSET_NAME="SHA256SUMS"
+
+PYTHON_LAUNCHER_READY=0
+PYTHON_CMD=""
+PYTHON_CMD_ARG=""
+PYTHON_CMD_LABEL=""
+
+NCU_RESOLVED=0
+NCU_MODE=""
+NCU_CMD=""
 
 ###############################################################################
 # SECTION: output — print, log, warn, err, emoji, JSON emission
@@ -474,6 +501,47 @@ is_wsl() {
 	[ "$IS_WSL" -eq 1 ]
 }
 
+updates_home_dir() {
+	if [ -n "${HOME:-}" ]; then
+		stdout_print "${HOME}"
+		return 0
+	fi
+	if [ -n "${USERPROFILE:-}" ]; then
+		stdout_print "${USERPROFILE}"
+		return 0
+	fi
+	return 1
+}
+
+updates_config_path() {
+	local home_dir=""
+	if ! home_dir="$(updates_home_dir)"; then
+		return 1
+	fi
+	stdout_print "${home_dir}/.updatesrc"
+}
+
+current_platform_name() {
+	if is_macos; then
+		stdout_print "macos"
+		return 0
+	fi
+	if is_linux; then
+		stdout_print "linux"
+		return 0
+	fi
+	stdout_print "unknown"
+}
+
+platform_list_contains() {
+	local list="$1"
+	local needle="$2"
+	case ",${list}," in
+	*",${needle},"*) return 0 ;;
+	esac
+	return 1
+}
+
 apply_platform_defaults() {
 	# macOS 26+ introduces App Management prompts for app bundle updates (/Applications).
 	# Default to formula upgrades only unless explicitly opted in.
@@ -544,18 +612,23 @@ module_enabled_by_default() {
 }
 
 module_supported() {
-	# When UPDATES_ALLOW_NON_DARWIN=1 is set, allow command-driven modules to run
-	# on unknown platforms, but still treat OS-specific modules as unsupported.
 	if ! module_lookup "$1"; then
 		return 1
 	fi
 
-	case "$MODULE_LOOKUP_PLATFORM" in
-	any) return 0 ;;
-	linux) is_linux ;;
-	macos) is_macos ;;
-	*) return 1 ;;
-	esac
+	local platform=""
+	platform="$(current_platform_name)"
+	if platform_list_contains "$MODULE_LOOKUP_PLATFORM" "$platform"; then
+		return 0
+	fi
+
+	if [ "${UPDATES_ALLOW_NON_DARWIN:-0}" = "1" ] && [ "$platform" = "unknown" ]; then
+		if platform_list_contains "$MODULE_LOOKUP_PLATFORM" macos && platform_list_contains "$MODULE_LOOKUP_PLATFORM" linux; then
+			return 0
+		fi
+	fi
+
+	return 1
 }
 
 require_supported_platform() {
@@ -626,6 +699,125 @@ semver_lt() {
 	return $?
 }
 
+python_launcher_reset() {
+	PYTHON_LAUNCHER_READY=0
+	PYTHON_CMD=""
+	PYTHON_CMD_ARG=""
+	PYTHON_CMD_LABEL=""
+}
+
+python_launcher_resolve() {
+	if [ "$PYTHON_LAUNCHER_READY" -eq 1 ]; then
+		[ -n "$PYTHON_CMD" ]
+		return $?
+	fi
+
+	python_launcher_reset
+
+	if cmd_exists py && py -3 -c 'import sys' >/dev/null 2>&1; then
+		PYTHON_CMD="py"
+		PYTHON_CMD_ARG="-3"
+		PYTHON_CMD_LABEL="py -3"
+	elif cmd_exists python && python -c 'import sys' >/dev/null 2>&1; then
+		PYTHON_CMD="python"
+		PYTHON_CMD_LABEL="python"
+	elif cmd_exists python3 && python3 -c 'import sys' >/dev/null 2>&1; then
+		PYTHON_CMD="python3"
+		PYTHON_CMD_LABEL="python3"
+	fi
+
+	PYTHON_LAUNCHER_READY=1
+	[ -n "$PYTHON_CMD" ]
+}
+
+python_run_cmd() {
+	if ! python_launcher_resolve; then
+		return 1
+	fi
+
+	if [ -n "$PYTHON_CMD_ARG" ]; then
+		"$PYTHON_CMD" "$PYTHON_CMD_ARG" "$@"
+		return $?
+	fi
+
+	"$PYTHON_CMD" "$@"
+}
+
+resolve_ncu_runner() {
+	if [ "$NCU_RESOLVED" -eq 1 ]; then
+		[ -n "$NCU_MODE" ]
+		return $?
+	fi
+
+	NCU_RESOLVED=1
+	NCU_MODE=""
+	NCU_CMD=""
+
+	if cmd_exists ncu; then
+		NCU_MODE="cmd"
+		NCU_CMD="ncu"
+		return 0
+	fi
+	if cmd_exists ncu.cmd; then
+		NCU_MODE="cmd"
+		NCU_CMD="ncu.cmd"
+		return 0
+	fi
+	if cmd_exists npx; then
+		NCU_MODE="npx"
+		NCU_CMD="npx"
+		return 0
+	fi
+	return 1
+}
+
+ncu_command_label() {
+	if ! resolve_ncu_runner; then
+		return 1
+	fi
+
+	case "$NCU_MODE" in
+	cmd) stdout_print "${NCU_CMD} -g --jsonUpgraded" ;;
+	npx) stdout_print "npx --yes npm-check-updates -g --jsonUpgraded" ;;
+	*) return 1 ;;
+	esac
+}
+
+ncu_run_json_upgraded() {
+	if ! resolve_ncu_runner; then
+		return 1
+	fi
+
+	case "$NCU_MODE" in
+	cmd) "$NCU_CMD" -g --jsonUpgraded ;;
+	npx) npx --yes npm-check-updates -g --jsonUpgraded ;;
+	*) return 1 ;;
+	esac
+}
+
+bun_is_standalone_install() {
+	if ! cmd_exists bun; then
+		return 1
+	fi
+
+	local bun_path=""
+	bun_path="$(command -v bun 2>/dev/null || true)"
+	[ -n "$bun_path" ] || return 1
+
+	local home_dir=""
+	if ! home_dir="$(updates_home_dir)"; then
+		return 1
+	fi
+
+	case "$bun_path" in
+	"${home_dir}/.bun/bin/bun" | "${home_dir}/.bun/bin/bun.exe")
+		return 0
+		;;
+	esac
+
+	return 1
+}
+
 ###############################################################################
 # SECTION: self-update — GitHub release check, download, verify, re-exec
 ###############################################################################
@@ -675,17 +867,328 @@ self_update_is_git_checkout() {
 	git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1
 }
 
-self_update_latest_tag_github() {
+self_update_latest_release_json_github() {
 	local repo="$1"
 	local api="https://api.github.com/repos/${repo}/releases/latest"
 
-	local json=""
-	json="$(curl -fsSL --connect-timeout 2 --max-time 5 "$api" 2>/dev/null)" || return 1
+	curl -fsSL --connect-timeout 2 --max-time 5 "$api" 2>/dev/null || return 1
+}
 
-	local tag=""
-	tag="$(printf '%s' "$json" | sed -nE 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n 1)"
-	[ -n "$tag" ] || return 1
-	stdout_print "$tag"
+self_update_json_compact() {
+	tr '\r\n' ' ' | sed 's/[[:space:]]\+/ /g'
+}
+
+self_update_json_unescape() {
+	local value="$1"
+	local decoded=""
+
+	if cmd_exists perl; then
+		decoded="$(
+			printf '"%s"' "$value" |
+				perl -MJSON::PP -e '
+					use strict;
+					use warnings;
+					use utf8;
+					binmode STDOUT, ":utf8";
+					local $/;
+					my $json = <STDIN>;
+					my $decoded = eval { JSON::PP::decode_json($json) };
+					exit 1 if $@;
+					print $decoded;
+				' 2>/dev/null
+		)" || decoded=""
+		if [ -n "$decoded" ] || [ "$value" = "" ]; then
+			stdout_print "$decoded"
+			return 0
+		fi
+	fi
+
+	printf '%s' "$value" | sed 's/\\\\/\\/g; s/\\"/"/g; s#\\/#/#g'
+}
+
+self_update_json_extract_string() {
+	local json="$1"
+	local key="$2"
+	local optional="${3:-0}"
+	local value=""
+
+	if ! printf '%s\n' "$json" | grep -Eq "\"${key}\"[[:space:]]*:"; then
+		if [ "$optional" -eq 1 ]; then
+			stdout_print ""
+			return 0
+		fi
+		return 1
+	fi
+
+	if printf '%s\n' "$json" | grep -Eq "\"${key}\"[[:space:]]*:[[:space:]]*null"; then
+		stdout_print ""
+		return 0
+	fi
+
+	value="$(printf '%s\n' "$json" | sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n 1)"
+	if [ -n "$value" ] || printf '%s\n' "$json" | grep -Eq "\"${key}\"[[:space:]]*:[[:space:]]*\"\""; then
+		value="$(self_update_json_unescape "$value")"
+		stdout_print "$value"
+		return 0
+	fi
+
+	if [ "$optional" -eq 1 ]; then
+		stdout_print ""
+		return 0
+	fi
+	return 1
+}
+
+self_update_json_extract_bool() {
+	local json="$1"
+	local key="$2"
+
+	if printf '%s\n' "$json" | grep -Eq "\"${key}\"[[:space:]]*:[[:space:]]*true"; then
+		stdout_print "1"
+		return 0
+	fi
+	if printf '%s\n' "$json" | grep -Eq "\"${key}\"[[:space:]]*:[[:space:]]*false"; then
+		stdout_print "0"
+		return 0
+	fi
+	return 1
+}
+
+self_update_json_extract_number() {
+	local json="$1"
+	local key="$2"
+	local optional="${3:-0}"
+	local value=""
+
+	if ! printf '%s\n' "$json" | grep -Eq "\"${key}\"[[:space:]]*:"; then
+		if [ "$optional" -eq 1 ]; then
+			stdout_print ""
+			return 0
+		fi
+		return 1
+	fi
+
+	value="$(printf '%s\n' "$json" | sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p" | head -n 1)"
+	if [ -n "$value" ]; then
+		stdout_print "$value"
+		return 0
+	fi
+
+	if [ "$optional" -eq 1 ]; then
+		stdout_print ""
+		return 0
+	fi
+	return 1
+}
+
+self_update_parse_release_metadata_sh() {
+	local json=""
+	local tag_name=""
+	local draft=""
+	local prerelease=""
+	local immutable=""
+	local assets=""
+	local item=""
+	local name=""
+	local digest=""
+	local url=""
+
+	json="$(self_update_json_compact)" || return 1
+	tag_name="$(self_update_json_extract_string "$json" "tag_name")" || return 1
+	draft="$(self_update_json_extract_bool "$json" "draft")" || return 1
+	prerelease="$(self_update_json_extract_bool "$json" "prerelease")" || return 1
+	immutable="$(self_update_json_extract_bool "$json" "immutable")" || return 1
+
+	printf 'tag_name\t%s\n' "$tag_name"
+	printf 'draft\t%s\n' "$draft"
+	printf 'prerelease\t%s\n' "$prerelease"
+	printf 'immutable\t%s\n' "$immutable"
+
+	if ! printf '%s\n' "$json" | grep -Eq '"assets"[[:space:]]*:'; then
+		return 1
+	fi
+	if printf '%s\n' "$json" | grep -Eq '"assets"[[:space:]]*:[[:space:]]*\[[[:space:]]*\]'; then
+		return 0
+	fi
+
+	assets="$(printf '%s\n' "$json" | sed -n 's/.*"assets"[[:space:]]*:[[:space:]]*\[\(.*\)\][[:space:]]*[,}].*/\1/p' | head -n 1)"
+	[ -n "$assets" ] || return 1
+	assets="$(printf '%s\n' "$assets" | sed 's/}[[:space:]]*,[[:space:]]*{/\}\n\{/g')"
+
+	while IFS= read -r item; do
+		[ -n "$item" ] || continue
+		name="$(self_update_json_extract_string "$item" "name" 1)"
+		digest="$(self_update_json_extract_string "$item" "digest" 1)"
+		url="$(self_update_json_extract_string "$item" "browser_download_url" 1)"
+		printf 'asset\t%s\t%s\t%s\n' "$name" "$digest" "$url"
+	done <<EOF
+$assets
+EOF
+
+	return 0
+}
+
+self_update_parse_release_manifest_sh() {
+	local json=""
+	local key=""
+	local value=""
+
+	json="$(self_update_json_compact)" || return 1
+	for key in version source_repo channel bootstrap_min windows_asset unix_asset checksum_asset; do
+		if [ "$key" = "bootstrap_min" ]; then
+			value="$(self_update_json_extract_number "$json" "$key")" || return 1
+		else
+			value="$(self_update_json_extract_string "$json" "$key")" || return 1
+		fi
+		printf '%s\t%s\n' "$key" "$value"
+	done
+
+	return 0
+}
+
+self_update_parse_release_metadata() {
+	if python_launcher_resolve; then
+		python_run_cmd -c 'import json, sys
+obj = json.load(sys.stdin)
+print("tag_name\t%s" % obj.get("tag_name", ""))
+print("draft\t%s" % ("1" if obj.get("draft") else "0"))
+print("prerelease\t%s" % ("1" if obj.get("prerelease") else "0"))
+print("immutable\t%s" % ("1" if obj.get("immutable") else "0"))
+for asset in obj.get("assets", []) or []:
+    print("asset\t%s\t%s\t%s" % (
+        asset.get("name", ""),
+        asset.get("digest", ""),
+        asset.get("browser_download_url", ""),
+    ))' 2>/dev/null
+		return $?
+	fi
+
+	if cmd_exists node && node -e 'process.exit(0)' >/dev/null 2>&1; then
+		# shellcheck disable=SC2016
+		node -e 'let data="";process.stdin.on("data",c=>data+=c);process.stdin.on("end",()=>{const obj=JSON.parse(data||"{}");const bool=v=>v?"1":"0";process.stdout.write(`tag_name\t${obj.tag_name||""}\n`);process.stdout.write(`draft\t${bool(obj.draft)}\n`);process.stdout.write(`prerelease\t${bool(obj.prerelease)}\n`);process.stdout.write(`immutable\t${bool(obj.immutable)}\n`);for(const asset of (obj.assets||[])){process.stdout.write(`asset\t${asset.name||""}\t${asset.digest||""}\t${asset.browser_download_url||""}\n`);}});' 2>/dev/null
+		return $?
+	fi
+
+	self_update_parse_release_metadata_sh
+}
+
+self_update_parse_release_manifest() {
+	if python_launcher_resolve; then
+		python_run_cmd -c 'import json, sys
+obj = json.load(sys.stdin)
+for key in ("version", "source_repo", "channel", "bootstrap_min", "windows_asset", "unix_asset", "checksum_asset"):
+    print("%s\t%s" % (key, obj.get(key, "")))' 2>/dev/null
+		return $?
+	fi
+
+	if cmd_exists node && node -e 'process.exit(0)' >/dev/null 2>&1; then
+		# shellcheck disable=SC2016
+		node -e 'let data="";process.stdin.on("data",c=>data+=c);process.stdin.on("end",()=>{const obj=JSON.parse(data||"{}");for(const key of ["version","source_repo","channel","bootstrap_min","windows_asset","unix_asset","checksum_asset"]){process.stdout.write(`${key}\t${obj[key] ?? ""}\n`);}});' 2>/dev/null
+		return $?
+	fi
+
+	self_update_parse_release_manifest_sh
+}
+
+self_update_verify_digest() {
+	local label="$1"
+	local expected="$2"
+	local path="$3"
+
+	case "$expected" in
+	sha256:*)
+		expected="${expected#sha256:}"
+		;;
+	*)
+		warn "updates: self-update ${label} digest missing or unsupported; continuing"
+		return 1
+		;;
+	esac
+
+	local actual=""
+	if ! actual="$(self_update_sha256_file "$path")"; then
+		warn "updates: self-update sha256 tool missing; continuing"
+		return 1
+	fi
+	if [ "$actual" != "$expected" ]; then
+		warn "updates: self-update ${label} digest mismatch; continuing"
+		return 1
+	fi
+	return 0
+}
+
+self_update_expected_sum_for_asset() {
+	local sums_path="$1"
+	local asset_name="$2"
+
+	awk -v asset="$asset_name" '$2 ~ ("(^|/)" asset "$"){print $1; exit}' "$sums_path" 2>/dev/null || true
+}
+
+self_update_release_manifest_valid() {
+	local manifest_path="$1"
+	local expected_version="$2"
+
+	local version=""
+	local source_repo=""
+	local channel=""
+	local bootstrap_min=""
+	local windows_asset=""
+	local unix_asset=""
+	local checksum_asset=""
+	local key value
+
+	while IFS=$'\t' read -r key value; do
+		case "$key" in
+		version) version="$value" ;;
+		source_repo) source_repo="$value" ;;
+		channel) channel="$value" ;;
+		bootstrap_min) bootstrap_min="$value" ;;
+		windows_asset) windows_asset="$value" ;;
+		unix_asset) unix_asset="$value" ;;
+		checksum_asset) checksum_asset="$value" ;;
+		esac
+	done <<<"$(self_update_parse_release_manifest <"$manifest_path" 2>/dev/null || true)"
+
+	[ "$version" = "$expected_version" ] || return 1
+	[ "$source_repo" = "$SELF_UPDATE_REPO" ] || return 1
+	[ "$channel" = "$SELF_UPDATE_RELEASE_CHANNEL" ] || return 1
+	case "$bootstrap_min" in
+	'' | *[!0-9]*)
+		return 1
+		;;
+	esac
+	[ "$windows_asset" = "$SELF_UPDATE_WINDOWS_ASSET_NAME" ] || return 1
+	[ "$unix_asset" = "$SELF_UPDATE_UNIX_ASSET_NAME" ] || return 1
+	[ "$checksum_asset" = "$SELF_UPDATE_CHECKSUM_ASSET_NAME" ] || return 1
+	return 0
+}
+
+self_update_script_file_version() {
+	local path="$1"
+
+	awk -F'"' '/^UPDATES_VERSION=/{print $2; exit}' "$path" 2>/dev/null || true
+}
+
+self_update_verify_installed_copy() {
+	local path="$1"
+	local expected_version="$2"
+	local actual_version=""
+
+	actual_version="$(UPDATES_SELF_UPDATE=0 UPDATES_SELF_UPDATED=1 "$path" --version 2>/dev/null | tr -d '\r')" || return 1
+	[ "$actual_version" = "$expected_version" ]
+}
+
+self_update_cache_latest_is_newer_than_current() {
+	local latest_tag="$1"
+	local latest="${latest_tag#v}"
+	semver_is_valid "$latest" || return 1
+	semver_lt "$UPDATES_VERSION" "$latest"
+}
+
+self_update_reject_removed_repo_override() {
+	if [ "${UPDATES_SELF_UPDATE_REPO+x}" = "x" ]; then
+		die "UPDATES_SELF_UPDATE_REPO is no longer supported in v2.0.0; self-update is fixed to ${SELF_UPDATE_REPO}"
+	fi
 }
 
 self_update_sha256_file() {
@@ -710,11 +1213,15 @@ self_update_cache_root() {
 		stdout_print "${XDG_CACHE_HOME}/updates"
 		return 0
 	fi
+	local home_dir=""
+	if ! home_dir="$(updates_home_dir)"; then
+		return 1
+	fi
 	if is_macos; then
-		stdout_print "${HOME}/Library/Caches/updates"
+		stdout_print "${home_dir}/Library/Caches/updates"
 		return 0
 	fi
-	stdout_print "${HOME}/.cache/updates"
+	stdout_print "${home_dir}/.cache/updates"
 }
 
 self_update_cache_repo_key() {
@@ -742,6 +1249,15 @@ self_update_cache_file() {
 self_update_cache_reset() {
 	SELF_UPDATE_CACHE_CHECKED_AT=""
 	SELF_UPDATE_CACHE_LATEST_TAG=""
+	SELF_UPDATE_CACHE_RELEASE_DRAFT=""
+	SELF_UPDATE_CACHE_RELEASE_PRERELEASE=""
+	SELF_UPDATE_CACHE_RELEASE_IMMUTABLE=""
+	SELF_UPDATE_CACHE_UPDATES_URL=""
+	SELF_UPDATE_CACHE_UPDATES_DIGEST=""
+	SELF_UPDATE_CACHE_MANIFEST_URL=""
+	SELF_UPDATE_CACHE_MANIFEST_DIGEST=""
+	SELF_UPDATE_CACHE_SUMS_URL=""
+	SELF_UPDATE_CACHE_SUMS_DIGEST=""
 }
 
 self_update_cache_load() {
@@ -757,6 +1273,15 @@ self_update_cache_load() {
 		case "$key" in
 		checked_at) SELF_UPDATE_CACHE_CHECKED_AT="$value" ;;
 		latest_tag) SELF_UPDATE_CACHE_LATEST_TAG="$value" ;;
+		draft) SELF_UPDATE_CACHE_RELEASE_DRAFT="$value" ;;
+		prerelease) SELF_UPDATE_CACHE_RELEASE_PRERELEASE="$value" ;;
+		immutable) SELF_UPDATE_CACHE_RELEASE_IMMUTABLE="$value" ;;
+		updates_url) SELF_UPDATE_CACHE_UPDATES_URL="$value" ;;
+		updates_digest) SELF_UPDATE_CACHE_UPDATES_DIGEST="$value" ;;
+		manifest_url) SELF_UPDATE_CACHE_MANIFEST_URL="$value" ;;
+		manifest_digest) SELF_UPDATE_CACHE_MANIFEST_DIGEST="$value" ;;
+		sums_url) SELF_UPDATE_CACHE_SUMS_URL="$value" ;;
+		sums_digest) SELF_UPDATE_CACHE_SUMS_DIGEST="$value" ;;
 		esac
 	done <"$path"
 
@@ -796,10 +1321,41 @@ self_update_cache_is_fresh() {
 	[ $((current_epoch - checked_at)) -lt "$SELF_UPDATE_CACHE_TTL" ]
 }
 
+self_update_cache_has_release_metadata() {
+	case "$SELF_UPDATE_CACHE_RELEASE_DRAFT" in
+	0 | 1) ;;
+	*) return 1 ;;
+	esac
+	case "$SELF_UPDATE_CACHE_RELEASE_PRERELEASE" in
+	0 | 1) ;;
+	*) return 1 ;;
+	esac
+	case "$SELF_UPDATE_CACHE_RELEASE_IMMUTABLE" in
+	0 | 1) ;;
+	*) return 1 ;;
+	esac
+	[ -n "$SELF_UPDATE_CACHE_UPDATES_URL" ] || return 1
+	[ -n "$SELF_UPDATE_CACHE_UPDATES_DIGEST" ] || return 1
+	[ -n "$SELF_UPDATE_CACHE_MANIFEST_URL" ] || return 1
+	[ -n "$SELF_UPDATE_CACHE_MANIFEST_DIGEST" ] || return 1
+	[ -n "$SELF_UPDATE_CACHE_SUMS_URL" ] || return 1
+	[ -n "$SELF_UPDATE_CACHE_SUMS_DIGEST" ] || return 1
+	return 0
+}
+
 self_update_cache_write() {
 	local path="$1"
 	local checked_at="$2"
 	local latest_tag="$3"
+	local release_draft="${4:-}"
+	local release_prerelease="${5:-}"
+	local release_immutable="${6:-}"
+	local updates_url="${7:-}"
+	local updates_digest="${8:-}"
+	local manifest_url="${9:-}"
+	local manifest_digest="${10:-}"
+	local sums_url="${11:-}"
+	local sums_digest="${12:-}"
 	local dir=""
 	local tmp=""
 
@@ -812,8 +1368,19 @@ self_update_cache_write() {
 	tmp="${path}.tmp.$$"
 	if ! (
 		umask 077
-		printf 'checked_at=%s\n' "$checked_at" >"$tmp"
-		printf 'latest_tag=%s\n' "$latest_tag" >>"$tmp"
+		{
+			printf 'checked_at=%s\n' "$checked_at"
+			printf 'latest_tag=%s\n' "$latest_tag"
+			printf 'draft=%s\n' "$release_draft"
+			printf 'prerelease=%s\n' "$release_prerelease"
+			printf 'immutable=%s\n' "$release_immutable"
+			printf 'updates_url=%s\n' "$updates_url"
+			printf 'updates_digest=%s\n' "$updates_digest"
+			printf 'manifest_url=%s\n' "$manifest_url"
+			printf 'manifest_digest=%s\n' "$manifest_digest"
+			printf 'sums_url=%s\n' "$sums_url"
+			printf 'sums_digest=%s\n' "$sums_digest"
+		} >"$tmp"
 	); then
 		debug "self-update: failed to write cache temp file: $tmp"
 		rm -f "$tmp"
@@ -859,9 +1426,20 @@ maybe_self_update() {
 		return 0
 	fi
 
-	local repo="${UPDATES_SELF_UPDATE_REPO:-amanthanvi/updates}"
+	local repo="${SELF_UPDATE_REPO}"
 	local tag=""
+	local release_json=""
 	local cache_file=""
+	local release_draft="0"
+	local release_prerelease="0"
+	local release_immutable="0"
+	local updates_url=""
+	local updates_digest=""
+	local manifest_url=""
+	local manifest_digest=""
+	local sums_url=""
+	local sums_digest=""
+	local parsed_release=""
 	if ! cache_file="$(self_update_cache_file "$repo")"; then
 		debug "self-update: failed to resolve cache file; proceeding without cache"
 		cache_file=""
@@ -880,8 +1458,26 @@ maybe_self_update() {
 				debug "self-update: forcing live release check via --self-update"
 			elif self_update_cache_is_fresh "$current_epoch" "$SELF_UPDATE_CACHE_CHECKED_AT"; then
 				tag="$SELF_UPDATE_CACHE_LATEST_TAG"
-				live_check_needed=0
-				debug "self-update: using cached release tag (${tag}) from ${cache_file}"
+				if self_update_cache_latest_is_newer_than_current "$tag"; then
+					if self_update_cache_has_release_metadata; then
+						live_check_needed=0
+						release_draft="$SELF_UPDATE_CACHE_RELEASE_DRAFT"
+						release_prerelease="$SELF_UPDATE_CACHE_RELEASE_PRERELEASE"
+						release_immutable="$SELF_UPDATE_CACHE_RELEASE_IMMUTABLE"
+						updates_url="$SELF_UPDATE_CACHE_UPDATES_URL"
+						updates_digest="$SELF_UPDATE_CACHE_UPDATES_DIGEST"
+						manifest_url="$SELF_UPDATE_CACHE_MANIFEST_URL"
+						manifest_digest="$SELF_UPDATE_CACHE_MANIFEST_DIGEST"
+						sums_url="$SELF_UPDATE_CACHE_SUMS_URL"
+						sums_digest="$SELF_UPDATE_CACHE_SUMS_DIGEST"
+						debug "self-update: using cached release metadata for newer tag (${tag}) from ${cache_file}"
+					else
+						debug "self-update: cached release tag (${tag}) is newer but metadata is incomplete; fetching live metadata"
+					fi
+				else
+					debug "self-update: using cached release tag (${tag}) from ${cache_file}"
+					return 0
+				fi
 			else
 				debug "self-update: cached release tag is stale; refreshing (${cache_file})"
 			fi
@@ -893,16 +1489,66 @@ maybe_self_update() {
 	fi
 
 	if [ "$live_check_needed" -eq 1 ]; then
-		if tag="$(self_update_latest_tag_github "$repo")"; then
-			if [ -n "$cache_file" ] && [ -n "$current_epoch" ]; then
-				self_update_cache_write "$cache_file" "$current_epoch" "$tag" || true
-			fi
-		elif [ "$cache_state" -eq 0 ]; then
-			tag="$SELF_UPDATE_CACHE_LATEST_TAG"
-			debug "self-update: live check failed; using cached release tag (${tag})"
-		else
+		if ! release_json="$(self_update_latest_release_json_github "$repo")"; then
 			debug "self-update: failed to fetch latest release tag; skipping"
 			return 0
+		fi
+	fi
+
+	if [ -n "$release_json" ]; then
+		if ! parsed_release="$(printf '%s' "$release_json" | self_update_parse_release_metadata 2>/dev/null)"; then
+			warn "updates: self-update failed to parse release metadata; continuing"
+			return 0
+		fi
+
+		local kind asset_name asset_digest asset_url value
+		while IFS=$'\t' read -r kind asset_name asset_digest asset_url; do
+			case "$kind" in
+			tag_name)
+				tag="$asset_name"
+				;;
+			draft)
+				release_draft="$asset_name"
+				;;
+			prerelease)
+				release_prerelease="$asset_name"
+				;;
+			immutable)
+				release_immutable="$asset_name"
+				;;
+			asset)
+				case "$asset_name" in
+				"$SELF_UPDATE_UNIX_ASSET_NAME")
+					updates_digest="$asset_digest"
+					updates_url="$asset_url"
+					;;
+				"$SELF_UPDATE_RELEASE_MANIFEST_NAME")
+					manifest_digest="$asset_digest"
+					manifest_url="$asset_url"
+					;;
+				"$SELF_UPDATE_CHECKSUM_ASSET_NAME")
+					sums_digest="$asset_digest"
+					sums_url="$asset_url"
+					;;
+				esac
+				;;
+			esac
+		done <<<"$parsed_release"
+
+		if [ -n "$cache_file" ] && [ -n "$current_epoch" ] && [ -n "$tag" ]; then
+			self_update_cache_write \
+				"$cache_file" \
+				"$current_epoch" \
+				"$tag" \
+				"$release_draft" \
+				"$release_prerelease" \
+				"$release_immutable" \
+				"$updates_url" \
+				"$updates_digest" \
+				"$manifest_url" \
+				"$manifest_digest" \
+				"$sums_url" \
+				"$sums_digest" || true
 		fi
 	fi
 
@@ -916,6 +1562,19 @@ maybe_self_update() {
 		return 0
 	fi
 
+	if [ "$release_draft" != "0" ] || [ "$release_prerelease" != "0" ] || [ "$release_immutable" != "1" ]; then
+		warn "updates: self-update release metadata did not satisfy trust requirements; continuing"
+		return 0
+	fi
+	if [ -z "$updates_url" ] || [ -z "$manifest_url" ] || [ -z "$sums_url" ]; then
+		warn "updates: self-update release assets are incomplete; continuing"
+		return 0
+	fi
+	if [ -z "$updates_digest" ] || [ -z "$manifest_digest" ] || [ -z "$sums_digest" ]; then
+		warn "updates: self-update release asset digests are incomplete; continuing"
+		return 0
+	fi
+
 	warn "updates: self-update available (${UPDATES_VERSION} -> ${latest})"
 
 	local tmp_dir=""
@@ -924,23 +1583,41 @@ maybe_self_update() {
 		return 0
 	}
 
-	local base_url="https://github.com/${repo}/releases/download/${tag}"
 	local tmp_updates="${tmp_dir}/updates"
+	local tmp_manifest="${tmp_dir}/${SELF_UPDATE_RELEASE_MANIFEST_NAME}"
 	local tmp_sums="${tmp_dir}/SHA256SUMS"
 
-	if ! curl -fsSL --connect-timeout 2 --max-time 20 -o "$tmp_updates" "${base_url}/updates" 2>/dev/null; then
+	if ! curl -fsSL --connect-timeout 2 --max-time 20 -o "$tmp_updates" "$updates_url" 2>/dev/null; then
 		warn "updates: self-update download failed; continuing"
 		rm -rf "$tmp_dir"
 		return 0
 	fi
-	if ! curl -fsSL --connect-timeout 2 --max-time 20 -o "$tmp_sums" "${base_url}/SHA256SUMS" 2>/dev/null; then
+	if ! curl -fsSL --connect-timeout 2 --max-time 20 -o "$tmp_manifest" "$manifest_url" 2>/dev/null; then
+		warn "updates: self-update manifest download failed; continuing"
+		rm -rf "$tmp_dir"
+		return 0
+	fi
+	if ! curl -fsSL --connect-timeout 2 --max-time 20 -o "$tmp_sums" "$sums_url" 2>/dev/null; then
 		warn "updates: self-update checksum download failed; continuing"
 		rm -rf "$tmp_dir"
 		return 0
 	fi
 
+	if ! self_update_verify_digest "script" "$updates_digest" "$tmp_updates"; then
+		rm -rf "$tmp_dir"
+		return 0
+	fi
+	if ! self_update_verify_digest "manifest" "$manifest_digest" "$tmp_manifest"; then
+		rm -rf "$tmp_dir"
+		return 0
+	fi
+	if ! self_update_verify_digest "checksum" "$sums_digest" "$tmp_sums"; then
+		rm -rf "$tmp_dir"
+		return 0
+	fi
+
 	local expected=""
-	expected="$(awk '$2 ~ /(^|\/)updates$/{print $1; exit}' "$tmp_sums" 2>/dev/null || true)"
+	expected="$(self_update_expected_sum_for_asset "$tmp_sums" "$SELF_UPDATE_UNIX_ASSET_NAME")"
 	if [ -z "$expected" ]; then
 		warn "updates: self-update checksum missing; continuing"
 		rm -rf "$tmp_dir"
@@ -959,15 +1636,49 @@ maybe_self_update() {
 		return 0
 	fi
 
-	if ! grep -q '^UPDATES_VERSION=' "$tmp_updates"; then
+	if ! self_update_release_manifest_valid "$tmp_manifest" "$latest"; then
+		warn "updates: self-update manifest is invalid; continuing"
+		rm -rf "$tmp_dir"
+		return 0
+	fi
+
+	local script_version=""
+	script_version="$(self_update_script_file_version "$tmp_updates")"
+	if [ "$script_version" != "$latest" ]; then
 		warn "updates: self-update downloaded script looks invalid; continuing"
 		rm -rf "$tmp_dir"
 		return 0
 	fi
 
-	if [ -w "$self_path" ]; then
+	local self_dir=""
+	self_dir="$(cd "$(dirname "$self_path")" && pwd)"
+	local staged_self="${self_path}.new.$$"
+	if [ -w "$self_dir" ]; then
+		if ! install -m 0755 "$tmp_updates" "$staged_self"; then
+			warn "updates: self-update install failed; continuing"
+			rm -rf "$tmp_dir"
+			return 0
+		fi
+		if ! self_update_verify_installed_copy "$staged_self" "$latest"; then
+			warn "updates: self-update staged copy failed verification; continuing"
+			rm -f "$staged_self"
+			rm -rf "$tmp_dir"
+			return 0
+		fi
+		if ! mv "$staged_self" "$self_path"; then
+			warn "updates: self-update install failed; continuing"
+			rm -f "$staged_self"
+			rm -rf "$tmp_dir"
+			return 0
+		fi
+	elif [ -w "$self_path" ]; then
 		if ! install -m 0755 "$tmp_updates" "$self_path"; then
 			warn "updates: self-update install failed; continuing"
+			rm -rf "$tmp_dir"
+			return 0
+		fi
+		if ! self_update_verify_installed_copy "$self_path" "$latest"; then
+			warn "updates: self-update installed copy failed verification; continuing"
 			rm -rf "$tmp_dir"
 			return 0
 		fi
@@ -984,6 +1695,11 @@ maybe_self_update() {
 		fi
 		if ! "${sudo_prefix[@]}" install -m 0755 "$tmp_updates" "$self_path"; then
 			warn "updates: self-update requires sudo or a user-writable install location (e.g. ~/.local/bin)"
+			rm -rf "$tmp_dir"
+			return 0
+		fi
+		if ! self_update_verify_installed_copy "$self_path" "$latest"; then
+			warn "updates: self-update installed copy failed verification; continuing"
 			rm -rf "$tmp_dir"
 			return 0
 		fi
@@ -1130,13 +1846,22 @@ read_config() {
 		return 0
 	fi
 
-	local config_path="${HOME}/.updatesrc"
+	local config_path=""
+	if ! config_path="$(updates_config_path)"; then
+		return 0
+	fi
 	if [ ! -f "$config_path" ]; then
 		return 0
 	fi
 
 	local line key val
+	local first_line=1
 	while IFS= read -r line || [ -n "$line" ]; do
+		if [ "$first_line" -eq 1 ]; then
+			line="${line#$'\xef\xbb\xbf'}"
+			first_line=0
+		fi
+
 		# Trim whitespace.
 		line="${line#"${line%%[![:space:]]*}"}"
 		line="${line%"${line##*[![:space:]]}"}"
@@ -1420,8 +2145,8 @@ ensure_cmd_or_skip() {
 
 json_pairs() {
 	# Prints tab-delimited key/value pairs from a JSON object on stdin.
-	if cmd_exists python3; then
-		python3 -c 'import sys, json; obj=json.load(sys.stdin); [print(f"{k}\t{v}") for k,v in obj.items()]'
+	if python_launcher_resolve; then
+		python_run_cmd -c 'import sys, json; obj=json.load(sys.stdin); [print("%s\t%s" % (k, v)) for k, v in obj.items()]'
 		return $?
 	fi
 	if cmd_exists node; then
@@ -1437,13 +2162,13 @@ json_pairs() {
 ###############################################################################
 
 python_externally_managed() {
-	if ! cmd_exists python3; then
+	if ! python_launcher_resolve; then
 		return 1
 	fi
 
 	local out
 	if ! out="$(
-		python3 -c 'import sysconfig, pathlib; paths=sysconfig.get_paths(); c=[pathlib.Path(paths[k])/"EXTERNALLY-MANAGED" for k in ("stdlib","platstdlib","purelib","platlib") if paths.get(k)]; print("1" if any(p.exists() for p in c) else "0")' 2>/dev/null
+		python_run_cmd -c 'import sysconfig, pathlib; paths=sysconfig.get_paths(); c=[pathlib.Path(paths[k])/"EXTERNALLY-MANAGED" for k in ("stdlib","platstdlib","purelib","platlib") if paths.get(k)]; print("1" if any(p.exists() for p in c) else "0")' 2>/dev/null
 	)"; then
 		return 1
 	fi
@@ -1507,8 +2232,12 @@ shell_detect_omz_dir() {
 		stdout_print "$ZSH"
 		return 0
 	fi
-	if [ -d "${HOME}/.oh-my-zsh" ]; then
-		stdout_print "${HOME}/.oh-my-zsh"
+	local home_dir=""
+	if ! home_dir="$(updates_home_dir)"; then
+		return 1
+	fi
+	if [ -d "${home_dir}/.oh-my-zsh" ]; then
+		stdout_print "${home_dir}/.oh-my-zsh"
 		return 0
 	fi
 	return 1
@@ -1619,7 +2348,13 @@ module_repos() {
 	log "Development repos $(emoji "📦")"
 	ensure_cmd_or_skip git repos || return $?
 
-	local base_dir="${REPOS_DIR:-${HOME}/GitRepos}"
+	local home_dir=""
+	if ! home_dir="$(updates_home_dir)"; then
+		log "Skipping repos: home directory not available."
+		return 2
+	fi
+
+	local base_dir="${REPOS_DIR:-${home_dir}/GitRepos}"
 	if [ ! -d "$base_dir" ]; then
 		log "Skipping repos: base directory not found: ${base_dir}"
 		return 2
@@ -1840,19 +2575,31 @@ module_linux() {
 	esac
 }
 
+module_winget() {
+	log "Skipping winget: native Windows support uses updates.ps1."
+	return 2
+}
+
 module_node() {
 	log "npm globals $(emoji "📦")"
-	ensure_cmd_or_skip ncu node || return $?
+	if ! resolve_ncu_runner; then
+		if missing_dependency_is_error; then
+			err "node: required command not found: ncu or npx"
+			return 1
+		fi
+		log "Skipping node: npm-check-updates not available (need ncu or npx)."
+		return 2
+	fi
 	ensure_cmd_or_skip npm node || return $?
 
 	if [ "$DRY_RUN" -eq 1 ]; then
-		log "DRY RUN: ncu -g --jsonUpgraded"
+		log "DRY RUN: $(ncu_command_label)"
 		log "DRY RUN: npm install -g -- <packages...>"
 		return 0
 	fi
 
 	local json
-	if ! json="$(ncu -g --jsonUpgraded)"; then
+	if ! json="$(ncu_run_json_upgraded)"; then
 		err "node: ncu failed"
 		return 1
 	fi
@@ -1885,16 +2632,46 @@ module_node() {
 	return 0
 }
 
+module_bun() {
+	log "Bun globals $(emoji "🥟")"
+	ensure_cmd_or_skip bun bun || return $?
+
+	if [ "$DRY_RUN" -eq 1 ]; then
+		log "DRY RUN: bun update -g"
+		if bun_is_standalone_install; then
+			log "DRY RUN: bun upgrade"
+		else
+			log "bun: skipping bun upgrade because Bun does not appear to be standalone-installed."
+		fi
+		return 0
+	fi
+
+	run bun update -g || return 1
+	if bun_is_standalone_install; then
+		run bun upgrade || return 1
+	else
+		log "bun: skipping bun upgrade because Bun does not appear to be standalone-installed."
+	fi
+	return 0
+}
+
 module_python() {
 	log "Python globals $(emoji "🐍")"
-	ensure_cmd_or_skip python3 python || return $?
-
-	if ! python3 -m pip --version >/dev/null 2>&1; then
+	if ! python_launcher_resolve; then
 		if missing_dependency_is_error; then
-			err "python: required module not found: pip (python3 -m pip)"
+			err "python: required command not found: py, python, or python3"
 			return 1
 		fi
-		log "Skipping python: pip not available (python3 -m pip)."
+		log "Skipping python: no supported Python launcher found."
+		return 2
+	fi
+
+	if ! python_run_cmd -m pip --version >/dev/null 2>&1; then
+		if missing_dependency_is_error; then
+			err "python: required module not found: pip (${PYTHON_CMD_LABEL} -m pip)"
+			return 1
+		fi
+		log "Skipping python: pip not available (${PYTHON_CMD_LABEL} -m pip)."
 		return 2
 	fi
 
@@ -1908,8 +2685,12 @@ module_python() {
 		log "python: use --pip-force to override (dangerous)."
 	fi
 
-	local -a pip_list_args=(python3 -m pip --disable-pip-version-check list --outdated --format=json)
-	local -a pip_install_args=(python3 -m pip --disable-pip-version-check install -U)
+	local -a python_args=("$PYTHON_CMD")
+	if [ -n "$PYTHON_CMD_ARG" ]; then
+		python_args+=("$PYTHON_CMD_ARG")
+	fi
+	local -a pip_list_args=("${python_args[@]}" -m pip --disable-pip-version-check list --outdated --format=json)
+	local -a pip_install_args=("${python_args[@]}" -m pip --disable-pip-version-check install -U)
 	if [ "$NON_INTERACTIVE" -eq 1 ]; then
 		pip_install_args+=(--no-input)
 	fi
@@ -1934,7 +2715,7 @@ module_python() {
 	fi
 
 	local names
-	if ! names="$(printf '%s' "$outdated_json" | python3 -c 'import sys, json; data=json.load(sys.stdin); print("\n".join([p.get("name","") for p in data if p.get("name")]))' 2>/dev/null)"; then
+	if ! names="$(printf '%s' "$outdated_json" | python_run_cmd -c 'import sys, json; data=json.load(sys.stdin); print("\n".join([p.get("name","") for p in data if p.get("name")]))' 2>/dev/null)"; then
 		err "python: failed to parse pip output"
 		return 1
 	fi
@@ -2269,6 +3050,7 @@ main() {
 	pre_scan_no_config "$@"
 	read_config
 	parse_args "$@"
+	self_update_reject_removed_repo_override
 
 	if [ "$JSON" -eq 1 ]; then
 		HUMAN_FD=2

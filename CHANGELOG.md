@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Native Windows support via `updates.cmd` and `updates.ps1` with PowerShell 7 (`pwsh`) as the only supported Windows runtime.
+- New Windows-facing release artifacts: `updates-windows.zip`, `updates-release.json`, and `install-source.json`.
+- Windows modules: `winget` and `bun`.
+- Native Windows support for `node`, `python`, `uv`, `pipx`, `rustup`, and `go`.
+
+### Changed
+
+- `updates` self-update is now GitHub Releases only for the canonical repo `amanthanvi/updates`.
+- Self-update trust now requires release asset digests, `SHA256SUMS`, `updates-release.json`, and immutable published releases.
+- Native Windows self-update is limited to official standalone installs rooted at `%LOCALAPPDATA%\\Programs\\updates`.
+- Config parsing/documentation now treats `~/.updatesrc` as a BOM-tolerant line-oriented `KEY=value` file instead of a shell-sourced file.
+
+### Removed
+
+- `UPDATES_SELF_UPDATE_REPO`; custom self-update repos are no longer supported.
+- Any documented expectation that `updates` itself will ship through third-party package-manager channels.
+
 ## [1.3.0] - 2026-04-14
 
 ### Added
