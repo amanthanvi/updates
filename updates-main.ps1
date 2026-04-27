@@ -760,13 +760,13 @@ function Invoke-ModuleWinget {
         return (Resolve-MissingDependency -ModuleName 'winget' -Detail 'winget not found.')
     }
 
-    $args = @('upgrade', '--all', '--silent', '--accept-source-agreements', '--accept-package-agreements')
+    $wingetArgs = @('upgrade', '--all', '--silent', '--accept-source-agreements', '--accept-package-agreements')
     if ($script:DryRun) {
-        Write-LogLine ("DRY RUN: {0}" -f (Format-Command (@($winget) + $args)))
+        Write-LogLine ("DRY RUN: {0}" -f (Format-Command (@($winget) + $wingetArgs)))
         return 0
     }
 
-    $result = Invoke-LoggedProcess -FilePath $winget -ArgumentList $args
+    $result = Invoke-LoggedProcess -FilePath $winget -ArgumentList $wingetArgs
     if ($result.ExitCode -ne 0) {
         Write-ErrorLine 'winget: upgrade failed'
         return 1

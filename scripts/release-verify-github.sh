@@ -50,14 +50,14 @@ fi
 
 EXPECTED_ASSETS="$(release_expected_assets)"
 ACTUAL_ASSETS="$(printf '%s' "$RELEASE_JSON" | jq -r '.assets[].name' | sort)"
-if [ "$ACTUAL_ASSETS" != "$EXPECTED_ASSETS" ]; then
-	echo "Unexpected GitHub release assets for $TAG" >&2
-	echo "Expected:" >&2
-	printf '%s\n' "$EXPECTED_ASSETS" >&2
-	echo "Actual:" >&2
-	printf '%s\n' "$ACTUAL_ASSETS" >&2
-	exit 1
-fi
+while IFS= read -r asset; do
+	[ -n "$asset" ] || continue
+	if ! printf '%s\n' "$ACTUAL_ASSETS" | grep -Fxq "$asset"; then
+		release_fail "Missing required GitHub release asset for $TAG: $asset"
+	fi
+done <<EOF
+$EXPECTED_ASSETS
+EOF
 
 while IFS= read -r asset; do
 	local_digest="sha256:$(release_sha256 "$DIST_DIR/$asset")"

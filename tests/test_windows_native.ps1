@@ -431,11 +431,11 @@ if (Should-RunTest 'native payload keeps stdout JSON-only when child tools emit 
             }
             foreach ($line in @($result.Stdout -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
                 try {
-                    $event = $line | ConvertFrom-Json -ErrorAction Stop
+                    $jsonEvent = $line | ConvertFrom-Json -ErrorAction Stop
                 } catch {
                     throw "stdout line was not valid JSON:`n$line"
                 }
-                Assert-True -Condition ($null -ne $event.event) -Message 'each stdout line should be a JSON event object'
+                Assert-True -Condition ($null -ne $jsonEvent.event) -Message 'each stdout line should be a JSON event object'
             }
         }
     }

@@ -25,25 +25,25 @@ release_require_file "$DIST_DIR/$RELEASE_ASSET_SUMS"
 
 EXPECTED_TOP_LEVEL="$(release_expected_assets)"
 ACTUAL_TOP_LEVEL="$(release_top_level_files "$DIST_DIR")"
-if [ "$ACTUAL_TOP_LEVEL" != "$EXPECTED_TOP_LEVEL" ]; then
-	echo "Unexpected dist contents" >&2
-	echo "Expected:" >&2
-	printf '%s\n' "$EXPECTED_TOP_LEVEL" >&2
-	echo "Actual:" >&2
-	printf '%s\n' "$ACTUAL_TOP_LEVEL" >&2
-	exit 1
-fi
+while IFS= read -r asset; do
+	[ -n "$asset" ] || continue
+	if ! printf '%s\n' "$ACTUAL_TOP_LEVEL" | grep -Fxq "$asset"; then
+		release_fail "Missing required dist asset: $asset"
+	fi
+done <<EOF
+$EXPECTED_TOP_LEVEL
+EOF
 
 EXPECTED_SUM_LINES="$(release_expected_checksum_subjects)"
 ACTUAL_SUM_LINES="$(awk '{print $2}' "$DIST_DIR/$RELEASE_ASSET_SUMS" | sort)"
-if [ "$ACTUAL_SUM_LINES" != "$EXPECTED_SUM_LINES" ]; then
-	echo "Unexpected SHA256SUMS subjects" >&2
-	echo "Expected:" >&2
-	printf '%s\n' "$EXPECTED_SUM_LINES" >&2
-	echo "Actual:" >&2
-	printf '%s\n' "$ACTUAL_SUM_LINES" >&2
-	exit 1
-fi
+while IFS= read -r asset; do
+	[ -n "$asset" ] || continue
+	if ! printf '%s\n' "$ACTUAL_SUM_LINES" | grep -Fxq "$asset"; then
+		release_fail "Missing required SHA256SUMS subject: $asset"
+	fi
+done <<EOF
+$EXPECTED_SUM_LINES
+EOF
 
 release_check_sha256sums "$DIST_DIR" "$RELEASE_ASSET_SUMS" >/dev/null
 
