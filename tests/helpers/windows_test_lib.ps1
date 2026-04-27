@@ -505,9 +505,12 @@ function Invoke-ProcessCapture {
     }
 
     $process = [System.Diagnostics.Process]::Start($psi)
-    $stdout = $process.StandardOutput.ReadToEnd()
-    $stderr = $process.StandardError.ReadToEnd()
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
     $process.WaitForExit()
+    [System.Threading.Tasks.Task]::WaitAll(@($stdoutTask, $stderrTask))
+    $stdout = $stdoutTask.GetAwaiter().GetResult()
+    $stderr = $stderrTask.GetAwaiter().GetResult()
 
     return [pscustomobject]@{
         ExitCode = $process.ExitCode
@@ -660,6 +663,11 @@ function Set-VersionPointers {
     Write-Utf8NoBom -Path (Join-Path $InstallRoot 'current.txt') -Content ($CurrentVersion + "`n")
     if ($PreviousVersion) {
         Write-Utf8NoBom -Path (Join-Path $InstallRoot 'previous.txt') -Content ($PreviousVersion + "`n")
+    } else {
+        $previousPath = Join-Path $InstallRoot 'previous.txt'
+        if (Test-Path -LiteralPath $previousPath -PathType Leaf) {
+            Remove-Item -LiteralPath $previousPath -Force
+        }
     }
 }
 
@@ -804,6 +812,7 @@ function Wait-ForProcessExit {
             $Process.Kill($true)
         }
     } catch {
+        Write-Verbose ("best-effort process kill failed for pid {0}: {1}" -f $Process.Id, $_.Exception.Message)
     }
 
     throw $FailureMessage
@@ -835,6 +844,7 @@ function Wait-ForNativeProcessExit {
     try {
         [UpdatesWindowsSignalTestSupport]::Kill($Process)
     } catch {
+        Write-Verbose ("best-effort native process kill failed: {0}" -f $_.Exception.Message)
     }
 
     throw $FailureMessage
@@ -860,6 +870,7 @@ function Stop-NativeProcess {
     try {
         [UpdatesWindowsSignalTestSupport]::Kill($Process)
     } catch {
+        Write-Verbose ("best-effort native process stop failed: {0}" -f $_.Exception.Message)
     } finally {
         [UpdatesWindowsSignalTestSupport]::Close($Process)
     }
@@ -902,6 +913,7 @@ function Invoke-WindowsSignalCase {
         try {
             $process.Kill($true)
         } catch {
+            Write-Verbose ("best-effort signal helper kill failed for pid {0}: {1}" -f $process.Id, $_.Exception.Message)
         }
         throw ("signal helper timed out for {0}" -f $SignalType)
     }

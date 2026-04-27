@@ -48,7 +48,7 @@ if [ "$MODE" = "published" ] && [ "$IMMUTABLE_STATE" != "true" ]; then
 	release_fail "Release $TAG is not immutable after publish"
 fi
 
-EXPECTED_ASSETS="$(release_expected_assets)"
+EXPECTED_ASSETS="$(release_expected_assets | sort)"
 ACTUAL_ASSETS="$(printf '%s' "$RELEASE_JSON" | jq -r '.assets[].name' | sort)"
 while IFS= read -r asset; do
 	[ -n "$asset" ] || continue
@@ -72,7 +72,7 @@ while IFS= read -r asset; do
 		release_fail "Digest mismatch for $asset: expected $local_digest, got $remote_digest"
 	fi
 done <<EOF
-$(release_expected_assets)
+$EXPECTED_ASSETS
 EOF
 
 if [ "$MODE" = "draft" ]; then

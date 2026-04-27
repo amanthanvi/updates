@@ -13,6 +13,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -96,6 +98,15 @@ jobs:
 
       - name: Verify local release artifacts
         run: bash ./scripts/release-verify-dist.sh "${{ steps.meta.outputs.version }}"
+
+      - name: Generate artifact attestations
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/updates
+            dist/updates-windows.zip
+            dist/updates-release.json
+            dist/SHA256SUMS
 
       - name: Create or reuse draft release
         shell: bash

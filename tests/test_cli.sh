@@ -582,7 +582,6 @@ mkdir -p "$node_fallback_bin"
 ln -sf "${stub_bin}/uname" "${node_fallback_bin}/uname"
 ln -sf "${stub_bin}/npx" "${node_fallback_bin}/npx"
 ln -sf "${stub_bin}/npm" "${node_fallback_bin}/npm"
-ln -sf "${stub_bin}/python" "${node_fallback_bin}/python"
 : >"$CALL_LOG"
 PATH="${node_fallback_bin}:${BASE_PATH}" "$SCRIPT" --only node --no-emoji --no-color >/dev/null
 grep -q '^npx --yes npm-check-updates -g --jsonUpgraded$' "$CALL_LOG"

@@ -583,6 +583,21 @@ exit 0
     }
 }
 
+if (Should-RunTest 'Set-VersionPointers removes stale previous.txt when previous version is omitted') {
+    Invoke-TestCase 'Set-VersionPointers removes stale previous.txt when previous version is omitted' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Set-VersionPointers -InstallRoot $installRoot -CurrentVersion '2.0.0' -PreviousVersion '1.9.9'
+            Assert-FileExists -Path (Join-Path $installRoot 'previous.txt') -Message 'fixture should create previous.txt before removal coverage'
+
+            Set-VersionPointers -InstallRoot $installRoot -CurrentVersion '2.0.1'
+
+            Assert-True -Condition (-not (Test-Path -LiteralPath (Join-Path $installRoot 'previous.txt') -PathType Leaf)) -Message 'Set-VersionPointers should remove stale previous.txt when no previous version is supplied'
+        }
+    }
+}
+
 if (Should-RunTest 'native payload self-update applies a verified Windows release and updates pointers') {
     Invoke-TestCase 'native payload self-update applies a verified Windows release and updates pointers' {
         Invoke-WithTempInstall {
