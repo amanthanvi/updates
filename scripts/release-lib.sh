@@ -48,7 +48,12 @@ release_validate_version() {
 }
 
 release_script_version() {
-	awk -F'"' '/^UPDATES_VERSION=/{print $2; exit}' updates
+	release_script_version_from_path updates
+}
+
+release_script_version_from_path() {
+	local path="${1:-updates}"
+	awk -F'"' '/^UPDATES_VERSION=/{print $2; exit}' "$path"
 }
 
 release_windows_payload_version() {
@@ -58,6 +63,7 @@ release_windows_payload_version() {
 
 release_resolve_path() {
 	local path="$1"
+	# Git Bash on Windows can pass absolute Windows paths through to bash.
 	case "$path" in
 	/* | [A-Za-z]:/* | [A-Za-z]:\\*)
 		printf '%s\n' "$path"
@@ -66,6 +72,59 @@ release_resolve_path() {
 		printf '%s\n' "$RELEASE_REPO_ROOT/$path"
 		;;
 	esac
+}
+
+release_normalize_path_string() {
+	local path="${1:-}"
+	path="${path//\\//}"
+	while :; do
+		case "$path" in
+		*/.) path="${path%/.}" ;;
+		*/) path="${path%/}" ;;
+		*) break ;;
+		esac
+	done
+	printf '%s\n' "$path"
+}
+
+release_path_has_parent_traversal() {
+	local path="$1"
+	local normalized=""
+	normalized="$(release_normalize_path_string "$path")"
+	case "/$normalized/" in
+	*/../*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+release_validate_output_dir() {
+	local raw_path="${1:-}"
+	local resolved_path="${2:-}"
+	local raw_normalized=""
+	local resolved_normalized=""
+	local repo_normalized=""
+
+	[ -n "$raw_path" ] || release_fail "Output directory path must not be empty"
+
+	raw_normalized="$(release_normalize_path_string "$raw_path")"
+	resolved_normalized="$(release_normalize_path_string "$resolved_path")"
+	repo_normalized="$(release_normalize_path_string "$RELEASE_REPO_ROOT")"
+
+	case "$raw_normalized" in
+	'' | .) release_fail "Output directory path is unsafe: $raw_path" ;;
+	esac
+
+	if release_path_has_parent_traversal "$raw_normalized"; then
+		release_fail "Output directory path must not contain parent traversal: $raw_path"
+	fi
+
+	case "$resolved_normalized" in
+	/ | [A-Za-z]:) release_fail "Refusing to delete root output directory: $resolved_path" ;;
+	esac
+
+	if [ "$resolved_normalized" = "$repo_normalized" ]; then
+		release_fail "Refusing to delete repository root as output directory: $resolved_path"
+	fi
 }
 
 release_sha256() {

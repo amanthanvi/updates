@@ -35,6 +35,7 @@ if [ "$WINDOWS_VERSION" != "$VERSION" ]; then
 fi
 
 DIST_DIR_ABS="$(release_resolve_path "$DIST_DIR")"
+release_validate_output_dir "$DIST_DIR" "$DIST_DIR_ABS"
 
 TMP_DIR="$(release_make_tmpdir)"
 trap 'rm -rf "$TMP_DIR"' EXIT

@@ -70,7 +70,7 @@ assert_json_field_equals "$DIST_DIR/$RELEASE_ASSET_MANIFEST" '.unix_asset' "$REL
 assert_json_field_equals "$DIST_DIR/$RELEASE_ASSET_MANIFEST" '.checksum_asset' "$RELEASE_ASSET_SUMS" "updates-release.json missing checksum asset"
 
 bash -n "$DIST_DIR/$RELEASE_ASSET_UPDATES"
-VERSION_OUTPUT="$("$DIST_DIR/$RELEASE_ASSET_UPDATES" --version | tr -d '\r')"
+VERSION_OUTPUT="$(release_script_version_from_path "$DIST_DIR/$RELEASE_ASSET_UPDATES")"
 if [ "$VERSION_OUTPUT" != "$EXPECTED_VERSION_OUTPUT" ]; then
 	release_fail "Unexpected version output from dist/updates: $VERSION_OUTPUT"
 fi
