@@ -644,9 +644,15 @@ function Invoke-LoggedProcess {
             } else {
                 [Console]::Out.Write($result.Stdout)
             }
+            if ($script:LogFile) {
+                [System.IO.File]::AppendAllText($script:LogFile, $result.Stdout, [System.Text.UTF8Encoding]::new($false))
+            }
         }
         if ($result.Stderr) {
             [Console]::Error.Write($result.Stderr)
+            if ($script:LogFile) {
+                [System.IO.File]::AppendAllText($script:LogFile, $result.Stderr, [System.Text.UTF8Encoding]::new($false))
+            }
         }
     }
     return $result

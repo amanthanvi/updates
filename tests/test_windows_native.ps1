@@ -56,7 +56,7 @@ function New-SelfUpdateFixture {
 
     Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $assetRoot -Version $Version -WithReceipt
     if ($PayloadBootstrapMin -ne 1) {
-        $payloadManifestPath = Join-Path $assetRoot (Join-Path ('versions\' + $Version) 'manifest.json')
+        $payloadManifestPath = Join-Path $assetRoot (Join-Path 'versions' (Join-Path $Version 'manifest.json'))
         Write-JsonFile -Path $payloadManifestPath -Data ([ordered]@{
             version       = $Version
             bootstrap_min = $PayloadBootstrapMin
@@ -403,6 +403,7 @@ if (Should-RunTest 'native payload keeps stdout JSON-only when child tools emit 
             param($installRoot)
 
             Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+            $logPath = Join-Path $installRoot 'winget-json.log'
 
             $stubDir = Join-Path $installRoot 'stub-bin'
             $null = New-Item -ItemType Directory -Path $stubDir -Force
@@ -415,6 +416,7 @@ if (Should-RunTest 'native payload keeps stdout JSON-only when child tools emit 
                 '--json',
                 '--no-self-update',
                 '--only', 'winget',
+                '--log-file', $logPath,
                 '--no-color',
                 '--no-emoji'
             ) -Environment @{
@@ -437,6 +439,8 @@ if (Should-RunTest 'native payload keeps stdout JSON-only when child tools emit 
                 }
                 Assert-True -Condition ($null -ne $jsonEvent.event) -Message 'each stdout line should be a JSON event object'
             }
+            Assert-Match -Text (Get-Content -LiteralPath $logPath -Raw) -Pattern 'winget-stdout' -Message 'child stdout should be mirrored to the log file'
+            Assert-Match -Text (Get-Content -LiteralPath $logPath -Raw) -Pattern 'winget-stderr' -Message 'child stderr should be mirrored to the log file'
         }
     }
 }
