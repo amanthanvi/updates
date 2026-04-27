@@ -61,7 +61,7 @@ v2.0 signals the next stable CLI contract: native Windows support is added, the 
 
 - **Flow 1 — Default run:** `updates` (auto-detects available modules, runs safe defaults, prints human-readable progress and summary).
 - **Flow 2 — Scoped run:** `updates --only brew,node --dry-run` (preview what would change for specific modules).
-- **Flow 3 — Full upgrade:** `updates --full` (includes casks, mas, macos — everything).
+- **Flow 3 — Full upgrade:** `updates --full` (platform-specific "everything": casks/mas/macos on macOS, every supported module on native Windows).
 - **Flow 4 — CI/scripted:** `updates --json -n --no-self-update --log-level warn` (structured output, non-interactive, quiet).
 
 ### 2.3 UX states checklist
@@ -146,6 +146,7 @@ Module presets:
   - sets `--brew-mode greedy`
   - enables `--mas-upgrade` and `--macos-updates`
   - runs all other auto-detected modules (including `uv`, `mise`, and `go`; `go` still requires `GO_BINARIES` to be configured)
+  - on native Windows, selects every supported Windows module and ignores `SKIP_MODULES` from config; explicit `--skip` still wins
 - `--mas-upgrade` / `--no-mas-upgrade`: enable the `mas` module (default disabled).
 - `--macos-updates` / `--no-macos-updates`: enable the `macos` module (default disabled).
 
@@ -466,11 +467,11 @@ Purpose: upgrade global npm packages using `npm-check-updates`.
 
 Purpose: upgrade Bun global packages and, when safe, the Bun CLI itself.
 
-- Runs only on native Windows in `v2.0.0`.
+- Runs on macOS, Linux, and native Windows in `v2.0.0`.
 - Requires: `bun`
 - Non-dry-run:
   - `bun update -g`
-  - `bun upgrade` only when Bun appears standalone-installed; if Bun appears package-managed or ownership is unclear, CLI self-update is skipped
+  - `bun upgrade` only when Bun appears standalone-installed; if Bun appears package-managed or ownership is unclear, CLI self-update is skipped on native Windows
 - Side effects: upgrades Bun global packages; may upgrade the Bun CLI when ownership is clearly standalone.
 
 ### 8.8 `python`
@@ -480,7 +481,9 @@ Purpose: upgrade global Python packages with `pip`.
 - Requires: a resolved Python launcher with a working `pip` module. Resolution order is `py -3`, then `python`, then `python3`.
 - PEP 668 detection: if externally-managed, defaults to `--user` scope.
 - `--pip-force`: passes `--break-system-packages` to pip.
-- Non-dry-run: `<launcher> -m pip list --outdated --format=json [--user]`, then `<launcher> -m pip install -U <pkg>` in parallel batches of `--parallel <N>`.
+- Non-dry-run:
+  - Bash implementation: `<launcher> -m pip list --outdated --format=json [--user]`, then `<launcher> -m pip install -U <pkg>` in parallel batches of `--parallel <N>`.
+  - Native Windows PowerShell implementation: same discovery/install flow, but upgrades run sequentially and `--parallel <N>` is rejected.
 - With `-n`: adds `--no-input` to pip calls.
 - Side effects: upgrades Python packages; does not upgrade the Python interpreter itself.
 

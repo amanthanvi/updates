@@ -86,7 +86,7 @@ Modules are auto-detected: if the underlying command isn’t installed, the modu
 - `linux`: upgrade Linux system packages (auto-detects `apt-get`/`dnf`/`yum`/`pacman`/`zypper`/`apk`)
 - `winget`: upgrade installed Windows packages/apps via `winget` (Windows only)
 - `node`: upgrade global npm packages via resolved npm-check-updates + `npm`
-- `bun`: upgrade Bun global packages; upgrade the Bun CLI only when it appears standalone-installed (Windows only in `v2.0.0`)
+- `bun`: upgrade Bun global packages everywhere; native Windows only self-updates the Bun CLI when it appears standalone-installed
 - `python`: upgrade global/user Python packages via a resolved launcher (`py -3`, `python`, then `python3`)
 - `uv`: update uv-managed tools everywhere; native Windows only self-updates uv when it appears standalone-installed
 - `mas`: upgrade Mac App Store apps via `mas` (disabled by default; enable with `--mas-upgrade` or `--full`)
@@ -99,6 +99,7 @@ Modules are auto-detected: if the underlying command isn’t installed, the modu
 - `macos`: list available macOS software updates via `softwareupdate -l` (disabled by default; enable with `--macos-updates` or `--full`)
 
 Native Windows `v2.0.0` default-on modules: `winget`, `node`, `bun`, `python`, `uv`, `pipx`, `rustup`, `go`.
+On native Windows, `--full` selects every supported Windows module even if `SKIP_MODULES` in config would otherwise omit one; explicit `--skip` still wins.
 
 ## Configuration (`~/.updatesrc`)
 

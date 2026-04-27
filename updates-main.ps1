@@ -52,6 +52,7 @@ $script:SelfUpdate = $true
 $script:ForceSelfUpdate = $false
 $script:PipForce = $false
 $script:Parallel = $null
+$script:FullMode = $false
 $script:LogFile = $null
 $script:GoBinaries = ''
 $script:ReposDir = ''
@@ -414,7 +415,11 @@ function Parse-Args {
             '-n' { $script:NonInteractive = $true }
             '--non-interactive' { $script:NonInteractive = $true }
             '--pip-force' { $script:PipForce = $true }
-            '--full' { $script:MasUpgrade = $true; $script:MacosUpdates = $true }
+            '--full' {
+                $script:MasUpgrade = $true
+                $script:MacosUpdates = $true
+                $script:FullMode = $true
+            }
             '--log-level' {
                 $i++
                 if ($i -ge $CliInput.Length) { Fail-Usage '--log-level requires a value' }
@@ -598,9 +603,12 @@ function Invoke-CapturedProcess {
     }
 
     $process = [System.Diagnostics.Process]::Start($psi)
-    $stdout = $process.StandardOutput.ReadToEnd()
-    $stderr = $process.StandardError.ReadToEnd()
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
     $process.WaitForExit()
+    [System.Threading.Tasks.Task]::WaitAll(@($stdoutTask, $stderrTask))
+    $stdout = $stdoutTask.GetAwaiter().GetResult()
+    $stderr = $stderrTask.GetAwaiter().GetResult()
 
     return [pscustomobject]@{
         ExitCode = $process.ExitCode
@@ -659,6 +667,21 @@ function Resolve-PythonLauncher {
     }
 
     return $null
+}
+
+function Resolve-MissingDependency {
+    param(
+        [string]$ModuleName,
+        [string]$Detail
+    )
+
+    if ($script:OnlyModules.Count -gt 0 -and $script:OnlyModules.Contains($ModuleName)) {
+        Write-ErrorLine ("{0}: {1}" -f $ModuleName, $Detail)
+        return 1
+    }
+
+    Write-LogLine ("Skipping {0}: {1}" -f $ModuleName, $Detail)
+    return 2
 }
 
 function Resolve-NcuRunner {
@@ -732,8 +755,7 @@ function Emit-UpgradeEvent {
 function Invoke-ModuleWinget {
     $winget = Resolve-ApplicationCommand @('winget.exe', 'winget')
     if (-not $winget) {
-        Write-LogLine 'Skipping winget: winget not found.'
-        return 2
+        return (Resolve-MissingDependency -ModuleName 'winget' -Detail 'winget not found.')
     }
 
     $args = @('upgrade', '--all', '--silent', '--accept-source-agreements', '--accept-package-agreements')
@@ -753,14 +775,12 @@ function Invoke-ModuleWinget {
 function Invoke-ModuleNode {
     $runner = Resolve-NcuRunner
     if (-not $runner) {
-        Write-LogLine 'Skipping node: npm-check-updates not available (need ncu or npx).'
-        return 2
+        return (Resolve-MissingDependency -ModuleName 'node' -Detail 'npm-check-updates not available (need ncu or npx).')
     }
 
     $npm = Resolve-ApplicationCommand @('npm.cmd', 'npm')
     if (-not $npm) {
-        Write-LogLine 'Skipping node: npm not found.'
-        return 2
+        return (Resolve-MissingDependency -ModuleName 'node' -Detail 'npm not found.')
     }
 
     if ($script:DryRun) {
@@ -805,8 +825,7 @@ function Invoke-ModuleNode {
 function Invoke-ModuleBun {
     $bun = Resolve-ApplicationCommand @('bun.exe', 'bun')
     if (-not $bun) {
-        Write-LogLine 'Skipping bun: bun not found.'
-        return 2
+        return (Resolve-MissingDependency -ModuleName 'bun' -Detail 'bun not found.')
     }
 
     if ($script:DryRun) {
@@ -841,14 +860,12 @@ function Invoke-ModuleBun {
 function Invoke-ModulePython {
     $python = Resolve-PythonLauncher
     if (-not $python) {
-        Write-LogLine 'Skipping python: no supported Python launcher found.'
-        return 2
+        return (Resolve-MissingDependency -ModuleName 'python' -Detail 'no supported Python launcher found.')
     }
 
     $pipVersion = Invoke-CapturedProcess -FilePath $python.FilePath -ArgumentList ($python.Prefix + @('-m', 'pip', '--version'))
     if ($pipVersion.ExitCode -ne 0) {
-        Write-LogLine ("Skipping python: pip not available ({0} -m pip)." -f $python.Label)
-        return 2
+        return (Resolve-MissingDependency -ModuleName 'python' -Detail ("pip not available ({0} -m pip)." -f $python.Label))
     }
 
     $listArgs = $python.Prefix + @('-m', 'pip', '--disable-pip-version-check', 'list', '--outdated', '--format=json')
@@ -900,8 +917,7 @@ function Invoke-ModulePython {
 function Invoke-ModuleUv {
     $uv = Resolve-ApplicationCommand @('uv.exe', 'uv')
     if (-not $uv) {
-        Write-LogLine 'Skipping uv: uv not found.'
-        return 2
+        return (Resolve-MissingDependency -ModuleName 'uv' -Detail 'uv not found.')
     }
 
     if ($script:DryRun) {
@@ -935,8 +951,7 @@ function Invoke-ModuleUv {
 function Invoke-ModulePipx {
     $pipx = Resolve-ApplicationCommand @('pipx.exe', 'pipx')
     if (-not $pipx) {
-        Write-LogLine 'Skipping pipx: pipx not found.'
-        return 2
+        return (Resolve-MissingDependency -ModuleName 'pipx' -Detail 'pipx not found.')
     }
 
     $result = Invoke-LoggedProcess -FilePath $pipx -ArgumentList @('upgrade-all')
@@ -950,8 +965,7 @@ function Invoke-ModulePipx {
 function Invoke-ModuleRustup {
     $rustup = Resolve-ApplicationCommand @('rustup.exe', 'rustup')
     if (-not $rustup) {
-        Write-LogLine 'Skipping rustup: rustup not found.'
-        return 2
+        return (Resolve-MissingDependency -ModuleName 'rustup' -Detail 'rustup not found.')
     }
 
     $result = Invoke-LoggedProcess -FilePath $rustup -ArgumentList @('update')
@@ -965,12 +979,10 @@ function Invoke-ModuleRustup {
 function Invoke-ModuleGo {
     $go = Resolve-ApplicationCommand @('go.exe', 'go')
     if (-not $go) {
-        Write-LogLine 'Skipping go: go not found.'
-        return 2
+        return (Resolve-MissingDependency -ModuleName 'go' -Detail 'go not found.')
     }
     if ([string]::IsNullOrWhiteSpace($script:GoBinaries)) {
-        Write-LogLine 'Skipping go: GO_BINARIES not configured.'
-        return 2
+        return (Resolve-MissingDependency -ModuleName 'go' -Detail 'GO_BINARIES not configured.')
     }
 
     $specs = New-Object System.Collections.Generic.List[string]
@@ -982,8 +994,7 @@ function Invoke-ModuleGo {
         }
     }
     if ($specs.Count -eq 0) {
-        Write-LogLine 'Skipping go: GO_BINARIES is empty.'
-        return 2
+        return (Resolve-MissingDependency -ModuleName 'go' -Detail 'GO_BINARIES is empty.')
     }
 
     foreach ($spec in $specs) {
@@ -1027,18 +1038,44 @@ function Get-SelectedModules {
             }
             continue
         }
+        if (-not (Test-ModuleSupported -Name $module.Name)) {
+            continue
+        }
+        if ($script:FullMode) {
+            $selected.Add($module.Name)
+            continue
+        }
         if ($script:ConfigSkipModules.Contains($module.Name)) {
             continue
         }
         if (-not $module.Default) {
             continue
         }
-        if (-not (Test-ModuleSupported -Name $module.Name)) {
-            continue
-        }
         $selected.Add($module.Name)
     }
     return $selected
+}
+
+function Download-ReleaseAsset {
+    param(
+        [string]$Uri,
+        [string]$OutFile
+    )
+
+    $headers = @{ 'User-Agent' = 'updates' }
+    $attempt = 0
+    while ($attempt -lt 3) {
+        $attempt++
+        try {
+            Invoke-WebRequest -Uri $Uri -Headers $headers -OutFile $OutFile -TimeoutSec 15
+            return
+        } catch {
+            if ($attempt -ge 3) {
+                throw
+            }
+            Start-Sleep -Seconds 1
+        }
+    }
 }
 
 function Test-InstallRootWritable {
@@ -1285,11 +1322,9 @@ function Invoke-WindowsSelfUpdate {
         $zipPath = Join-Path $tempRoot $script:WindowsAssetName
         $manifestPath = Join-Path $tempRoot $script:ReleaseManifestName
         $sumsPath = Join-Path $tempRoot $script:ChecksumAssetName
-        $headers = @{ 'User-Agent' = 'updates' }
-
-        Invoke-WebRequest -Uri $assets[$script:WindowsAssetName].browser_download_url -Headers $headers -OutFile $zipPath
-        Invoke-WebRequest -Uri $assets[$script:ReleaseManifestName].browser_download_url -Headers $headers -OutFile $manifestPath
-        Invoke-WebRequest -Uri $assets[$script:ChecksumAssetName].browser_download_url -Headers $headers -OutFile $sumsPath
+        Download-ReleaseAsset -Uri $assets[$script:WindowsAssetName].browser_download_url -OutFile $zipPath
+        Download-ReleaseAsset -Uri $assets[$script:ReleaseManifestName].browser_download_url -OutFile $manifestPath
+        Download-ReleaseAsset -Uri $assets[$script:ChecksumAssetName].browser_download_url -OutFile $sumsPath
 
         if ((Get-Sha256Digest -Path $zipPath) -ne [string]$assets[$script:WindowsAssetName].digest) {
             Write-WarnLine 'updates: self-update zip digest mismatch; continuing.'
@@ -1370,6 +1405,7 @@ function Invoke-SelectedModules {
         $rc = Invoke-Module -ModuleName $moduleName
         $script:CurrentModule = 'main'
         $seconds = [int][Math]::Round(((Get-Date) - $moduleStart).TotalSeconds)
+        $stopAfterFailure = $false
 
         switch ($rc) {
             0 {
@@ -1387,9 +1423,13 @@ function Invoke-SelectedModules {
                 Write-ModuleEndEvent -ModuleName $moduleName -Status 'fail' -Seconds $seconds
                 Write-ProgressLine (Format-BoundaryEnd -ModuleName $moduleName -Status 'FAIL' -Seconds $seconds)
                 if ($script:Strict) {
-                    break
+                    $stopAfterFailure = $true
                 }
             }
+        }
+
+        if ($stopAfterFailure) {
+            break
         }
     }
 

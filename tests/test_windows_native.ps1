@@ -245,6 +245,58 @@ if (Should-RunTest 'native payload errors when --only selects an unsupported Win
     }
 }
 
+if (Should-RunTest 'native payload errors when --only selects a missing Windows dependency') {
+    Invoke-TestCase 'native payload errors when --only selects a missing Windows dependency' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+            $emptyPath = Join-Path $installRoot 'empty-path'
+            $null = New-Item -ItemType Directory -Path $emptyPath -Force
+
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', 'winget', '--no-color', '--no-emoji') -Environment @{
+                PATH        = $emptyPath
+                HOME        = $installRoot
+                USERPROFILE = $installRoot
+            }
+
+            Assert-Equal -Expected 1 -Actual $result.ExitCode -Message '--only winget should fail when winget is missing'
+            Assert-Match -Text $result.Output -Pattern '(?i)winget: winget not found' -Message 'missing winget dependency should be explicit in --only mode'
+        }
+    }
+}
+
+if (Should-RunTest 'native payload --full overrides config skips for supported Windows modules') {
+    Invoke-TestCase 'native payload --full overrides config skips for supported Windows modules' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'winget.cmd') -Lines @()
+            Write-Utf8NoBom -Path (Join-Path $installRoot '.updatesrc') -Content "SKIP_MODULES=winget`n"
+
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
+                '--no-self-update',
+                '--dry-run',
+                '--full',
+                '--skip', 'node,bun,python,uv,pipx,rustup,go',
+                '--no-color',
+                '--no-emoji'
+            ) -Environment @{
+                PATH        = $stubDir
+                HOME        = $installRoot
+                USERPROFILE = $installRoot
+            }
+
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message '--full should still succeed on native Windows'
+            Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*winget(\.cmd)? upgrade --all --silent --accept-source-agreements --accept-package-agreements' -Message '--full should override config SKIP_MODULES for supported Windows modules'
+        }
+    }
+}
+
 if (Should-RunTest 'native payload dry-run covers winget, node fallback, bun, python, uv, pipx, rustup, and go') {
     Invoke-TestCase 'native payload dry-run covers winget, node fallback, bun, python, uv, pipx, rustup, and go' {
         Invoke-WithTempInstall {
@@ -297,6 +349,50 @@ if (Should-RunTest 'native payload dry-run covers winget, node fallback, bun, py
             Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*rustup(\.cmd)? update' -Message 'rustup dry-run command mismatch'
             Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*go(\.cmd)? install example\.com/cmd/foo@latest' -Message 'go should default missing versions to @latest'
             Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*go(\.cmd)? install example\.com/cmd/bar@v1\.2\.3' -Message 'go should preserve explicit versions'
+        }
+    }
+}
+
+if (Should-RunTest 'native payload strict mode stops after the first module failure') {
+    Invoke-TestCase 'native payload strict mode stops after the first module failure' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'winget.cmd') -Lines @(
+                'echo winget-failed 1>&2',
+                'exit /b 1'
+            )
+            Write-CmdStub -Path (Join-Path $stubDir 'npx.cmd') -Lines @(
+                'echo npx-ran>>"%STRICT_MARKER%"',
+                'echo {}'
+            )
+            Write-CmdStub -Path (Join-Path $stubDir 'npm.cmd') -Lines @(
+                'echo npm-ran>>"%STRICT_MARKER%"'
+            )
+
+            $markerPath = Join-Path $installRoot 'strict-marker.txt'
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
+                '--no-self-update',
+                '--strict',
+                '--only', 'winget,node',
+                '--no-color',
+                '--no-emoji'
+            ) -Environment @{
+                PATH          = $stubDir
+                HOME          = $installRoot
+                USERPROFILE   = $installRoot
+                STRICT_MARKER = $markerPath
+            }
+
+            Assert-Equal -Expected 1 -Actual $result.ExitCode -Message '--strict should return a failing exit code after the first module failure'
+            if (Test-Path -LiteralPath $markerPath) {
+                throw "--strict should stop before the next module runs.`nMarker contents:`n$(Get-Content -LiteralPath $markerPath -Raw)"
+            }
+            Assert-Match -Text $result.Output -Pattern '(?i)winget: upgrade failed' -Message 'strict-mode failure should surface the failing module'
         }
     }
 }
@@ -470,7 +566,7 @@ if (Should-RunTest 'native payload self-update applies a verified Windows releas
                     }
                 }
                 function Invoke-WebRequest {
-                    param([string]$Uri, $Headers, [string]$OutFile)
+                    param([string]$Uri, $Headers, [string]$OutFile, [int]$TimeoutSec)
                     switch ($Uri) {
                         'https://example.invalid/updates-windows.zip' { Copy-Item -LiteralPath $fixture.ZipPath -Destination $OutFile -Force }
                         'https://example.invalid/updates-release.json' { Copy-Item -LiteralPath $fixture.ReleaseManifest -Destination $OutFile -Force }
@@ -562,7 +658,7 @@ if (Should-RunTest 'native payload self-update skips on release digest mismatch'
                     }
                 }
                 function Invoke-WebRequest {
-                    param([string]$Uri, $Headers, [string]$OutFile)
+                    param([string]$Uri, $Headers, [string]$OutFile, [int]$TimeoutSec)
                     switch ($Uri) {
                         'https://example.invalid/updates-windows.zip' { Copy-Item -LiteralPath $fixture.ZipPath -Destination $OutFile -Force }
                         'https://example.invalid/updates-release.json' { Copy-Item -LiteralPath $fixture.ReleaseManifest -Destination $OutFile -Force }
@@ -641,7 +737,7 @@ if (Should-RunTest 'native payload self-update skips when extracted payload mani
                     }
                 }
                 function Invoke-WebRequest {
-                    param([string]$Uri, $Headers, [string]$OutFile)
+                    param([string]$Uri, $Headers, [string]$OutFile, [int]$TimeoutSec)
                     switch ($Uri) {
                         'https://example.invalid/updates-windows.zip' { Copy-Item -LiteralPath $fixture.ZipPath -Destination $OutFile -Force }
                         'https://example.invalid/updates-release.json' { Copy-Item -LiteralPath $fixture.ReleaseManifest -Destination $OutFile -Force }

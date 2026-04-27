@@ -518,6 +518,11 @@ if [ "$self_update_override_rc" -ne 2 ]; then
 fi
 echo "$self_update_override_out" | grep -q 'UPDATES_SELF_UPDATE_REPO'
 echo "$self_update_override_out" | grep -Eq 'no longer supported|fixed to'
+if echo "$self_update_override_out" | grep -q '^DRY RUN:'; then
+	echo "Expected UPDATES_SELF_UPDATE_REPO validation to stop before any dry-run action" >&2
+	echo "$self_update_override_out" >&2
+	exit 1
+fi
 
 echo "Test: config BOM is tolerated"
 config_home_bom="${tmp_dir}/home-config-bom"
