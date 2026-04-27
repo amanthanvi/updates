@@ -1,3 +1,83 @@
+# Plan: v2.0.0
+
+This is the execution plan for shipping `updates` **v2.0.0**. It adds native Windows support, hardens self-update around first-party GitHub Releases only, and removes custom self-update repo overrides.
+
+## Goals (v2.0.0)
+
+- Add native Windows support with `pwsh` only.
+- Keep one top-level CLI contract across macOS, Linux, WSL, and Windows.
+- Add official Windows entrypoints: `updates.cmd`, `updates.ps1`.
+- Add Windows modules: `winget` and `bun`; support `node`, `python`, `uv`, `pipx`, `rustup`, and `go` on native Windows.
+- Make GitHub Releases the only official install/update channel for `updates` itself.
+- Remove `UPDATES_SELF_UPDATE_REPO`; hard cutover to the canonical repo `amanthanvi/updates`.
+- Ship first-party Windows self-update only for official standalone installs with a valid install receipt.
+- Harden release trust with immutable releases, asset digests, `updates-release.json`, and `SHA256SUMS`.
+
+## Non-goals
+
+- No third-party package-manager publication for `updates` itself.
+- No manager-owned install delegation or in-place overwrite of unknown/manual layouts.
+- No fallback to Windows PowerShell 5.1.
+- No self-update elevation on Windows.
+
+## Execution checklist
+
+### 1) Docs + contract
+
+- [x] Update `SPEC.md`, `PLAN.md`, `README.md`, and `CHANGELOG.md` for the `v2.0.0` contract.
+- [x] Record the breaking removal of `UPDATES_SELF_UPDATE_REPO`.
+- [x] Document the native Windows payload layout, release artifacts, and trust model.
+
+### 2) Native Windows entrypoints + layout
+
+- [x] Add `updates.cmd` as the thin Windows launcher.
+- [x] Add `updates.ps1` as the stable Windows bootstrap.
+- [x] Add the Windows payload layout under `%LOCALAPPDATA%\\Programs\\updates`.
+- [x] Add `install-source.json`, `current.txt`, `previous.txt`, and versioned payload manifests.
+
+### 3) Windows modules
+
+- [x] Add module: `winget`.
+- [x] Add module: `bun`.
+- [x] Support native Windows execution for `node`, `python`, `uv`, `pipx`, `rustup`, and `go`.
+- [x] Keep unsupported modules auto-skipping on Windows; `--only <unsupported>` must error with exit `2`.
+
+### 4) Self-update + trust hardening
+
+- [x] Remove support for `UPDATES_SELF_UPDATE_REPO`; setting it must error with exit `2`.
+- [x] Add `updates-release.json` as the canonical self-update manifest.
+- [x] Add Windows standalone receipt validation via `install-source.json`.
+- [x] Require GitHub release asset digests plus `SHA256SUMS`.
+- [x] Require published releases to be immutable before they are eligible for runtime self-update.
+- [x] Add installed-copy reopen/version validation before Unix re-exec and Windows relaunch.
+
+### 5) Cross-platform hardening
+
+- [x] Replace loose platform markers with explicit allow-lists.
+- [x] Make config parsing BOM-safe.
+- [x] Resolve home via `HOME`, then `USERPROFILE` on Windows.
+- [x] Resolve Python launchers as `py -3`, then `python`, then `python3`.
+- [x] Resolve npm-check-updates on Windows as `ncu.cmd`, then `ncu`, then `npx npm-check-updates`.
+- [x] Enforce LF for shell, PowerShell, batch, workflow, and packaged assets.
+
+### 6) Tests + release validation
+
+- [x] Add native Windows contract tests.
+- [x] Add Windows module coverage for `winget`, `bun`, `node`, `python`, `uv`, `pipx`, `rustup`, and `go`.
+- [x] Add Windows signal coverage for `Ctrl+C` / `Ctrl+Break` => `130`.
+- [x] Add release-artifact smoke validation for `updates`, `updates-windows.zip`, `updates-release.json`, and `SHA256SUMS`.
+- [x] Add post-publish verification with `gh release verify` and `gh release verify-asset`.
+
+## Notes / decisions (locked)
+
+- Native Windows runtime is PowerShell 7 (`pwsh`) only.
+- Official Windows install root is `%LOCALAPPDATA%\\Programs\\updates`.
+- Official distribution for `updates` itself is GitHub Releases only.
+- Windows self-update is only for official standalone installs carrying `install-source.json`.
+- `UPDATES_SELF_UPDATE_REPO` removal is a breaking change, so this release is `v2.0.0`.
+
+---
+
 # Plan: v1.0.1
 
 This is the execution plan for shipping `updates` **v1.0.1**. It is a small patch release focused on maintainability and self-update throttling.

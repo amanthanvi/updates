@@ -1,4 +1,4 @@
-# updates — Specification (v1.0.0)
+# updates — Specification (v2.0.0)
 
 This document is the **source of truth** for how the `updates` CLI behaves: flags, output, exit codes, module contracts, configuration, and release invariants.
 
@@ -6,37 +6,38 @@ If anything here disagrees with other docs, update the other docs (or this spec)
 
 ## 0) Metadata
 
-- **Title:** updates v1.1.0 specification
+- **Title:** updates v2.0.0 specification
 - **Owner (DRI):** Aman Thanvi (@amanthanvi)
-- **Status:** Released
-- **Last updated:** 2026-03-22
-- **Target ship date:** 2026-02-07
+- **Status:** Draft
+- **Last updated:** 2026-04-26
+- **Target ship date:** TBD
 - **Links:** [Repository](https://github.com/amanthanvi/updates)
 
 ## 1) Executive Summary
 
 ### 1.1 What we're building
 
-A modular Bash CLI that updates common macOS and Linux development tooling (Homebrew, npm, pip, uv, mise, Go binaries, pipx, rustup, Claude Code, shell customization, development repos, Mac App Store, and macOS system updates) with a single command.
+A cross-platform CLI that updates common macOS, Linux, WSL, and Windows development tooling with a single command. The Unix implementation remains a single-file Bash entrypoint; native Windows support is delivered through PowerShell 7 entrypoints (`updates.cmd`, `updates.ps1`) plus a versioned payload layout.
 
 ### 1.2 Problem statement / why now
 
-Developers maintain a growing set of global tools and runtimes that each have their own update workflow. Running 5-10 separate update commands is tedious, easy to forget, and error-prone. `updates` consolidates this into a single, safe-by-default command with dry-run, scoping, and structured output for automation.
+Developers maintain a growing set of global tools and runtimes that each have their own update workflow. Running 5-10 separate update commands is tedious, easy to forget, and error-prone, and those workflows now span macOS, Linux distros, WSL, and native Windows. `updates` consolidates this into a single, safe-by-default command with dry-run, scoping, structured output for automation, and a first-party GitHub-only self-update channel.
 
-v1.0 signals a stable CLI contract: flag names, module names, exit codes, output format, and environment variables are frozen. New flags/modules may be added in minor versions; removing or renaming requires a major version bump.
+v2.0 signals the next stable CLI contract: native Windows support is added, the self-update source is fixed to the canonical GitHub repo, and the previous custom self-update repo override is removed. From `v2.0.0` onward, flag names, module names, exit codes, output format, and environment variables are again frozen until the next major version.
 
 ### 1.3 Success metrics
 
 - **Primary KPIs:**
-  - All 14 modules pass lint + stub tests on macOS and Linux (CI matrix).
+  - All 17 modules pass lint + stub/contract tests across macOS, Linux, and Windows.
   - JSONL output is parseable by `jq` for all event types.
-  - Config file (`~/.updatesrc`) correctly sets defaults overridden by CLI flags.
+  - Config file (`~/.updatesrc`) correctly sets defaults overridden by CLI flags across `HOME`/`USERPROFILE` layouts.
 - **Guardrails:**
   - No module mutates state in `--dry-run` mode.
-  - Self-update never corrupts the installed script (SHA256-verified).
+  - Self-update never corrupts the installed entrypoint or payload (GitHub asset digest + `SHA256SUMS` + manifest verified).
   - `--json` mode produces valid JSONL on stdout with zero human-readable text mixed in.
+  - Official self-update for `updates` itself only trusts first-party GitHub release artifacts.
 - **"Done means":**
-  - A user can run `updates` on a fresh macOS or Linux machine, have all available modules detected and updated, and pipe `--json` output to a script for CI integration.
+  - A user can run `updates` on a fresh macOS, Linux, or Windows machine, have all available modules detected and updated, and pipe `--json` output to a script for CI integration.
 
 ### 1.4 Non-goals / out of scope
 
@@ -46,14 +47,15 @@ v1.0 signals a stable CLI contract: flag names, module names, exit codes, output
 - No rich TUI, no interactive prompts (beyond what underlying tools produce).
 - No telemetry or phone-home beyond self-update checks.
 - No plugin/extension system for user-defined modules (modules are hardcoded).
+- No third-party package-manager distribution channel for `updates` itself in `v2.0.0`.
 
 ## 2) Users & UX
 
 ### 2.1 Personas
 
-- **Solo developer (primary):** Uses a Mac or Linux workstation with Homebrew, Node, Python, Rust, etc. Wants a single command to keep everything current. Runs manually or via cron.
+- **Solo developer (primary):** Uses a Mac, Linux workstation, WSL distro, or Windows machine with Homebrew, Node, Python, Rust, Bun, etc. Wants a single command to keep everything current. Runs manually or via cron.
 - **CI/automation user:** Runs `updates --json -n --no-self-update` in a pipeline to produce structured upgrade reports or keep build images current.
-- **Polyglot developer:** Uses mise/asdf for runtime management, uv for Python tooling, Go for CLI tools. Wants all of these covered without remembering individual update commands.
+- **Polyglot developer:** Uses mise/asdf for runtime management, uv for Python tooling, Go for CLI tools, and winget/Bun on Windows. Wants all of these covered without remembering individual update commands.
 
 ### 2.2 Primary flows
 
@@ -67,17 +69,19 @@ v1.0 signals a stable CLI contract: flag names, module names, exit codes, output
 - **Loading:** Module boundary line printed (`==> <module> START`); underlying tool output streams through.
 - **Empty:** "All packages are up-to-date" message per module when nothing to upgrade.
 - **Error:** `ERROR: ...` on stderr; module marked FAIL in summary; exit code 1.
-- **Permission denied:** `WARN:` message when self-update lacks write access; module skips gracefully when `sudo` is unavailable.
+- **Permission denied:** `WARN:` message when self-update lacks write access or a valid Windows install receipt; the run skips gracefully instead of elevating on Windows.
 - **Offline/degraded:** Self-update silently skips on network failure; individual modules fail based on their own tool's behavior.
 - **Accessibility:** Plain-text output; emoji disabled with `--no-emoji`; colors disabled with `--no-color` / `NO_COLOR=1`.
 
-## 3) CLI Contract (v1.0 stability guarantee)
+## 3) CLI Contract (v2.0 stability guarantee)
 
-The v1.0 contract freezes: flag names, module names, exit codes, output format (boundary lines + summary), environment variables, and JSONL event types. Adding new flags/modules in minor versions is allowed; removing or renaming is a breaking change requiring a major version bump.
+The `v2.0.0` contract freezes: flag names, module names, exit codes, output format (boundary lines + summary), environment variables, JSONL event types, and the canonical self-update source. Adding new flags/modules in minor versions is allowed; removing or renaming is a breaking change requiring a major version bump.
 
 ### 3.1 Invocation
 
 `updates [options]`
+
+Native Windows supports `updates.cmd` as the user-facing launcher and `updates.ps1` as the stable bootstrap. macOS, Linux, and WSL continue to use the `updates` Bash entrypoint.
 
 The CLI takes no positional arguments. Unknown options or unexpected arguments **MUST** error with exit code `2`.
 
@@ -88,15 +92,15 @@ The CLI takes no positional arguments. Unknown options or unexpected arguments *
 | `0`   | Success (including modules skipped due to missing deps)                               |
 | `1`   | One or more selected modules failed                                                   |
 | `2`   | Usage / configuration error (unknown flag, invalid value, unsupported platform, etc.) |
-| `130` | Interrupted (SIGINT)                                                                  |
-| `143` | Terminated (SIGTERM)                                                                  |
+| `130` | Interrupted (`SIGINT` on Unix; `Ctrl+C` / `Ctrl+Break` on Windows)                    |
+| `143` | Terminated (`SIGTERM` on Unix; cooperative terminate path on Windows)                 |
 
 ### 3.3 Options
 
 Information:
 
 - `-h`, `--help`: print help and exit `0`.
-- `--version`: print the SemVer version (e.g. `1.0.0`) and exit `0`.
+- `--version`: print the SemVer version (e.g. `2.0.0`) and exit `0`.
 - `--list-modules`: print the module list and exit `0`.
 
 Execution control:
@@ -122,6 +126,7 @@ Output:
 Self-update:
 
 - `--self-update` / `--no-self-update`: enable/disable self-update (default enabled).
+- Custom self-update repos are not supported in `v2.0.0`; `UPDATES_SELF_UPDATE_REPO` is removed and setting it is an error.
 
 Configuration:
 
@@ -232,7 +237,9 @@ Modules that cannot parse upgrade details (e.g., `brew`, `rustup`) emit `module_
 
 ### 4.1 Format & precedence
 
-`~/.updatesrc` is an optional, source-able shell file containing `KEY=value` pairs. Lines starting with `#` are comments. Empty lines are ignored.
+`~/.updatesrc` is an optional, line-oriented `KEY=value` file. Lines starting with `#` are comments. Empty lines are ignored. The parser tolerates a UTF-8 BOM and does not shell-source the file.
+
+Home resolution is `HOME` first; on Windows, `USERPROFILE` is the fallback when `HOME` is unset.
 
 **Precedence:** config file < CLI flags. CLI flags always win. Environment variables (`UPDATES_*`) are separate and follow existing behavior.
 
@@ -307,51 +314,58 @@ When `--json` is active, the log file receives the human-readable stderr output,
 
 ## 6) Environment Variables
 
-| Variable                              | Default              | Description                                        |
-| ------------------------------------- | -------------------- | -------------------------------------------------- |
-| `UPDATES_ALLOW_NON_DARWIN=1`          | unset                | Allow running on unsupported OSes (prints warning) |
-| `UPDATES_SELF_UPDATE=0`               | `1`                  | Disable self-update                                |
-| `UPDATES_SELF_UPDATE_REPO=owner/repo` | `amanthanvi/updates` | GitHub repo for self-update releases               |
-| `NO_COLOR=1`                          | unset                | Disable ANSI colors                                |
-| `CI`                                  | unset                | When set, self-update is disabled                  |
+| Variable                     | Default | Description                                                      |
+| ---------------------------- | ------- | ---------------------------------------------------------------- |
+| `UPDATES_ALLOW_NON_DARWIN=1` | unset   | Allow running on unsupported OSes (prints warning)               |
+| `UPDATES_SELF_UPDATE=0`      | `1`     | Disable self-update                                              |
+| `UPDATES_SELF_UPDATED=1`     | unset   | Internal guard: skip a second self-update after successful re-exec/relaunch |
+| `NO_COLOR=1`                 | unset   | Disable ANSI colors                                              |
+| `CI`                         | unset   | When set, self-update is disabled                                |
+
+If `UPDATES_SELF_UPDATE_REPO` is set, the CLI **MUST** print an error and exit `2`. Custom self-update repos were removed in `v2.0.0`.
 
 ## 7) Module System
 
 ### 7.1 Principles
 
-- Each module is a Bash function named `module_<name>()`.
+- Each module has a canonical public name; the Unix implementation uses Bash functions named `module_<name>()`, while the native Windows implementation uses PowerShell functions with the same public module names.
 - Modules are run sequentially in a fixed order.
 - Some modules are **opt-in** in default runs for safety (`mas`, `macos`).
 - On macOS, `--brew-mode` defaults to `formula` (safe).
 - Modules are command-driven and auto-detected.
+- Unsupported modules auto-skip in default runs; `--only <module>` against an unsupported module **MUST** exit `2`.
 
 ### 7.2 Module list & platform matrix
 
-Execution order: `brew`, `shell`, `repos`, `linux`, `node`, `python`, `uv`, `mas`, `pipx`, `rustup`, `claude`, `pi`, `mise`, `go`, `macos`.
+Execution order: `brew`, `shell`, `repos`, `linux`, `winget`, `node`, `bun`, `python`, `uv`, `mas`, `pipx`, `rustup`, `claude`, `pi`, `mise`, `go`, `macos`.
 
-| Module   | macOS | Linux | WSL | Notes                                                                          |
-| -------- | :---: | :---: | :-: | ------------------------------------------------------------------------------ |
-| `brew`   |  Yes  |  Yes  | Yes | Requires `brew`                                                                |
-| `shell`  |  Yes  |  Yes  | Yes | Requires `git`; updates Oh My Zsh + custom plugins/themes                      |
-| `repos`  |  Yes  |  Yes  | Yes | Requires `git`; updates `aman-*-setup` repos under `REPOS_DIR` or `~/GitRepos` |
-| `linux`  |  No   |  Yes  | Yes | Requires a supported package manager + optional `sudo`                         |
-| `node`   |  Yes  |  Yes  | Yes | Requires `ncu` + `npm`                                                         |
-| `python` |  Yes  |  Yes  | Yes | Requires `python3 -m pip`                                                      |
-| `uv`     |  Yes  |  Yes  | Yes | Requires `uv`                                                                  |
-| `mas`    |  Yes  |  No   | No  | Requires `mas` (opt-in)                                                        |
-| `pipx`   |  Yes  |  Yes  | Yes | Requires `pipx`                                                                |
-| `rustup` |  Yes  |  Yes  | Yes | Requires `rustup`                                                              |
-| `claude` |  Yes  |  Yes  | Yes | Requires `claude`                                                              |
-| `pi`     |  Yes  |  Yes  | Yes | Requires `pi`                                                                  |
-| `mise`   |  Yes  |  Yes  | Yes | Requires `mise`                                                                |
-| `go`     |  Yes  |  Yes  | Yes | Requires `go`; binary list from config                                         |
-| `macos`  |  Yes  |  No   | No  | Requires `softwareupdate` (opt-in)                                             |
+| Module   | macOS | Linux | WSL | Windows | Notes |
+| -------- | :---: | :---: | :-: | :-----: | ----- |
+| `brew`   |  Yes  |  Yes  | Yes |   No    | Requires `brew` |
+| `shell`  |  Yes  |  Yes  | Yes |   No    | Requires `git`; updates Oh My Zsh + custom plugins/themes |
+| `repos`  |  Yes  |  Yes  | Yes |   No    | Requires `git`; updates `aman-*-setup` repos under `REPOS_DIR` or `~/GitRepos` |
+| `linux`  |  No   |  Yes  | Yes |   No    | Requires a supported package manager + optional `sudo` |
+| `winget` |  No   |  No   | No  |   Yes   | Requires `winget`; default-on on native Windows |
+| `node`   |  Yes  |  Yes  | Yes |   Yes   | Requires `npm`; resolves npm-check-updates per platform |
+| `bun`    |  No   |  No   | No  |   Yes   | Requires `bun`; global package upgrades always, Bun CLI upgrade only when standalone-installed |
+| `python` |  Yes  |  Yes  | Yes |   Yes   | Requires a resolved Python launcher with `pip` |
+| `uv`     |  Yes  |  Yes  | Yes |   Yes   | Requires `uv`; Windows self-update of `uv` only when standalone-installed |
+| `mas`    |  Yes  |  No   | No  |   No    | Requires `mas` (opt-in) |
+| `pipx`   |  Yes  |  Yes  | Yes |   Yes   | Requires `pipx` |
+| `rustup` |  Yes  |  Yes  | Yes |   Yes   | Requires `rustup` |
+| `claude` |  Yes  |  Yes  | Yes |   No    | Requires `claude` |
+| `pi`     |  Yes  |  Yes  | Yes |   No    | Requires `pi` |
+| `mise`   |  Yes  |  Yes  | Yes |   No    | Requires `mise` |
+| `go`     |  Yes  |  Yes  | Yes |   Yes   | Requires `go`; binary list from config |
+| `macos`  |  Yes  |  No   | No  |   No    | Requires `softwareupdate` (opt-in) |
+
+Native Windows default runs auto-select `winget`, `node`, `bun`, `python`, `uv`, `pipx`, `rustup`, and `go` when their backing commands or config are present.
 
 ### 7.3 Module execution order
 
-Fixed: `brew` > `shell` > `repos` > `linux` > `node` > `python` > `uv` > `mas` > `pipx` > `rustup` > `claude` > `pi` > `mise` > `go` > `macos`.
+Fixed: `brew` > `shell` > `repos` > `linux` > `winget` > `node` > `bun` > `python` > `uv` > `mas` > `pipx` > `rustup` > `claude` > `pi` > `mise` > `go` > `macos`.
 
-Rationale: core package managers first (`brew`), then git-backed local repos (`shell`, `repos`), then OS/language-specific tools, then opt-in system modules last.
+Rationale: platform package managers first (`brew`, `linux`, `winget`), then git-backed local repos, then language/runtime tools, then opt-in system modules last.
 
 ### 7.4 Skip vs failure semantics
 
@@ -427,36 +441,59 @@ Purpose: upgrade Linux system packages using the host distro package manager.
   - `apk`: `apk update` + `apk upgrade`
 - Side effects: upgrades OS-managed packages.
 
-### 8.5 `node`
+### 8.5 `winget`
+
+Purpose: upgrade installed Windows packages and applications via Windows Package Manager.
+
+- Runs only on native Windows.
+- Requires: `winget`
+- Non-dry-run: `winget upgrade --all --silent --accept-source-agreements --accept-package-agreements`
+- `--dry-run`: prints the command that would run; no package-manager preview parsing is required.
+- Side effects: upgrades winget-managed packages/apps.
+
+### 8.6 `node`
 
 Purpose: upgrade global npm packages using `npm-check-updates`.
 
-- Requires: `ncu`, `npm`, and JSON parsing support (`python3` or `node`).
-- Non-dry-run: `ncu -g --jsonUpgraded` to detect upgrades, then `npm install -g -- <name@version>...`.
+- Requires: `npm` plus one of `ncu.cmd`, `ncu`, or `npx npm-check-updates`.
+- On Windows, updater resolution order is `ncu.cmd`, then `ncu`, then `npx npm-check-updates`.
+- Non-dry-run: resolved updater command with `-g --jsonUpgraded` to detect upgrades, then `npm install -g -- <name@version>...`.
 - Side effects: upgrades global npm packages.
 
-### 8.6 `python`
+### 8.7 `bun`
+
+Purpose: upgrade Bun global packages and, when safe, the Bun CLI itself.
+
+- Runs only on native Windows in `v2.0.0`.
+- Requires: `bun`
+- Non-dry-run:
+  - `bun update -g`
+  - `bun upgrade` only when Bun appears standalone-installed; if Bun appears package-managed or ownership is unclear, CLI self-update is skipped
+- Side effects: upgrades Bun global packages; may upgrade the Bun CLI when ownership is clearly standalone.
+
+### 8.8 `python`
 
 Purpose: upgrade global Python packages with `pip`.
 
-- Requires: `python3` with a working `pip` module.
+- Requires: a resolved Python launcher with a working `pip` module. Resolution order is `py -3`, then `python`, then `python3`.
 - PEP 668 detection: if externally-managed, defaults to `--user` scope.
 - `--pip-force`: passes `--break-system-packages` to pip.
-- Non-dry-run: `python3 -m pip list --outdated --format=json [--user]`, then `python3 -m pip install -U <pkg>` in parallel batches of `--parallel <N>`.
+- Non-dry-run: `<launcher> -m pip list --outdated --format=json [--user]`, then `<launcher> -m pip install -U <pkg>` in parallel batches of `--parallel <N>`.
 - With `-n`: adds `--no-input` to pip calls.
-- Side effects: upgrades Python packages.
+- Side effects: upgrades Python packages; does not upgrade the Python interpreter itself.
 
-### 8.7 `uv`
+### 8.9 `uv`
 
 Purpose: update the `uv` tool itself and all uv-managed tools.
 
 - Requires: `uv`
 - Non-dry-run commands:
-  - `uv self update`
+  - `uv self update` on macOS/Linux/WSL
+  - `uv self update` on Windows only when `uv` appears standalone-installed
   - `uv tool upgrade --all`
 - Side effects: updates uv binary and all uv-installed tools.
 
-### 8.8 `mas`
+### 8.10 `mas`
 
 Purpose: upgrade Mac App Store apps.
 
@@ -465,7 +502,7 @@ Purpose: upgrade Mac App Store apps.
 - Non-dry-run: `mas upgrade`
 - Side effects: upgrades App Store apps.
 
-### 8.9 `pipx`
+### 8.11 `pipx`
 
 Purpose: upgrade pipx-managed apps.
 
@@ -473,7 +510,7 @@ Purpose: upgrade pipx-managed apps.
 - Non-dry-run: `pipx upgrade-all`
 - Side effects: upgrades pipx-installed tools.
 
-### 8.10 `rustup`
+### 8.12 `rustup`
 
 Purpose: update Rust toolchains.
 
@@ -481,7 +518,7 @@ Purpose: update Rust toolchains.
 - Non-dry-run: `rustup update`
 - Side effects: updates installed Rust toolchains/components.
 
-### 8.11 `claude`
+### 8.13 `claude`
 
 Purpose: update the Claude Code CLI.
 
@@ -489,7 +526,7 @@ Purpose: update the Claude Code CLI.
 - Non-dry-run: `claude update`
 - Side effects: updates the Claude Code CLI.
 
-### 8.12 `pi`
+### 8.14 `pi`
 
 Purpose: update installed extensions of the `pi` AI coding CLI (pinned sources are skipped by `pi` itself).
 
@@ -497,7 +534,7 @@ Purpose: update installed extensions of the `pi` AI coding CLI (pinned sources a
 - Non-dry-run: `pi update`
 - Side effects: updates installed `pi` extensions to their latest versions.
 
-### 8.13 `mise`
+### 8.15 `mise`
 
 Purpose: update mise itself and upgrade all installed tool versions.
 
@@ -507,7 +544,7 @@ Purpose: update mise itself and upgrade all installed tool versions.
   - `mise upgrade`
 - Side effects: updates mise binary and installed tool versions to latest matching constraints.
 
-### 8.14 `go`
+### 8.16 `go`
 
 Purpose: update Go binaries from a user-specified list.
 
@@ -520,7 +557,7 @@ Purpose: update Go binaries from a user-specified list.
   - `--only go`: error (return `1`)
 - Side effects: rebuilds and installs Go binaries to `$GOBIN` or `$GOPATH/bin`.
 
-### 8.14 `macos`
+### 8.17 `macos`
 
 Purpose: list available macOS software updates.
 
@@ -531,55 +568,106 @@ Purpose: list available macOS software updates.
 
 ## 9) Self-Update
 
-- When enabled, `updates` checks GitHub Releases for `UPDATES_SELF_UPDATE_REPO` (default `amanthanvi/updates`).
-- Normal eligible runs throttle the GitHub release metadata check to at most once every 24 hours per repo using a best-effort local cache:
+- The canonical self-update repo is fixed to `amanthanvi/updates`.
+- Official distribution/update for `updates` itself is GitHub Releases only. No third-party package-manager channel is supported for `updates` in `v2.0.0`.
+- If `UPDATES_SELF_UPDATE_REPO` is set, the CLI **MUST** error with exit code `2`.
+- Required official release assets:
+  - `updates`
+  - `updates-windows.zip`
+  - `updates-release.json`
+  - `SHA256SUMS`
+- `updates-release.json` is the canonical self-update manifest for both Unix and Windows. Required fields:
+  - `version`
+  - `source_repo`
+  - `channel`
+  - `bootstrap_min`
+  - `windows_asset`
+  - `unix_asset`
+  - `checksum_asset`
+- Normal eligible runs throttle the GitHub release metadata check to at most once every 24 hours using a best-effort local cache:
   - `${XDG_CACHE_HOME}/updates` when `XDG_CACHE_HOME` is set
   - `${HOME}/Library/Caches/updates` on macOS otherwise
-  - `${HOME}/.cache/updates` on Linux/other otherwise
+  - `${HOME}/.cache/updates` on Linux/WSL otherwise
+  - `%LOCALAPPDATA%\\updates` on native Windows
 - The cache stores only release-check metadata (`checked_at`, `latest_tag`) and is ignored if missing or invalid.
 - Passing `--self-update` forces a live metadata refresh even when the cache is fresh.
-- If the latest release tag is newer than `UPDATES_VERSION`, it downloads the `updates` release artifact and verifies it against `SHA256SUMS`.
-- Verification: HTTPS transport + SHA256 checksum. No GPG/cosign signatures (sufficient for v1.0).
-- If install succeeds, it replaces the current script and re-execs itself once (guarded by `UPDATES_SELF_UPDATED=1`).
 - Self-update is skipped when:
   - `--no-self-update` or `UPDATES_SELF_UPDATE=0`
   - `--dry-run` mode
   - `CI` environment variable is set
   - Running from a git checkout (development)
   - Installed as a symlink
-- If a live GitHub check fails but a semver-valid cached tag exists, `updates` falls back to the cached tag for that run.
-- If the install path is not writable, self-update attempts `sudo install` (with `sudo -n` when `-n` is set).
+- Eligible releases **MUST** be published (`draft=false`, `prerelease=false`), immutable, and expose GitHub asset `digest` values for the required assets.
+- Verification flow:
+  - download the required assets
+  - verify each download against the GitHub release-asset `digest`
+  - verify the platform artifact against `SHA256SUMS`
+  - verify `updates-release.json` against the requested tag, canonical repo, schema, and expected asset names
+  - verify the installed payload version before re-exec/relaunch
+- Unix/macOS/Linux/WSL self-update:
+  - download `updates`
+  - replace the installed script in place
+  - reopen the installed copy and verify its embedded version before re-exec
+  - re-exec once, guarded by `UPDATES_SELF_UPDATED=1`
+- Native Windows self-update is supported only for official standalone installs rooted at `%LOCALAPPDATA%\\Programs\\updates`.
+- Native Windows standalone layout:
+  - `updates.cmd`
+  - `updates.ps1`
+  - `install-source.json`
+  - `current.txt`
+  - `previous.txt`
+  - `versions/<semver>/manifest.json`
+  - `versions/<semver>/updates-main.ps1`
+- `install-source.json` is the canonical Windows authorization record. Required fields:
+  - `kind=standalone`
+  - `channel=github-release`
+  - `source_repo=amanthanvi/updates`
+  - `scope=user`
+  - `installed_version`
+- Native Windows self-update additionally requires:
+  - a valid `install-source.json`
+  - a user-writable install root proven by a real create/delete probe
+  - a non-symlink, non-git-checkout, non-mixed/manual partial install
+- Native Windows apply flow:
+  - validate receipt + release metadata
+  - download and verify `updates-windows.zip`, `updates-release.json`, and `SHA256SUMS`
+  - extract into a staging directory
+  - validate payload structure and `bootstrap_min`
+  - update `previous.txt`, atomically switch `current.txt`, then relaunch once with `UPDATES_SELF_UPDATED=1`
+- Any receipt, trust, digest, checksum, manifest, extraction, staging, or relaunch failure leaves the current version active and prints a warning. The run stays non-fatal unless another selected module fails.
 
 ## 10) Security & Privacy
 
 - **Secrets:** No secrets are stored or required. Self-update uses unauthenticated GitHub API calls.
-- **Supply chain:** Self-update verifies SHA256 checksums from the same GitHub Release. The script validates that the downloaded file contains `UPDATES_VERSION=` before replacing itself.
+- **Supply chain:** Self-update is fixed to first-party GitHub Releases. Eligible releases must be immutable and publish `updates-release.json`, `SHA256SUMS`, and required assets with GitHub asset `digest` values. Unix verifies the script before re-exec; Windows verifies receipt, manifest, payload structure, and staging before relaunch.
 - **PII:** No user data is collected or transmitted.
 - **Abuse cases:**
-  - Malicious GitHub release: mitigated by SHA256 verification + HTTPS.
+  - Malicious or tampered GitHub release asset: mitigated by immutable releases, GitHub asset digests, `SHA256SUMS`, manifest validation, and HTTPS.
   - pip parallel upgrades: stderr interleaving is cosmetic, not a security issue.
   - `--pip-force` is explicitly opt-in and documented as unsafe.
-- **Privilege escalation:** `sudo` is only used for Linux system package upgrades and self-update to non-writable paths. With `-n`, `sudo -n` is used (no password prompt).
+- **Privilege escalation:** `sudo` is only used for Linux system package upgrades. Native Windows self-update never elevates; unknown or non-writable layouts warn and skip.
 
 ## 11) Reliability & Failure Modes
 
 ### 11.1 Failure modes table
 
-| Failure                       | Detection             | User impact         | System behavior                  | Recovery               | Blast radius                  |
-| ----------------------------- | --------------------- | ------------------- | -------------------------------- | ---------------------- | ----------------------------- |
-| Module dep missing (auto)     | `command -v` check    | Module skipped      | Return `2`, continue             | None needed            | Single module                 |
-| Module dep missing (`--only`) | `command -v` check    | Error message       | Return `1`, module fails         | Install the dep        | Single module                 |
-| Module command fails          | Non-zero exit         | Module marked FAIL  | Continue (or stop if `--strict`) | Re-run or fix manually | Single module                 |
-| Self-update download fails    | `curl` non-zero       | Warning printed     | Continues without update         | Re-run later           | None                          |
-| Self-update checksum mismatch | SHA256 compare        | Warning printed     | Continues without update         | Report issue           | None                          |
-| Network unreachable           | Tool-specific timeout | Module fails        | Continue                         | Fix network, re-run    | Affected modules              |
-| Config file parse error       | Source fails          | Warning printed     | Continues with defaults          | Fix `~/.updatesrc`     | All config values             |
-| Disk full                     | Write fails           | Module fails        | Continue                         | Free space             | Affected module               |
-| SIGINT received               | Trap handler          | Interrupted message | Exit `130`                       | Re-run                 | Current module may be partial |
+| Failure                                 | Detection                       | User impact         | System behavior                  | Recovery                     | Blast radius                  |
+| --------------------------------------- | ------------------------------- | ------------------- | -------------------------------- | ---------------------------- | ----------------------------- |
+| Module dep missing (auto)               | `command -v` / command probe    | Module skipped      | Return `2`, continue             | None needed                  | Single module                 |
+| Module dep missing (`--only`)           | `command -v` / command probe    | Error message       | Return `1`, module fails         | Install the dep              | Single module                 |
+| Module command fails                    | Non-zero exit                   | Module marked FAIL  | Continue (or stop if `--strict`) | Re-run or fix manually       | Single module                 |
+| Self-update download fails              | HTTP/tool non-zero              | Warning printed     | Continues without update         | Re-run later                 | None                          |
+| Self-update digest/checksum mismatch    | Digest or SHA256 compare        | Warning printed     | Continues without update         | Report issue                 | None                          |
+| Windows install receipt missing/invalid | Receipt validation              | Warning printed     | Continues without update         | Reinstall from official zip  | None                          |
+| Self-update manifest/payload invalid    | Manifest/schema/structure check | Warning printed     | Continues without update         | Report issue / reinstall     | None                          |
+| Network unreachable                     | Tool-specific timeout           | Module fails        | Continue                         | Fix network, re-run          | Affected modules              |
+| Config file parse error                 | Line parser rejects a value     | Warning printed     | Continues with defaults          | Fix `~/.updatesrc`           | All config values             |
+| Disk full                               | Write fails                     | Module fails        | Continue                         | Free space                   | Affected module               |
+| SIGINT / Ctrl+C / Ctrl+Break received   | Trap / console handler          | Interrupted message | Exit `130`                       | Re-run                       | Current module may be partial |
 
 ### 11.2 Retries/timeouts
 
-- Self-update: `curl` connect timeout 2s, max time 5s (API) / 20s (download). No retries.
+- Self-update: no automatic retries. Metadata checks are throttled with a 24-hour cache; explicit `--self-update` bypasses the cache.
 - Module commands: no retries. Modules run the underlying tool once; if it fails, the module fails.
 - No circuit breakers (modules are independent and run sequentially).
 
@@ -621,6 +709,13 @@ Ship all v1.0 features (config file, `--json`, new modules, `--brew-mode`, `--lo
 | `-v`, `--verbose`                | `--log-level debug`   |                                                |
 | `--python-break-system-packages` | `--pip-force`         |                                                |
 
+### 13.4 v2.0.0 breaking release
+
+- Add native Windows support via `updates.cmd` and `updates.ps1`.
+- Remove `UPDATES_SELF_UPDATE_REPO`; setting it **MUST** produce `ERROR:` and exit `2`.
+- Official install/update for `updates` itself is GitHub Releases only.
+- Native Windows self-update works only for official standalone installs with a valid `install-source.json` receipt.
+
 ## 14) Development & QA
 
 ### 14.1 Lint / test commands
@@ -633,20 +728,22 @@ Ship all v1.0 features (config file, `--json`, new modules, `--brew-mode`, `--lo
 
 - **Unit/integration (stub-based):**
   - Existing tests for brew, node, python, linux, shell, mas, macos, self-update.
-  - New stubs for: uv, mise, go, repos modules.
+  - New stubs for: winget, bun, uv, mise, go, repos modules.
   - Config file parsing tests (precedence, unknown keys, `--no-config`).
   - `--brew-mode` enum validation tests.
   - `--log-level` output filtering tests.
   - `--json` JSONL output validation (parse each line as JSON in tests).
-  - Deprecated flags error tests (1.0.0).
+  - `UPDATES_SELF_UPDATE_REPO` error tests (`v2.0.0`).
+  - Native Windows contract tests for receipt validation, relaunch guard, and self-update artifact verification.
 - **Edge cases:**
   - `GO_BINARIES` empty/unset (go module skips).
   - `--json` + `--log-file` interaction.
   - `--only` with new module names.
-- **Not in scope for v1.0 test suite:**
+  - UTF-8 BOM config files.
+  - `HOME` unset with `USERPROFILE` present on Windows.
+- **Not in scope for the v2.0.0 suite:**
   - Real-tool integration tests (would require installing all tools).
-  - Linux CI matrix (nice-to-have; not blocking).
-  - Signal handling tests (hard to make deterministic).
+  - Full matrix of third-party tool installs on Windows.
 
 ### 14.3 Acceptance criteria (Given/When/Then)
 
@@ -658,6 +755,9 @@ Ship all v1.0 features (config file, `--json`, new modules, `--brew-mode`, `--lo
 6. **Given** `GO_BINARIES="golang.org/x/tools/gopls"` in config, **when** go module runs, **then** `go install golang.org/x/tools/gopls@latest` is called.
 7. **Given** a deprecated flag (e.g., `--verbose`) in 0.9.0, **when** used, **then** a `WARN:` deprecation message is printed and the flag maps to `--log-level debug`.
 8. **Given** a deprecated flag in 1.0.0, **when** used, **then** `ERROR:` is printed and exit code is `2`.
+9. **Given** an official native Windows standalone install with a valid receipt, **when** `updates --self-update` finds a newer immutable release, **then** it verifies `updates-windows.zip`, `updates-release.json`, and `SHA256SUMS`, flips `current.txt`, and relaunches once.
+10. **Given** `UPDATES_SELF_UPDATE_REPO` is set, **when** `updates` runs, **then** it prints `ERROR:` and exits `2`.
+11. **Given** native Windows receives `Ctrl+C` or `Ctrl+Break`, **when** `updates` is interrupted, **then** it exits `130`.
 
 ## 15) Releases
 
@@ -665,20 +765,26 @@ Versioning:
 
 - SemVer, tagged as `vX.Y.Z`.
 - Script version is `UPDATES_VERSION="<version>"` inside `updates`.
+- Windows payload manifests and `updates-release.json` **MUST** carry the same release version as the Git tag.
 
 Invariants (enforced in CI/release):
 
 - Tag version `vX.Y.Z` **MUST** match `UPDATES_VERSION="X.Y.Z"`.
+- Tag version `vX.Y.Z` **MUST** match `updates-release.json` `version`.
 - `CHANGELOG.md` **MUST** contain a header `## [X.Y.Z]` for the release.
+- Published GitHub Releases **MUST** include `updates`, `updates-windows.zip`, `updates-release.json`, and `SHA256SUMS`.
+- Published GitHub Releases **MUST** be immutable before they are eligible for runtime self-update.
+- Required release assets **MUST** expose GitHub `digest` values and pass local verification before publish.
 
 Maintainer workflow:
 
 - `./scripts/release.sh X.Y.Z` (validates invariants, runs lint/tests, creates annotated tag).
-- Push `main` and tags; GitHub Actions builds and publishes release artifacts.
+- Create a draft release, upload `updates`, `updates-windows.zip`, `updates-release.json`, and `SHA256SUMS`, verify uploaded asset digests and downloaded smoke artifacts, then publish.
+- Post-publish, run `gh release verify <tag>` and `gh release verify-asset <tag> <artifact-path>`.
 
 ## 16) Internal Structure
 
-The script uses navigable section markers for organization:
+The Unix Bash entrypoint uses navigable section markers for organization:
 
 ```
 grep '^# SECTION:' updates
@@ -686,13 +792,20 @@ grep '^# SECTION:' updates
 
 Sections: globals, output, colors, platform, registry, utilities, self-update, cli, selection, modules, runner.
 
+Native Windows uses:
+
+- `updates.cmd` as the thin launcher
+- `updates.ps1` as the stable bootstrap
+- `versions/<semver>/updates-main.ps1` as the mutable payload
+- `install-source.json`, `current.txt`, and `previous.txt` as the standalone update state
+
 ### Config helpers
 
 - `config_set_bool <CONFIG_KEY> <value> <VARIABLE>` — validates and sets boolean config values. Used by `read_config()` for 7 boolean keys.
 
 ### File size convention
 
-The script exceeds the project's 500-line guideline. This is an intentional exception: the single-file distribution model (self-update downloads one file, `make install` copies one file) makes multi-file splitting impractical for this project.
+The Unix `updates` script exceeds the project's 500-line guideline. This is an intentional exception: the Unix single-file distribution model (self-update downloads one file, `make install` copies one file) makes multi-file splitting impractical there. Native Windows intentionally uses a small bootstrap plus versioned payload directories instead of a single mutable file.
 
 ## 17) Decision Log
 
@@ -705,7 +818,7 @@ The script exceeds the project's 500-line guideline. This is an intentional exce
 | 2026-02-07 | `-n` = `--non-interactive`                                         | `-n` = `--dry-run` (make convention) | Matches apt/apt-get convention                              | `--dry-run` has no short alias                                                           |
 | 2026-02-07 | JSONL to stdout, human to stderr                                   | JSON replaces human; JSON to file    | Allows piping + visual progress simultaneously              | `--log-file` captures stderr (human) only                                                |
 | 2026-02-07 | Full JSONL event stream (start/log/upgrade/warn/error/end/summary) | Summary-only JSON                    | Maximum fidelity for automation                             | More complex to implement; verbose output                                                |
-| 2026-02-07 | `~/.updatesrc` as source-able env file                             | TOML, XDG config dir                 | No parser needed; simple for Bash                           | No structured nesting; flat keys only                                                    |
+| 2026-02-07 | `~/.updatesrc` as a flat `KEY=value` config file                  | TOML, XDG config dir                 | Minimal format; easy to parse across Bash and PowerShell    | No structured nesting; flat keys only                                                    |
 | 2026-02-07 | Config < flags (flags always win)                                  | Config < env < flags                 | Simpler model; env vars are separate concern                | Users can't override config via env (use flags)                                          |
 | 2026-02-07 | New modules: uv, mise, go                                          | Also docker                          | Docker pulls are slow/large; poor fit for quick update tool | Can add docker in a minor if demand exists                                               |
 | 2026-02-07 | Go module reads module list from config                            | Auto-detect from binaries            | Can't reliably infer module path from binary name           | Requires user to maintain GO_BINARIES list (module paths; versions default to `@latest`) |
@@ -715,15 +828,21 @@ The script exceeds the project's 500-line guideline. This is an intentional exce
 | 2026-02-07 | SHA256 sufficient for self-update (no cosign/GPG)                  | Add cosign verification              | Adds complexity + dependency; HTTPS+SHA256 is pragmatic     | Weaker supply-chain guarantee                                                            |
 | 2026-02-07 | 0.9.0 deprecation release, then 1.0.0                              | Direct to 1.0; incremental 0.9.x     | Gives users a migration window for renamed flags            | Two releases to manage                                                                   |
 | 2026-02-07 | Test bar: current level + new module stubs                         | Full split suite + Linux CI          | Practical for a single-maintainer project                   | No Linux CI; limited edge-case coverage                                                  |
+| 2026-04-26 | Native Windows support ships in v2.0.0                            | Keep Windows out of scope            | Cross-platform coverage now includes first-class Windows    | Requires PowerShell bootstrap + Windows contract suite                                   |
+| 2026-04-26 | Self-update source fixed to `amanthanvi/updates`                  | Keep repo override env var           | Stronger trust model; less ambiguous support surface        | `UPDATES_SELF_UPDATE_REPO` removal is a breaking change                                  |
+| 2026-04-26 | `updates` distribution remains GitHub Releases only               | Publish to third-party managers      | Lowest-friction official channel; simpler trust boundary    | No first-party npm/PyPI/Winget/etc. channel for `updates` itself in v2.0.0              |
+| 2026-04-26 | Windows uses receipt-gated standalone self-update                 | Delegate to package managers         | Avoids overwriting unknown installs; first-party ownership  | Manual copies and non-official layouts skip self-update                                  |
+| 2026-04-26 | Immutable releases + asset digests required for runtime updates   | SHA256 only                          | Stronger supply-chain guarantees without adding local deps  | Release pipeline must verify/publish in a stricter order                                 |
 
 ## 18) Assumptions, Open Questions, Risks
 
 ### Assumptions
 
-- Users install and manage dependencies (brew, ncu, uv, mise, etc.) themselves.
-- Bash `/bin/bash` is available on all target platforms (macOS system Bash is 3.2; features used are compatible).
+- Users install and manage dependencies (brew, ncu, winget, bun, uv, mise, etc.) themselves.
+- Bash `/bin/bash` is available on macOS/Linux/WSL and PowerShell 7 (`pwsh`) is available on native Windows.
 - GitHub Releases remain available and free for self-update checks.
-- `uv self update` and `mise self-update` remain stable subcommands.
+- GitHub release assets continue to expose `digest` metadata through the REST API.
+- `uv self update`, `bun upgrade`, and `winget upgrade` remain stable subcommands/options.
 
 ### Open questions
 
@@ -731,10 +850,11 @@ The script exceeds the project's 500-line guideline. This is an intentional exce
 
 ### Risks
 
-| Risk                                                                    | Likelihood | Impact | Mitigation                                                    |
-| ----------------------------------------------------------------------- | ---------- | ------ | ------------------------------------------------------------- |
-| Bash 3.2 compatibility issues with new features (JSONL, config parsing) | Medium     | High   | Test on macOS system Bash explicitly                          |
-| `uv self update` or `mise self-update` changes behavior                 | Low        | Medium | Pin to known-good behavior; skip gracefully on failure        |
-| JSONL format changes needed post-1.0                                    | Low        | High   | Design events to be additive; consumers ignore unknown fields |
-| Go module is low-value (few users maintain GO_BINARIES list)            | Medium     | Low    | Module is opt-in by nature; low maintenance cost              |
-| Flag migration breaks existing user scripts                             | Medium     | Medium | 0.9.0 deprecation warnings give a migration window            |
+| Risk                                                                      | Likelihood | Impact | Mitigation                                                               |
+| ------------------------------------------------------------------------- | ---------- | ------ | ------------------------------------------------------------------------ |
+| Bash 3.2 compatibility issues with new Unix-side features                 | Medium     | High   | Test on macOS system Bash explicitly                                     |
+| Windows console close/terminate paths do not always map cleanly to `143`  | Medium     | Medium | Guarantee `130`; keep `143` cooperative-only and best-effort on Windows  |
+| `uv self update`, `bun upgrade`, or `winget upgrade` changes behavior     | Low        | Medium | Pin to known-good behavior; skip gracefully on failure                   |
+| Release published without required immutability/digests/assets            | Low        | High   | Draft-upload-verify-publish flow; post-publish `gh release verify` gates |
+| JSONL format changes needed post-2.0                                      | Low        | High   | Design events to be additive; consumers ignore unknown fields            |
+| Go module is low-value (few users maintain GO_BINARIES list)              | Medium     | Low    | Module is opt-in by nature; low maintenance cost                         |

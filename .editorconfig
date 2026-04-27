@@ -9,7 +9,16 @@ trim_trailing_whitespace = true
 [*.md]
 trim_trailing_whitespace = false
 
+# Explicit LF guardrails for scripts, launchers, and release inputs.
+[{updates,Makefile,.gitattributes,.editorconfig,*.sh,*.bash,*.ps1,*.psm1,*.psd1,*.cmd,*.bat}]
+end_of_line = lf
+
+[.github/workflows/*.yml]
+end_of_line = lf
+
+[.github/workflows/*.yaml]
+end_of_line = lf
+
 [updates]
 indent_style = tab
 indent_size = 4
-

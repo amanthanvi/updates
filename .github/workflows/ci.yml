@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  lint-and-test:
+  unix-lint-and-test:
     strategy:
       fail-fast: false
       matrix:
@@ -13,6 +13,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+      - name: LF guard
+        shell: pwsh
+        run: ./scripts/ci-guard-lf.ps1
       - name: Syntax check
         run: bash -n updates
       - name: Install ShellCheck (Linux)
@@ -32,3 +35,25 @@ jobs:
         run: ./scripts/lint.sh
       - name: Tests
         run: ./scripts/test.sh
+
+  windows-powershell-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: LF guard
+        shell: pwsh
+        run: ./scripts/ci-guard-lf.ps1
+      - name: Bash syntax smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
+            throw 'bash is required for the Windows smoke job'
+          }
+          bash -lc "set -euo pipefail; bash -n updates; bash -n scripts/*.sh; bash -n tests/*.sh"
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+      - name: Windows native tests
+        shell: pwsh
+        run: ./tests/test_windows_native.ps1

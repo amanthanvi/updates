@@ -46,6 +46,8 @@ write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
 # shellcheck disable=SC2016
 write_stub npm 'echo "npm $*" >>"$CALL_LOG"'
 # shellcheck disable=SC2016
+write_stub bun 'echo "bun $*" >>"$CALL_LOG"'
+# shellcheck disable=SC2016
 write_stub pipx 'echo "pipx $*" >>"$CALL_LOG"'
 # shellcheck disable=SC2016
 write_stub git 'echo "GIT_TERMINAL_PROMPT=${GIT_TERMINAL_PROMPT:-} git $*" >>"$CALL_LOG"'
@@ -73,7 +75,7 @@ echo "$out" | grep -q '^brew'
 echo "$out" | grep -q '^shell'
 echo "$out" | grep -q '^linux'
 actual_modules="$(printf '%s\n' "$out" | awk '{print $1}' | paste -sd' ' -)"
-expected_modules='brew shell repos linux node python uv mas pipx rustup claude pi mise go macos'
+expected_modules='brew shell repos linux winget node bun python uv mas pipx rustup claude pi mise go macos'
 if [ "$actual_modules" != "$expected_modules" ]; then
 	echo "Expected module order: $expected_modules" >&2
 	echo "Actual module order:   $actual_modules" >&2
@@ -339,17 +341,56 @@ fi
 echo "python3 stub: unexpected args: $*" >&2
 exit 1
 '
+# shellcheck disable=SC2016
+write_stub python '
+if [ "${1:-}" = "-c" ]; then
+	code="${2:-}"
+	if echo "$code" | grep -q "EXTERNALLY-MANAGED"; then
+		echo "1"
+		exit 0
+	fi
+	echo "pillow"
+	exit 0
+fi
+
+	if [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
+		shift 2
+		if [ "${1:-}" = "--version" ]; then
+			echo "pip 25.0 from /dev/null (python 3.12)"
+			exit 0
+		fi
+		if [ "${1:-}" = "--disable-pip-version-check" ]; then
+			shift
+		fi
+		cmd="${1:-}"
+		shift || true
+		case "$cmd" in
+	list)
+		echo "python -m pip list $*" >>"$CALL_LOG"
+		echo "[{\"name\":\"pillow\"}]"
+		exit 0
+		;;
+	install)
+		echo "python -m pip install $*" >>"$CALL_LOG"
+		exit 0
+		;;
+	esac
+fi
+
+echo "python stub: unexpected args: $*" >&2
+exit 1
+'
 
 : >"$CALL_LOG"
 "$SCRIPT" --only python --no-emoji >/dev/null
-grep -q '^python3 -m pip list --outdated --format=json --user$' "$CALL_LOG"
-grep -q '^python3 -m pip install -U --user pillow$' "$CALL_LOG"
+grep -Eq '^(python|python3) -m pip list --outdated --format=json --user$' "$CALL_LOG"
+grep -Eq '^(python|python3) -m pip install -U --user pillow$' "$CALL_LOG"
 
 echo "Test: python break-system-packages opt-in (pip-force)"
 : >"$CALL_LOG"
 "$SCRIPT" --only python --pip-force --no-emoji >/dev/null
-grep -q '^python3 -m pip list --outdated --format=json$' "$CALL_LOG"
-grep -q '^python3 -m pip install -U --break-system-packages pillow$' "$CALL_LOG"
+grep -Eq '^(python|python3) -m pip list --outdated --format=json$' "$CALL_LOG"
+grep -Eq '^(python|python3) -m pip install -U --break-system-packages pillow$' "$CALL_LOG"
 
 echo "Test: linux module (apt-get) runs in non-interactive mode"
 write_stub uname 'echo Linux'
@@ -385,6 +426,11 @@ echo "Test: uv module runs"
 "$SCRIPT" --only uv --no-emoji >/dev/null
 grep -q '^uv self update$' "$CALL_LOG"
 grep -q '^uv tool upgrade --all$' "$CALL_LOG"
+
+echo "Test: bun module runs global upgrades"
+: >"$CALL_LOG"
+"$SCRIPT" --only bun --no-emoji >/dev/null
+grep -q '^bun update -g$' "$CALL_LOG"
 
 echo "Test: mise module runs"
 : >"$CALL_LOG"
@@ -461,255 +507,33 @@ out="$(HOME="$repos_dry_home" "$SCRIPT" --dry-run --only repos --no-emoji --no-c
 echo "$out" | grep -q "DRY RUN: git -C ${repos_dry_dir}/aman-dry-setup pull --ff-only"
 echo "$out" | grep -q "DRY RUN: (cd ${repos_dry_dir}/aman-dry-setup && ./scripts/update.sh)"
 
-echo "Test: self-update accepts checksum paths (dist/updates)"
-self_update_home="${tmp_dir}/home-self-update"
-mkdir -p "$self_update_home"
-
-self_update_bin="${tmp_dir}/self-update-bin"
-mkdir -p "$self_update_bin"
-
-self_update_fixtures="${tmp_dir}/self-update-fixtures"
-mkdir -p "$self_update_fixtures"
-SELF_UPDATE_CURL_LOG="${tmp_dir}/self-update-curl.log"
-export SELF_UPDATE_CURL_LOG
-
-self_update_old="${self_update_bin}/updates"
-self_update_current="${self_update_bin}/updates-current"
-self_update_new="${self_update_fixtures}/updates.new"
-
-mk_versioned_copy() {
-	local src="$1"
-	local dest="$2"
-	local ver="$3"
-	local tmp="${dest}.tmp"
-
-	awk -v ver="$ver" '
-		BEGIN { done = 0 }
-		{
-			if (done == 0 && $0 ~ /^UPDATES_VERSION="/) {
-				print "UPDATES_VERSION=\"" ver "\""
-				done = 1
-				next
-			}
-			print
-		}
-	' "$src" >"$tmp"
-	mv "$tmp" "$dest"
-	chmod +x "$dest"
-}
-
-mk_versioned_copy "$SCRIPT" "$self_update_old" "0.0.1"
-mk_versioned_copy "$SCRIPT" "$self_update_current" "0.0.2"
-mk_versioned_copy "$SCRIPT" "$self_update_new" "0.0.2"
-
-sha256_file() {
-	local f="$1"
-	if command -v sha256sum >/dev/null 2>&1; then
-		sha256sum "$f" | awk '{print $1}'
-		return 0
-	fi
-	if command -v shasum >/dev/null 2>&1; then
-		shasum -a 256 "$f" | awk '{print $1}'
-		return 0
-	fi
-	echo "No sha256 tool available (sha256sum/shasum)" >&2
-	return 1
-}
-
-sha="$(sha256_file "$self_update_new")"
-printf '%s  dist/updates\n' "$sha" >"${self_update_fixtures}/SHA256SUMS"
-
-self_update_cache_file_for() {
-	local repo="$1"
-	local key="${repo//\//_}"
-	printf '%s/updates/self-update-%s.cache' "$SELF_UPDATE_CACHE_ROOT" "$key"
-}
-
-run_self_update_script() {
-	local script_path="$1"
-	shift
-
-	UPDATES_SELF_UPDATE=1 \
-		CI="" \
-		UPDATES_SELF_UPDATE_REPO="${UPDATES_SELF_UPDATE_REPO_TEST:-fake/repo}" \
-		XDG_CACHE_HOME="$SELF_UPDATE_CACHE_ROOT" \
-		SELF_UPDATE_FIXTURES="$self_update_fixtures" \
-		SELF_UPDATE_CURL_LOG="$SELF_UPDATE_CURL_LOG" \
-		SELF_UPDATE_LATEST_TAG="${SELF_UPDATE_LATEST_TAG:-v0.0.2}" \
-		SELF_UPDATE_LATEST_FAIL="${SELF_UPDATE_LATEST_FAIL:-0}" \
-		HOME="$self_update_home" \
-		"$script_path" "$@"
-}
-
-# shellcheck disable=SC2016
-write_stub curl '
-out=""
-url=""
-while [ $# -gt 0 ]; do
-	case "$1" in
-	-o)
-		out="${2:-}"
-		shift 2
-		;;
-	http*://*)
-		url="$1"
-		shift
-		;;
-	*)
-		shift
-		;;
-	esac
-done
-
-if [ -n "$url" ]; then
-	echo "curl $url" >>"$SELF_UPDATE_CURL_LOG"
-fi
-
-case "$url" in
-*/releases/latest)
-	if [ "${SELF_UPDATE_LATEST_FAIL:-0}" = "1" ]; then
-		exit 1
-	fi
-	echo "{\"tag_name\":\"${SELF_UPDATE_LATEST_TAG:-v0.0.2}\"}"
-	;;
-*/updates)
-	cp "${SELF_UPDATE_FIXTURES}/updates.new" "$out"
-	;;
-*/SHA256SUMS)
-	cp "${SELF_UPDATE_FIXTURES}/SHA256SUMS" "$out"
-	;;
-*)
-	echo "curl stub: unexpected url: $url" >&2
-	exit 1
-	;;
-esac
-'
-
-# Ensure self-update isn't skipped due to our git stub always succeeding.
-write_stub git 'exit 1'
-
-echo "Test: self-update cache hit skips GitHub release API call"
-SELF_UPDATE_CACHE_ROOT="${tmp_dir}/self-update-cache-hit"
-mkdir -p "$SELF_UPDATE_CACHE_ROOT/updates"
-fresh_cache_file="$(self_update_cache_file_for fake/repo)"
-fresh_epoch="$(date +%s)"
-cat >"$fresh_cache_file" <<EOF
-checked_at=${fresh_epoch}
-latest_tag=v0.0.2
-EOF
-: >"$SELF_UPDATE_CURL_LOG"
-run_self_update_script "$self_update_current" --only brew --no-emoji --no-color >/dev/null 2>&1
-if [ -s "$SELF_UPDATE_CURL_LOG" ]; then
-	echo "Expected fresh self-update cache to skip all curl calls" >&2
+echo "Test: removed self-update repo override errors"
+set +e
+self_update_override_out="$(UPDATES_SELF_UPDATE_REPO=fake/repo "$SCRIPT" --dry-run --only brew --no-emoji --no-color 2>&1)"
+self_update_override_rc=$?
+set -e
+if [ "$self_update_override_rc" -ne 2 ]; then
+	echo "Expected exit code 2 when UPDATES_SELF_UPDATE_REPO is set (got $self_update_override_rc)" >&2
 	exit 1
 fi
+echo "$self_update_override_out" | grep -q 'UPDATES_SELF_UPDATE_REPO'
+echo "$self_update_override_out" | grep -Eq 'no longer supported|fixed to'
 
-echo "Test: stale self-update cache refreshes and rewrites cache"
-SELF_UPDATE_CACHE_ROOT="${tmp_dir}/self-update-cache-stale"
-mkdir -p "$SELF_UPDATE_CACHE_ROOT/updates"
-stale_cache_file="$(self_update_cache_file_for fake/repo)"
-cat >"$stale_cache_file" <<EOF
-checked_at=0
-latest_tag=v0.0.1
+echo "Test: config BOM is tolerated"
+config_home_bom="${tmp_dir}/home-config-bom"
+mkdir -p "$config_home_bom"
+printf '\357\273\277BREW_MODE=greedy\n' >"${config_home_bom}/.updatesrc"
+out="$(HOME="$config_home_bom" "$SCRIPT" --dry-run --only brew --no-emoji --no-color)"
+echo "$out" | grep -q '^DRY RUN: brew upgrade --greedy$'
+
+echo "Test: USERPROFILE fallback finds config when HOME is empty"
+config_home_userprofile="${tmp_dir}/home-config-userprofile"
+mkdir -p "$config_home_userprofile"
+cat >"${config_home_userprofile}/.updatesrc" <<EOF
+BREW_MODE=greedy
 EOF
-: >"$SELF_UPDATE_CURL_LOG"
-SELF_UPDATE_LATEST_TAG="v0.0.2"
-SELF_UPDATE_LATEST_FAIL=0
-run_self_update_script "$self_update_current" --only brew --no-emoji --no-color >/dev/null 2>&1
-grep -q '^curl https://api.github.com/repos/fake/repo/releases/latest$' "$SELF_UPDATE_CURL_LOG"
-grep -q '^latest_tag=v0.0.2$' "$stale_cache_file"
-if grep -q '^checked_at=0$' "$stale_cache_file"; then
-	echo "Expected stale self-update cache to be rewritten" >&2
-	exit 1
-fi
-
-echo "Test: explicit --self-update bypasses a fresh cache"
-SELF_UPDATE_CACHE_ROOT="${tmp_dir}/self-update-cache-force"
-mkdir -p "$SELF_UPDATE_CACHE_ROOT/updates"
-force_cache_file="$(self_update_cache_file_for fake/repo)"
-force_epoch="$(date +%s)"
-cat >"$force_cache_file" <<EOF
-checked_at=${force_epoch}
-latest_tag=v0.0.2
-EOF
-: >"$SELF_UPDATE_CURL_LOG"
-run_self_update_script "$self_update_current" --self-update --only brew --no-emoji --no-color >/dev/null 2>&1
-grep -q '^curl https://api.github.com/repos/fake/repo/releases/latest$' "$SELF_UPDATE_CURL_LOG"
-
-echo "Test: repo-scoped cache does not cross repo overrides"
-SELF_UPDATE_CACHE_ROOT="${tmp_dir}/self-update-cache-repo"
-mkdir -p "$SELF_UPDATE_CACHE_ROOT/updates"
-other_repo_cache_file="$(self_update_cache_file_for fake/repo)"
-other_repo_epoch="$(date +%s)"
-cat >"$other_repo_cache_file" <<EOF
-checked_at=${other_repo_epoch}
-latest_tag=v0.0.2
-EOF
-: >"$SELF_UPDATE_CURL_LOG"
-UPDATES_SELF_UPDATE_REPO_TEST="other/repo"
-run_self_update_script "$self_update_current" --only brew --no-emoji --no-color >/dev/null 2>&1
-unset UPDATES_SELF_UPDATE_REPO_TEST
-grep -q '^curl https://api.github.com/repos/other/repo/releases/latest$' "$SELF_UPDATE_CURL_LOG"
-new_repo_cache_file="$(self_update_cache_file_for other/repo)"
-[ -f "$new_repo_cache_file" ]
-
-echo "Test: invalid self-update cache is ignored and refreshed"
-SELF_UPDATE_CACHE_ROOT="${tmp_dir}/self-update-cache-invalid"
-mkdir -p "$SELF_UPDATE_CACHE_ROOT/updates"
-invalid_cache_file="$(self_update_cache_file_for fake/repo)"
-cat >"$invalid_cache_file" <<EOF
-checked_at=not-a-number
-latest_tag=definitely-not-semver
-EOF
-: >"$SELF_UPDATE_CURL_LOG"
-run_self_update_script "$self_update_current" --only brew --no-emoji --no-color >/dev/null 2>&1
-grep -q '^curl https://api.github.com/repos/fake/repo/releases/latest$' "$SELF_UPDATE_CURL_LOG"
-grep -q '^latest_tag=v0.0.2$' "$invalid_cache_file"
-
-echo "Test: failed live self-update check falls back to cached tag"
-SELF_UPDATE_CACHE_ROOT="${tmp_dir}/self-update-cache-fallback"
-mkdir -p "$SELF_UPDATE_CACHE_ROOT/updates"
-fallback_cache_file="$(self_update_cache_file_for fake/repo)"
-cat >"$fallback_cache_file" <<EOF
-checked_at=0
-latest_tag=v0.0.2
-EOF
-: >"$SELF_UPDATE_CURL_LOG"
-SELF_UPDATE_LATEST_FAIL=1
-out="$(run_self_update_script "$self_update_old" --only brew --no-emoji --no-color 2>&1)"
-SELF_UPDATE_LATEST_FAIL=0
-echo "$out" | grep -q 'updates: self-update available (0.0.1 -> 0.0.2)'
-echo "$out" | grep -q 'updates: updated to 0.0.2; restarting'
-grep -q '^curl https://api.github.com/repos/fake/repo/releases/latest$' "$SELF_UPDATE_CURL_LOG"
-grep -q '^curl https://github.com/fake/repo/releases/download/v0.0.2/updates$' "$SELF_UPDATE_CURL_LOG"
-grep -q '^curl https://github.com/fake/repo/releases/download/v0.0.2/SHA256SUMS$' "$SELF_UPDATE_CURL_LOG"
-
-echo "Test: symlink install skips before any GitHub release API call"
-SELF_UPDATE_CACHE_ROOT="${tmp_dir}/self-update-cache-symlink"
-mkdir -p "$SELF_UPDATE_CACHE_ROOT"
-self_update_symlink="${self_update_bin}/updates-symlink"
-ln -sf "$self_update_current" "$self_update_symlink"
-: >"$SELF_UPDATE_CURL_LOG"
-run_self_update_script "$self_update_symlink" --only brew --no-emoji --no-color >/dev/null 2>&1
-if [ -s "$SELF_UPDATE_CURL_LOG" ]; then
-	echo "Expected symlink-installed self-update to skip curl entirely" >&2
-	exit 1
-fi
-
-echo "Test: self-update accepts checksum paths (dist/updates)"
-SELF_UPDATE_CACHE_ROOT="${tmp_dir}/self-update-cache-install"
-: >"$SELF_UPDATE_CURL_LOG"
-SELF_UPDATE_LATEST_TAG="v0.0.2"
-SELF_UPDATE_LATEST_FAIL=0
-mk_versioned_copy "$SCRIPT" "$self_update_old" "0.0.1"
-out="$(run_self_update_script "$self_update_old" --only brew --no-emoji --no-color 2>&1)"
-echo "$out" | grep -q 'updates: self-update available (0.0.1 -> 0.0.2)'
-echo "$out" | grep -q 'updates: updated to 0.0.2; restarting'
-
-if [ "$("$self_update_old" --version)" != "0.0.2" ]; then
-	echo "Expected self-update to replace the installed script" >&2
-	exit 1
-fi
+out="$(HOME="" USERPROFILE="$config_home_userprofile" "$SCRIPT" --dry-run --only brew --no-emoji --no-color)"
+echo "$out" | grep -q '^DRY RUN: brew upgrade --greedy$'
 
 echo "Test: pipx module logs correct commands"
 write_stub uname 'echo Darwin'
@@ -735,10 +559,30 @@ echo "Test: pi module logs correct commands"
 grep -q '^pi update$' "$CALL_LOG"
 
 echo "Test: empty ncu output means node module reports up-to-date"
-rm -f "${stub_bin}/python3"
+rm -f "${stub_bin}/python" "${stub_bin}/python3"
 write_stub ncu 'echo "{}"'
 out="$("$SCRIPT" --only node --no-emoji --no-color)"
 echo "$out" | grep -q 'All global npm packages are up-to-date'
+write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
+
+echo "Test: node falls back to npx npm-check-updates"
+rm -f "${stub_bin}/ncu"
+# shellcheck disable=SC2016
+write_stub npx '
+echo "npx $*" >>"$CALL_LOG"
+echo "{\"npm\":\"11.8.0\"}"
+'
+node_fallback_bin="${tmp_dir}/node-fallback-bin"
+mkdir -p "$node_fallback_bin"
+ln -sf "${stub_bin}/uname" "${node_fallback_bin}/uname"
+ln -sf "${stub_bin}/npx" "${node_fallback_bin}/npx"
+ln -sf "${stub_bin}/npm" "${node_fallback_bin}/npm"
+ln -sf "${stub_bin}/python" "${node_fallback_bin}/python"
+: >"$CALL_LOG"
+PATH="${node_fallback_bin}:${BASE_PATH}" "$SCRIPT" --only node --no-emoji --no-color >/dev/null
+grep -q '^npx --yes npm-check-updates -g --jsonUpgraded$' "$CALL_LOG"
+grep -q '^npm install -g -- npm@11.8.0$' "$CALL_LOG"
+rm -f "${stub_bin}/npx"
 write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
 
 # Build a clean system PATH that excludes all Linux package managers so that

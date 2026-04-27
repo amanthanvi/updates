@@ -5,6 +5,11 @@ on:
     tags:
       - "v*.*.*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing SemVer tag to release (for example v2.0.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -12,14 +17,41 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Validate tag matches script version
+      - name: Resolve release tag
+        id: meta
+        shell: bash
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must be SemVer: vX.Y.Z" >&2
+            exit 1
+          fi
+
           VERSION="${TAG#v}"
+          echo "tag=$TAG" >>"$GITHUB_OUTPUT"
+          echo "version=$VERSION" >>"$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.meta.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Validate tag matches script version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          VERSION="${{ steps.meta.outputs.version }}"
           SCRIPT_VERSION="$(awk -F'\"' '/^UPDATES_VERSION=/{print $2; exit}' updates)"
 
           if [ -z "$SCRIPT_VERSION" ]; then
@@ -38,13 +70,16 @@ jobs:
           fi
 
       - name: Syntax check
-        run: bash -n updates
+        shell: bash
+        run: bash -n updates scripts/release*.sh
 
       - name: Install ShellCheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+        run: sudo apt-get update && sudo apt-get install -y jq shellcheck
 
       - name: Install shfmt
+        shell: bash
         run: |
+          set -euo pipefail
           curl -fsSL https://github.com/mvdan/sh/releases/download/v3.12.0/shfmt_v3.12.0_linux_amd64 -o shfmt
           echo "d9fbb2a9c33d13f47e7618cf362a914d029d02a6df124064fff04fd688a745ea  shfmt" | sha256sum -c -
           chmod +x shfmt
@@ -57,22 +92,62 @@ jobs:
         run: ./scripts/test.sh
 
       - name: Build release artifacts
+        run: bash ./scripts/release-build.sh "${{ steps.meta.outputs.version }}"
+
+      - name: Verify local release artifacts
+        run: bash ./scripts/release-verify-dist.sh "${{ steps.meta.outputs.version }}"
+
+      - name: Create or reuse draft release
+        shell: bash
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          ARCHIVE="updates-${TAG}.tar.gz"
+          TAG="${{ steps.meta.outputs.tag }}"
 
-          mkdir -p dist
-          cp updates "dist/updates"
-          chmod +x "dist/updates"
-          tar -czf "dist/${ARCHIVE}" \
-            updates README.md SPEC.md LICENSE CHANGELOG.md CONTRIBUTING.md CODE_OF_CONDUCT.md SECURITY.md
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            IS_DRAFT="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')"
+            IS_PRERELEASE="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq '.isPrerelease')"
 
-          (cd dist && sha256sum updates "${ARCHIVE}" > SHA256SUMS)
+            if [ "$IS_DRAFT" != "true" ]; then
+              echo "Release $TAG already exists and is not a draft" >&2
+              exit 1
+            fi
+            if [ "$IS_PRERELEASE" != "false" ]; then
+              echo "Release $TAG already exists as a prerelease" >&2
+              exit 1
+            fi
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/*
-          generate_release_notes: true
+            EXISTING_ASSETS="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+            if [ -n "$EXISTING_ASSETS" ]; then
+              while IFS= read -r asset; do
+                [ -n "$asset" ] || continue
+                gh release delete-asset "$TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes
+              done <<<"$EXISTING_ASSETS"
+            fi
+          else
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --generate-notes \
+              --verify-tag
+          fi
+
+      - name: Upload release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "${{ steps.meta.outputs.tag }}" \
+            dist/updates \
+            dist/updates-windows.zip \
+            dist/updates-release.json \
+            dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+      - name: Verify uploaded draft assets
+        run: bash ./scripts/release-verify-github.sh draft "${{ steps.meta.outputs.tag }}"
+
+      - name: Publish release
+        run: gh release edit "${{ steps.meta.outputs.tag }}" --repo "$GITHUB_REPOSITORY" --draft=false
+
+      - name: Verify published release
+        run: bash ./scripts/release-verify-github.sh published "${{ steps.meta.outputs.tag }}"
