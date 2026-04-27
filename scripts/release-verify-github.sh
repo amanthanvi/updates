@@ -86,6 +86,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 gh release download "$TAG" --repo "$REPO" --dir "$TMP_DIR"
 bash "$RELEASE_REPO_ROOT/scripts/release-verify-dist.sh" "$VERSION" "$TMP_DIR"
 
+# Immutable releases automatically generate the GitHub release attestation consumed here.
 gh release verify "$TAG" --repo "$REPO" >/dev/null
 while IFS= read -r asset; do
 	gh release verify-asset "$TAG" "$DIST_DIR/$asset" --repo "$REPO" >/dev/null

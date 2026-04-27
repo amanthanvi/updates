@@ -71,6 +71,7 @@ catch {
                 $result.child_exit = Get-NativeProcessExitCode -Process $nativeProcess
             }
         } catch {
+            # Best-effort: exit code retrieval failure is non-fatal cleanup noise.
         }
     } elseif ($process -and $process.HasExited) {
         $result.child_exit = $process.ExitCode
@@ -82,11 +83,13 @@ finally {
         try {
             Stop-NativeProcess -Process $nativeProcess
         } catch {
+            # Best-effort: process stop failure must not block result emission.
         }
     } elseif ($process -and -not $process.HasExited) {
         try {
             $process.Kill($true)
         } catch {
+            # Best-effort: forced kill failure is non-fatal cleanup noise.
         }
     }
 

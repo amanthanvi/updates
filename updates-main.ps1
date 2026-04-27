@@ -334,6 +334,24 @@ function Set-ConfigBool {
     }
 }
 
+function Try-ParsePositiveInt32 {
+    param(
+        [string]$Value,
+        [ref]$Parsed
+    )
+
+    $parsedValue = 0
+    if (-not [int]::TryParse($Value, [ref]$parsedValue)) {
+        return $false
+    }
+    if ($parsedValue -lt 1) {
+        return $false
+    }
+
+    $Parsed.Value = $parsedValue
+    return $true
+}
+
 function Read-Config {
     if ($script:NoConfig) {
         return
@@ -375,7 +393,8 @@ function Read-Config {
                 }
             }
             'PARALLEL' {
-                if ($value -match '^\d+$' -and [int]$value -ge 1) {
+                $parallelValue = 0
+                if (Try-ParsePositiveInt32 -Value $value -Parsed ([ref]$parallelValue)) {
                     Write-WarnLine 'config: PARALLEL is ignored on native Windows.'
                 } else {
                     Write-WarnLine ("config: PARALLEL must be >= 1 (got: {0})" -f $value)
@@ -435,7 +454,8 @@ function Parse-Args {
             '--parallel' {
                 $i++
                 if ($i -ge $CliInput.Length) { Fail-Usage '--parallel requires a number' }
-                if ($CliInput[$i] -notmatch '^\d+$' -or [int]$CliInput[$i] -lt 1) {
+                $parallelValue = 0
+                if (-not (Try-ParsePositiveInt32 -Value $CliInput[$i] -Parsed ([ref]$parallelValue))) {
                     Fail-Usage '--parallel must be >= 1'
                 }
                 Fail-Usage '--parallel is not supported on native Windows.'

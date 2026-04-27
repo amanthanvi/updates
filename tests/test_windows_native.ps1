@@ -465,6 +465,26 @@ if (Should-RunTest 'native payload rejects --parallel on Windows') {
     }
 }
 
+if (Should-RunTest 'native payload rejects oversized --parallel values on Windows') {
+    Invoke-TestCase 'native payload rejects oversized --parallel values on Windows' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
+                '--no-self-update',
+                '--parallel', '999999999999',
+                '--only', 'python',
+                '--no-color',
+                '--no-emoji'
+            )
+
+            Assert-Equal -Expected 2 -Actual $result.ExitCode -Message 'oversized --parallel should stay on the controlled usage path'
+            Assert-Match -Text $result.Output -Pattern '(?i)--parallel must be >= 1' -Message 'oversized --parallel should report the normal validation error'
+        }
+    }
+}
+
 if (Should-RunTest 'native payload warns and ignores PARALLEL from config on Windows') {
     Invoke-TestCase 'native payload warns and ignores PARALLEL from config on Windows' {
         Invoke-WithTempInstall {
@@ -492,6 +512,37 @@ if (Should-RunTest 'native payload warns and ignores PARALLEL from config on Win
             Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'config PARALLEL should warn and continue on native Windows'
             Assert-Match -Text $result.Output -Pattern '(?i)config: PARALLEL is ignored on native Windows' -Message 'config PARALLEL warning should be explicit'
             Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*winget(\.cmd)? upgrade --all --silent --accept-source-agreements --accept-package-agreements' -Message 'warning should not block the requested module run'
+        }
+    }
+}
+
+if (Should-RunTest 'native payload warns on oversized PARALLEL config values on Windows') {
+    Invoke-TestCase 'native payload warns on oversized PARALLEL config values on Windows' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'winget.cmd') -Lines @()
+            Write-Utf8NoBom -Path (Join-Path $installRoot '.updatesrc') -Content "PARALLEL=999999999999`n"
+
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
+                '--no-self-update',
+                '--dry-run',
+                '--only', 'winget',
+                '--no-color',
+                '--no-emoji'
+            ) -Environment @{
+                PATH        = $stubDir
+                HOME        = $installRoot
+                USERPROFILE = $installRoot
+            }
+
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'oversized config PARALLEL should warn and continue'
+            Assert-Match -Text $result.Output -Pattern '(?i)config: PARALLEL must be >= 1' -Message 'oversized config PARALLEL should stay on the normal warning path'
+            Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*winget(\.cmd)? upgrade --all --silent --accept-source-agreements --accept-package-agreements' -Message 'oversized config PARALLEL should not block the requested module run'
         }
     }
 }
