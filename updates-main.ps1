@@ -1487,8 +1487,8 @@ function Invoke-WindowsSelfUpdate {
         }
         Move-Item -LiteralPath $stagingRoot -Destination $targetRoot
 
-        $currentVersion = (Get-Content -LiteralPath (Join-Path $script:InstallRoot 'current.txt') -Raw).Trim()
-        Write-VersionPointer -Name 'previous.txt' -Value $currentVersion
+        # Preserve the validated running payload version even if bootstrap recovered via previous.txt.
+        Write-VersionPointer -Name 'previous.txt' -Value $script:UpdatesVersion
         Write-VersionPointer -Name 'current.txt' -Value $latestVersion
         Update-InstallReceiptVersion -Version $latestVersion
 

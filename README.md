@@ -151,7 +151,7 @@ Install what you actually use:
 
 - This script updates _global_ environments (`npm -g`, `pip`), which can be disruptive.
 - Use `--dry-run` first, and consider `--only`/`--skip` to control scope.
-- `updates` itself is distributed through GitHub Releases only. No third-party package-manager channel is supported for `updates` in `v2.0.0`.
+- `updates` itself is distributed through GitHub Releases only. No third-party package manager channel is supported for `updates` in `v2.0.0`.
 - Self-update is fixed to the canonical GitHub repo `amanthanvi/updates`; `UPDATES_SELF_UPDATE_REPO` is removed in `v2.0.0` and setting it is an error.
 - Official self-update artifacts for `v2.0.0` are `updates`, `updates-windows.zip`, `updates-release.json`, and `SHA256SUMS`.
 - Normal runs throttle GitHub release checks to about once every 24 hours using a small local cache under `XDG_CACHE_HOME`, `~/Library/Caches`, `~/.cache`, or `%LOCALAPPDATA%\\updates`; explicit `--self-update` forces a live check.

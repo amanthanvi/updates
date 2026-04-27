@@ -17,6 +17,7 @@ DIST_DIR="${2:-dist}"
 EXPECTED_VERSION_OUTPUT="${VERSION}"
 
 release_validate_version "$VERSION"
+release_require_command jq
 release_require_command unzip
 release_require_file "$DIST_DIR/$RELEASE_ASSET_UPDATES"
 release_require_file "$DIST_DIR/$RELEASE_ASSET_WINDOWS_ZIP"
@@ -47,27 +48,26 @@ EOF
 
 release_check_sha256sums "$DIST_DIR" "$RELEASE_ASSET_SUMS" >/dev/null
 
-if ! grep -Fq "\"version\": \"$VERSION\"" "$DIST_DIR/$RELEASE_ASSET_MANIFEST"; then
-	release_fail "updates-release.json missing version $VERSION"
-fi
-if ! grep -Fq "\"source_repo\": \"$RELEASE_CANONICAL_REPO\"" "$DIST_DIR/$RELEASE_ASSET_MANIFEST"; then
-	release_fail "updates-release.json missing canonical source_repo"
-fi
-if ! grep -Fq "\"channel\": \"$RELEASE_CHANNEL\"" "$DIST_DIR/$RELEASE_ASSET_MANIFEST"; then
-	release_fail "updates-release.json missing release channel"
-fi
-if ! grep -Fq "\"bootstrap_min\": $RELEASE_BOOTSTRAP_MIN" "$DIST_DIR/$RELEASE_ASSET_MANIFEST"; then
-	release_fail "updates-release.json missing bootstrap_min"
-fi
-if ! grep -Fq "\"windows_asset\": \"$RELEASE_ASSET_WINDOWS_ZIP\"" "$DIST_DIR/$RELEASE_ASSET_MANIFEST"; then
-	release_fail "updates-release.json missing windows asset"
-fi
-if ! grep -Fq "\"unix_asset\": \"$RELEASE_ASSET_UPDATES\"" "$DIST_DIR/$RELEASE_ASSET_MANIFEST"; then
-	release_fail "updates-release.json missing unix asset"
-fi
-if ! grep -Fq "\"checksum_asset\": \"$RELEASE_ASSET_SUMS\"" "$DIST_DIR/$RELEASE_ASSET_MANIFEST"; then
-	release_fail "updates-release.json missing checksum asset"
-fi
+assert_json_field_equals() {
+	local path="$1"
+	local filter="$2"
+	local expected="$3"
+	local message="$4"
+	local actual=""
+
+	actual="$(jq -er "$filter" "$path" 2>/dev/null || true)"
+	if [ "$actual" != "$expected" ]; then
+		release_fail "$message"
+	fi
+}
+
+assert_json_field_equals "$DIST_DIR/$RELEASE_ASSET_MANIFEST" '.version' "$VERSION" "updates-release.json missing version $VERSION"
+assert_json_field_equals "$DIST_DIR/$RELEASE_ASSET_MANIFEST" '.source_repo' "$RELEASE_CANONICAL_REPO" "updates-release.json missing canonical source_repo"
+assert_json_field_equals "$DIST_DIR/$RELEASE_ASSET_MANIFEST" '.channel' "$RELEASE_CHANNEL" "updates-release.json missing release channel"
+assert_json_field_equals "$DIST_DIR/$RELEASE_ASSET_MANIFEST" '.bootstrap_min | tostring' "$RELEASE_BOOTSTRAP_MIN" "updates-release.json missing bootstrap_min"
+assert_json_field_equals "$DIST_DIR/$RELEASE_ASSET_MANIFEST" '.windows_asset' "$RELEASE_ASSET_WINDOWS_ZIP" "updates-release.json missing windows asset"
+assert_json_field_equals "$DIST_DIR/$RELEASE_ASSET_MANIFEST" '.unix_asset' "$RELEASE_ASSET_UPDATES" "updates-release.json missing unix asset"
+assert_json_field_equals "$DIST_DIR/$RELEASE_ASSET_MANIFEST" '.checksum_asset' "$RELEASE_ASSET_SUMS" "updates-release.json missing checksum asset"
 
 bash -n "$DIST_DIR/$RELEASE_ASSET_UPDATES"
 VERSION_OUTPUT="$("$DIST_DIR/$RELEASE_ASSET_UPDATES" --version | tr -d '\r')"
@@ -111,31 +111,15 @@ if [ -s "$TMP_DIR/previous.txt" ]; then
 	release_fail "Windows zip previous.txt must be empty for a fresh release"
 fi
 
-if ! grep -Fq "\"kind\": \"standalone\"" "$TMP_DIR/install-source.json"; then
-	release_fail "install-source.json missing standalone kind"
-fi
-if ! grep -Fq "\"channel\": \"$RELEASE_CHANNEL\"" "$TMP_DIR/install-source.json"; then
-	release_fail "install-source.json missing release channel"
-fi
-if ! grep -Fq "\"source_repo\": \"$RELEASE_CANONICAL_REPO\"" "$TMP_DIR/install-source.json"; then
-	release_fail "install-source.json missing canonical source_repo"
-fi
-if ! grep -Fq "\"scope\": \"user\"" "$TMP_DIR/install-source.json"; then
-	release_fail "install-source.json missing user scope"
-fi
-if ! grep -Fq "\"installed_version\": \"$VERSION\"" "$TMP_DIR/install-source.json"; then
-	release_fail "install-source.json missing installed version"
-fi
+assert_json_field_equals "$TMP_DIR/install-source.json" '.kind' 'standalone' "install-source.json missing standalone kind"
+assert_json_field_equals "$TMP_DIR/install-source.json" '.channel' "$RELEASE_CHANNEL" "install-source.json missing release channel"
+assert_json_field_equals "$TMP_DIR/install-source.json" '.source_repo' "$RELEASE_CANONICAL_REPO" "install-source.json missing canonical source_repo"
+assert_json_field_equals "$TMP_DIR/install-source.json" '.scope' 'user' "install-source.json missing user scope"
+assert_json_field_equals "$TMP_DIR/install-source.json" '.installed_version' "$VERSION" "install-source.json missing installed version"
 
 WINDOWS_MANIFEST="$TMP_DIR/versions/$VERSION/manifest.json"
-if ! grep -Fq "\"version\": \"$VERSION\"" "$WINDOWS_MANIFEST"; then
-	release_fail "Windows payload manifest missing version $VERSION"
-fi
-if ! grep -Fq "\"bootstrap_min\": $RELEASE_BOOTSTRAP_MIN" "$WINDOWS_MANIFEST"; then
-	release_fail "Windows payload manifest missing bootstrap_min"
-fi
-if ! grep -Fq "\"entry_script\": \"updates-main.ps1\"" "$WINDOWS_MANIFEST"; then
-	release_fail "Windows payload manifest missing entry_script"
-fi
+assert_json_field_equals "$WINDOWS_MANIFEST" '.version' "$VERSION" "Windows payload manifest missing version $VERSION"
+assert_json_field_equals "$WINDOWS_MANIFEST" '.bootstrap_min | tostring' "$RELEASE_BOOTSTRAP_MIN" "Windows payload manifest missing bootstrap_min"
+assert_json_field_equals "$WINDOWS_MANIFEST" '.entry_script' 'updates-main.ps1' "Windows payload manifest missing entry_script"
 
 echo "Verified release artifacts in $DIST_DIR" >&2

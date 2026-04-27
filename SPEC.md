@@ -791,7 +791,7 @@ Maintainer workflow:
 
 The Unix Bash entrypoint uses navigable section markers for organization:
 
-```
+```bash
 grep '^# SECTION:' updates
 ```
 

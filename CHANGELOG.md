@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Planned for v2.0.0
-
 ### Added
 
 - Native Windows support via `updates.cmd` and `updates.ps1` with PowerShell 7 (`pwsh`) as the only supported Windows runtime.

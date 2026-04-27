@@ -595,6 +595,64 @@ if (Should-RunTest 'native payload self-update applies a verified Windows releas
     }
 }
 
+if (Should-RunTest 'native payload self-update preserves rollback pointer during previous.txt recovery') {
+    Invoke-TestCase 'native payload self-update preserves rollback pointer during previous.txt recovery' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -WithReceipt
+            $fixture = New-SelfUpdateFixture -Root $installRoot -Version '2.0.1'
+            $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
+
+            Set-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Value 'broken-version' -NoNewline
+            Set-Content -LiteralPath (Join-Path $installRoot 'previous.txt') -Value '2.0.0' -NoNewline
+
+            & {
+                . $payloadSource
+                $script:InstallRoot = $installRoot
+                $script:JsonMode = $false
+                $script:LogLevel = 'info'
+                $script:LogLevelNum = 2
+                $script:DryRun = $false
+                $script:SelfUpdate = $true
+
+                function Test-InstallRootWritable { return $true }
+                function Test-GitCheckout { return $false }
+                function Test-SymlinkedInstall { return $false }
+                function Get-LatestReleaseMetadata {
+                    return [pscustomobject]@{
+                        tag_name   = 'v2.0.1'
+                        draft      = $false
+                        prerelease = $false
+                        immutable  = $true
+                        assets     = @(
+                            [pscustomobject]@{ name = 'updates-windows.zip'; digest = $fixture.ZipDigest; browser_download_url = 'https://example.invalid/updates-windows.zip' },
+                            [pscustomobject]@{ name = 'updates-release.json'; digest = $fixture.ReleaseDigest; browser_download_url = 'https://example.invalid/updates-release.json' },
+                            [pscustomobject]@{ name = 'SHA256SUMS'; digest = $fixture.SumsDigest; browser_download_url = 'https://example.invalid/SHA256SUMS' }
+                        )
+                    }
+                }
+                function Invoke-WebRequest {
+                    param([string]$Uri, $Headers, [string]$OutFile, [int]$TimeoutSec)
+                    switch ($Uri) {
+                        'https://example.invalid/updates-windows.zip' { Copy-Item -LiteralPath $fixture.ZipPath -Destination $OutFile -Force }
+                        'https://example.invalid/updates-release.json' { Copy-Item -LiteralPath $fixture.ReleaseManifest -Destination $OutFile -Force }
+                        'https://example.invalid/SHA256SUMS' { Copy-Item -LiteralPath $fixture.SumsPath -Destination $OutFile -Force }
+                        default { throw "Unexpected download URI: $Uri" }
+                    }
+                }
+                function Invoke-SelfUpdatedRelaunch { return 0 }
+
+                $result = Invoke-WindowsSelfUpdate -OriginalArgs @()
+                Assert-True -Condition $result.Relaunched -Message 'verified recovery self-update should still relaunch'
+            }
+
+            Assert-Equal -Expected '2.0.1' -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message 'current.txt should advance after a verified self-update'
+            Assert-Equal -Expected '2.0.0' -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'previous.txt') -Raw).Trim()) -Message 'previous.txt should keep the validated running payload version during recovery'
+        }
+    }
+}
+
 if (Should-RunTest 'native payload self-update skips live metadata fetch when cache is fresh') {
     Invoke-TestCase 'native payload self-update skips live metadata fetch when cache is fresh' {
         Invoke-WithTempInstall {
