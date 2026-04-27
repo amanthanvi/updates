@@ -202,6 +202,36 @@ EOF
 EOF
 }
 
+write_self_update_cache_with_metadata() {
+	local path="$1"
+	local checked_at="$2"
+	local latest_tag="$3"
+	local fixture_dir="$4"
+	local manifest_digest_override="${5:-}"
+	local manifest_digest=""
+
+	manifest_digest="sha256:$(sha256_file_test "${fixture_dir}/updates-release.json")"
+
+	if [ -n "$manifest_digest_override" ]; then
+		manifest_digest="$manifest_digest_override"
+	fi
+
+	mkdir -p "$(dirname "$path")"
+	cat >"$path" <<EOF
+checked_at=${checked_at}
+latest_tag=${latest_tag}
+draft=0
+prerelease=0
+immutable=1
+updates_url=https://example.invalid/updates
+updates_digest=sha256:$(sha256_file_test "${fixture_dir}/updates")
+manifest_url=https://example.invalid/updates-release.json
+manifest_digest=${manifest_digest}
+sums_url=https://example.invalid/SHA256SUMS
+sums_digest=sha256:$(sha256_file_test "${fixture_dir}/SHA256SUMS")
+EOF
+}
+
 CALL_LOG="${tmp_dir}/calls.log"
 export CALL_LOG
 
@@ -690,7 +720,7 @@ if echo "$self_update_override_out" | grep -q '^DRY RUN:'; then
 	exit 1
 fi
 
-echo "Test: Unix self-update fresh newer-version cache suppresses live lookup"
+echo "Test: Unix self-update fresh newer-version cache reuses cached metadata"
 self_update_cache_install="${tmp_dir}/self-update-install-cache"
 self_update_cache_script="$(make_installed_copy "$self_update_cache_install")"
 self_update_cache_bin="${tmp_dir}/self-update-bin-cache"
@@ -702,35 +732,38 @@ write_stub_to_dir "$self_update_cache_bin" uname 'echo Darwin'
 # shellcheck disable=SC2016
 write_stub_to_dir "$self_update_cache_bin" brew 'echo "brew $*" >>"$CALL_LOG"'
 write_self_update_curl_stub "$self_update_cache_bin"
-printf 'checked_at=%s\nlatest_tag=%s\n' "$(date +%s)" 'v2.0.1' >"${self_update_cache_xdg}/updates/self-update-amanthanvi_updates.cache"
+create_self_update_fixture "$self_update_cache_fixture" '2.0.1' 'unsupported-digest'
+write_self_update_cache_with_metadata "${self_update_cache_xdg}/updates/self-update-amanthanvi_updates.cache" "$(date +%s)" 'v2.0.1' "$self_update_cache_fixture" 'md5:deadbeef'
 : >"$self_update_cache_http_log"
 : >"$CALL_LOG"
 out="$(UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_cache_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_cache_fixture" SELF_UPDATE_CALL_LOG="$self_update_cache_http_log" PATH="${self_update_cache_bin}:${BASE_PATH}" "$self_update_cache_script" --only brew --no-emoji --no-color 2>&1)"
-if [ -s "$self_update_cache_http_log" ]; then
-	echo "Expected fresh self-update cache to suppress live curl calls" >&2
+if grep -q '^curl https://api.github.com/repos/amanthanvi/updates/releases/latest$' "$self_update_cache_http_log"; then
+	echo "Expected cached release metadata to suppress live GitHub metadata fetches" >&2
 	cat "$self_update_cache_http_log" >&2
 	exit 1
 fi
-if echo "$out" | grep -q 'self-update available'; then
-	echo "Expected fresh self-update cache to suppress self-update warnings" >&2
-	echo "$out" >&2
+grep -q '^curl https://example.invalid/updates-release.json$' "$self_update_cache_http_log"
+echo "$out" | grep -q 'self-update manifest digest missing or unsupported; continuing'
+if [ "$("$self_update_cache_script" --version)" != "2.0.0" ]; then
+	echo "Expected cached unsupported digest metadata to leave installed version unchanged" >&2
 	exit 1
 fi
 grep -q '^brew update$' "$CALL_LOG"
 
-echo "Test: Unix self-update skips when a release asset digest is unsupported"
+echo "Test: Unix self-update fresh newer-version tag-only cache fetches live metadata"
 self_update_digest_install="${tmp_dir}/self-update-install-digest"
 self_update_digest_script="$(make_installed_copy "$self_update_digest_install")"
 self_update_digest_bin="${tmp_dir}/self-update-bin-digest"
 self_update_digest_fixture="${tmp_dir}/self-update-fixture-digest"
 self_update_digest_xdg="${tmp_dir}/self-update-xdg-digest"
 self_update_digest_http_log="${tmp_dir}/self-update-http-digest.log"
-mkdir -p "$self_update_digest_bin" "$self_update_digest_xdg"
+mkdir -p "$self_update_digest_bin" "$self_update_digest_xdg" "${self_update_digest_xdg}/updates"
 write_stub_to_dir "$self_update_digest_bin" uname 'echo Darwin'
 # shellcheck disable=SC2016
 write_stub_to_dir "$self_update_digest_bin" brew 'echo "brew $*" >>"$CALL_LOG"'
 write_self_update_curl_stub "$self_update_digest_bin"
 create_self_update_fixture "$self_update_digest_fixture" '2.0.1' 'unsupported-digest'
+printf 'checked_at=%s\nlatest_tag=%s\n' "$(date +%s)" 'v2.0.1' >"${self_update_digest_xdg}/updates/self-update-amanthanvi_updates.cache"
 : >"$self_update_digest_http_log"
 : >"$CALL_LOG"
 out="$(UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_digest_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_digest_fixture" SELF_UPDATE_CALL_LOG="$self_update_digest_http_log" PATH="${self_update_digest_bin}:${BASE_PATH}" "$self_update_digest_script" --only brew --no-emoji --no-color 2>&1)"

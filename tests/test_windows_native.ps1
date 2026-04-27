@@ -764,14 +764,16 @@ if (Should-RunTest 'native payload self-update skips live metadata fetch when ca
     }
 }
 
-if (Should-RunTest 'native payload fresh newer-version cache still suppresses live metadata fetch') {
-    Invoke-TestCase 'native payload fresh newer-version cache still suppresses live metadata fetch' {
+if (Should-RunTest 'native payload fresh newer-version cache reuses cached release metadata') {
+    Invoke-TestCase 'native payload fresh newer-version cache reuses cached release metadata' {
         Invoke-WithTempInstall {
             param($installRoot)
 
             Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -WithReceipt
+            $fixture = New-SelfUpdateFixture -Root $installRoot -Version '2.0.1'
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
             $localAppData = Join-Path $installRoot 'localappdata'
+            $downloadLogPath = Join-Path $installRoot 'cached-downloads.log'
             $null = New-Item -ItemType Directory -Path $localAppData -Force
 
             & {
@@ -788,13 +790,86 @@ if (Should-RunTest 'native payload fresh newer-version cache still suppresses li
                 function Test-InstallRootWritable { return $true }
                 function Test-GitCheckout { return $false }
                 function Test-SymlinkedInstall { return $false }
-                function Get-LatestReleaseMetadata { throw 'Get-LatestReleaseMetadata should not run with a fresh newer-version cache' }
+                function Get-LatestReleaseMetadata { throw 'Get-LatestReleaseMetadata should not run when cached release metadata is complete' }
+                function Invoke-WebRequest {
+                    param([string]$Uri, $Headers, [string]$OutFile, [int]$TimeoutSec)
+                    Add-Content -LiteralPath $downloadLogPath -Value $Uri
+                    switch ($Uri) {
+                        'https://example.invalid/updates-windows.zip' { Copy-Item -LiteralPath $fixture.ZipPath -Destination $OutFile -Force }
+                        'https://example.invalid/updates-release.json' { Copy-Item -LiteralPath $fixture.ReleaseManifest -Destination $OutFile -Force }
+                        'https://example.invalid/SHA256SUMS' { Copy-Item -LiteralPath $fixture.SumsPath -Destination $OutFile -Force }
+                        default { throw "Unexpected download URI: $Uri" }
+                    }
+                }
+
+                $cachePath = Get-SelfUpdateCachePath
+                $null = Write-SelfUpdateCache `
+                    -Path $cachePath `
+                    -CheckedAt (Get-SelfUpdateEpoch) `
+                    -LatestTag 'v2.0.1' `
+                    -Draft '0' `
+                    -Prerelease '0' `
+                    -Immutable '1' `
+                    -WindowsUrl 'https://example.invalid/updates-windows.zip' `
+                    -WindowsDigest $fixture.ZipDigest `
+                    -ManifestUrl 'https://example.invalid/updates-release.json' `
+                    -ManifestDigest 'md5:deadbeef' `
+                    -SumsUrl 'https://example.invalid/SHA256SUMS' `
+                    -SumsDigest $fixture.SumsDigest
+                $result = Invoke-WindowsSelfUpdate -OriginalArgs @()
+                Assert-True -Condition ($null -eq $result) -Message 'cached newer-version release metadata should keep self-update non-fatal'
+            }
+
+            Assert-Equal -Expected '2.0.0' -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message 'unsupported cached manifest digest should leave current.txt unchanged'
+            Assert-Match -Text (Get-Content -LiteralPath $downloadLogPath -Raw) -Pattern 'updates-release\.json' -Message 'cached release metadata should still trigger asset downloads'
+        }
+    }
+}
+
+if (Should-RunTest 'native payload fresh newer-version tag-only cache fetches live metadata') {
+    Invoke-TestCase 'native payload fresh newer-version tag-only cache fetches live metadata' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -WithReceipt
+            $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
+            $localAppData = Join-Path $installRoot 'localappdata'
+            $markerPath = Join-Path $installRoot 'live-metadata-marker.txt'
+            $null = New-Item -ItemType Directory -Path $localAppData -Force
+
+            & {
+                . $payloadSource
+                $script:InstallRoot = $installRoot
+                $script:JsonMode = $false
+                $script:LogLevel = 'debug'
+                $script:LogLevelNum = 3
+                $script:DryRun = $false
+                $script:SelfUpdate = $true
+                $script:ForceSelfUpdate = $false
+                $env:LOCALAPPDATA = $localAppData
+
+                function Test-InstallRootWritable { return $true }
+                function Test-GitCheckout { return $false }
+                function Test-SymlinkedInstall { return $false }
+                function Get-LatestReleaseMetadata {
+                    [System.IO.File]::WriteAllText($markerPath, 'fetched')
+                    return [pscustomobject]@{
+                        tag_name   = 'v2.0.0'
+                        draft      = $false
+                        prerelease = $false
+                        immutable  = $true
+                        assets     = @()
+                    }
+                }
 
                 $cachePath = Get-SelfUpdateCachePath
                 $null = Write-SelfUpdateCache -Path $cachePath -CheckedAt (Get-SelfUpdateEpoch) -LatestTag 'v2.0.1'
                 $result = Invoke-WindowsSelfUpdate -OriginalArgs @()
-                Assert-True -Condition ($null -eq $result) -Message 'fresh newer-version cache should still suppress live metadata fetches on normal runs'
+                Assert-True -Condition ($null -eq $result) -Message 'tag-only newer-version cache should still exit cleanly after live metadata fallback'
             }
+
+            Assert-FileExists -Path $markerPath -Message 'tag-only newer-version cache should fetch live metadata'
+            Assert-Equal -Expected 'fetched' -Actual ((Get-Content -LiteralPath $markerPath -Raw).Trim()) -Message 'live metadata fallback marker mismatch'
         }
     }
 }

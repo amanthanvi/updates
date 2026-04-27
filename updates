@@ -91,6 +91,15 @@ JSON_TS_CACHE_VALUE=""
 SELF_UPDATE_CACHE_TTL=86400
 SELF_UPDATE_CACHE_CHECKED_AT=""
 SELF_UPDATE_CACHE_LATEST_TAG=""
+SELF_UPDATE_CACHE_RELEASE_DRAFT=""
+SELF_UPDATE_CACHE_RELEASE_PRERELEASE=""
+SELF_UPDATE_CACHE_RELEASE_IMMUTABLE=""
+SELF_UPDATE_CACHE_UPDATES_URL=""
+SELF_UPDATE_CACHE_UPDATES_DIGEST=""
+SELF_UPDATE_CACHE_MANIFEST_URL=""
+SELF_UPDATE_CACHE_MANIFEST_DIGEST=""
+SELF_UPDATE_CACHE_SUMS_URL=""
+SELF_UPDATE_CACHE_SUMS_DIGEST=""
 
 BREW_FORMULA_DEFAULT_HINT_EMITTED=0
 
@@ -1068,6 +1077,15 @@ self_update_cache_file() {
 self_update_cache_reset() {
 	SELF_UPDATE_CACHE_CHECKED_AT=""
 	SELF_UPDATE_CACHE_LATEST_TAG=""
+	SELF_UPDATE_CACHE_RELEASE_DRAFT=""
+	SELF_UPDATE_CACHE_RELEASE_PRERELEASE=""
+	SELF_UPDATE_CACHE_RELEASE_IMMUTABLE=""
+	SELF_UPDATE_CACHE_UPDATES_URL=""
+	SELF_UPDATE_CACHE_UPDATES_DIGEST=""
+	SELF_UPDATE_CACHE_MANIFEST_URL=""
+	SELF_UPDATE_CACHE_MANIFEST_DIGEST=""
+	SELF_UPDATE_CACHE_SUMS_URL=""
+	SELF_UPDATE_CACHE_SUMS_DIGEST=""
 }
 
 self_update_cache_load() {
@@ -1083,6 +1101,15 @@ self_update_cache_load() {
 		case "$key" in
 		checked_at) SELF_UPDATE_CACHE_CHECKED_AT="$value" ;;
 		latest_tag) SELF_UPDATE_CACHE_LATEST_TAG="$value" ;;
+		draft) SELF_UPDATE_CACHE_RELEASE_DRAFT="$value" ;;
+		prerelease) SELF_UPDATE_CACHE_RELEASE_PRERELEASE="$value" ;;
+		immutable) SELF_UPDATE_CACHE_RELEASE_IMMUTABLE="$value" ;;
+		updates_url) SELF_UPDATE_CACHE_UPDATES_URL="$value" ;;
+		updates_digest) SELF_UPDATE_CACHE_UPDATES_DIGEST="$value" ;;
+		manifest_url) SELF_UPDATE_CACHE_MANIFEST_URL="$value" ;;
+		manifest_digest) SELF_UPDATE_CACHE_MANIFEST_DIGEST="$value" ;;
+		sums_url) SELF_UPDATE_CACHE_SUMS_URL="$value" ;;
+		sums_digest) SELF_UPDATE_CACHE_SUMS_DIGEST="$value" ;;
 		esac
 	done <"$path"
 
@@ -1122,10 +1149,41 @@ self_update_cache_is_fresh() {
 	[ $((current_epoch - checked_at)) -lt "$SELF_UPDATE_CACHE_TTL" ]
 }
 
+self_update_cache_has_release_metadata() {
+	case "$SELF_UPDATE_CACHE_RELEASE_DRAFT" in
+	0 | 1) ;;
+	*) return 1 ;;
+	esac
+	case "$SELF_UPDATE_CACHE_RELEASE_PRERELEASE" in
+	0 | 1) ;;
+	*) return 1 ;;
+	esac
+	case "$SELF_UPDATE_CACHE_RELEASE_IMMUTABLE" in
+	0 | 1) ;;
+	*) return 1 ;;
+	esac
+	[ -n "$SELF_UPDATE_CACHE_UPDATES_URL" ] || return 1
+	[ -n "$SELF_UPDATE_CACHE_UPDATES_DIGEST" ] || return 1
+	[ -n "$SELF_UPDATE_CACHE_MANIFEST_URL" ] || return 1
+	[ -n "$SELF_UPDATE_CACHE_MANIFEST_DIGEST" ] || return 1
+	[ -n "$SELF_UPDATE_CACHE_SUMS_URL" ] || return 1
+	[ -n "$SELF_UPDATE_CACHE_SUMS_DIGEST" ] || return 1
+	return 0
+}
+
 self_update_cache_write() {
 	local path="$1"
 	local checked_at="$2"
 	local latest_tag="$3"
+	local release_draft="${4:-}"
+	local release_prerelease="${5:-}"
+	local release_immutable="${6:-}"
+	local updates_url="${7:-}"
+	local updates_digest="${8:-}"
+	local manifest_url="${9:-}"
+	local manifest_digest="${10:-}"
+	local sums_url="${11:-}"
+	local sums_digest="${12:-}"
 	local dir=""
 	local tmp=""
 
@@ -1138,8 +1196,19 @@ self_update_cache_write() {
 	tmp="${path}.tmp.$$"
 	if ! (
 		umask 077
-		printf 'checked_at=%s\n' "$checked_at" >"$tmp"
-		printf 'latest_tag=%s\n' "$latest_tag" >>"$tmp"
+		{
+			printf 'checked_at=%s\n' "$checked_at"
+			printf 'latest_tag=%s\n' "$latest_tag"
+			printf 'draft=%s\n' "$release_draft"
+			printf 'prerelease=%s\n' "$release_prerelease"
+			printf 'immutable=%s\n' "$release_immutable"
+			printf 'updates_url=%s\n' "$updates_url"
+			printf 'updates_digest=%s\n' "$updates_digest"
+			printf 'manifest_url=%s\n' "$manifest_url"
+			printf 'manifest_digest=%s\n' "$manifest_digest"
+			printf 'sums_url=%s\n' "$sums_url"
+			printf 'sums_digest=%s\n' "$sums_digest"
+		} >"$tmp"
 	); then
 		debug "self-update: failed to write cache temp file: $tmp"
 		rm -f "$tmp"
@@ -1189,6 +1258,16 @@ maybe_self_update() {
 	local tag=""
 	local release_json=""
 	local cache_file=""
+	local release_draft="0"
+	local release_prerelease="0"
+	local release_immutable="0"
+	local updates_url=""
+	local updates_digest=""
+	local manifest_url=""
+	local manifest_digest=""
+	local sums_url=""
+	local sums_digest=""
+	local parsed_release=""
 	if ! cache_file="$(self_update_cache_file "$repo")"; then
 		debug "self-update: failed to resolve cache file; proceeding without cache"
 		cache_file=""
@@ -1208,11 +1287,25 @@ maybe_self_update() {
 			elif self_update_cache_is_fresh "$current_epoch" "$SELF_UPDATE_CACHE_CHECKED_AT"; then
 				tag="$SELF_UPDATE_CACHE_LATEST_TAG"
 				if self_update_cache_latest_is_newer_than_current "$tag"; then
-					debug "self-update: cached release tag (${tag}) is newer; deferring live metadata check until cache expires"
+					if self_update_cache_has_release_metadata; then
+						live_check_needed=0
+						release_draft="$SELF_UPDATE_CACHE_RELEASE_DRAFT"
+						release_prerelease="$SELF_UPDATE_CACHE_RELEASE_PRERELEASE"
+						release_immutable="$SELF_UPDATE_CACHE_RELEASE_IMMUTABLE"
+						updates_url="$SELF_UPDATE_CACHE_UPDATES_URL"
+						updates_digest="$SELF_UPDATE_CACHE_UPDATES_DIGEST"
+						manifest_url="$SELF_UPDATE_CACHE_MANIFEST_URL"
+						manifest_digest="$SELF_UPDATE_CACHE_MANIFEST_DIGEST"
+						sums_url="$SELF_UPDATE_CACHE_SUMS_URL"
+						sums_digest="$SELF_UPDATE_CACHE_SUMS_DIGEST"
+						debug "self-update: using cached release metadata for newer tag (${tag}) from ${cache_file}"
+					else
+						debug "self-update: cached release tag (${tag}) is newer but metadata is incomplete; fetching live metadata"
+					fi
 				else
 					debug "self-update: using cached release tag (${tag}) from ${cache_file}"
+					return 0
 				fi
-				return 0
 			else
 				debug "self-update: cached release tag is stale; refreshing (${cache_file})"
 			fi
@@ -1229,17 +1322,6 @@ maybe_self_update() {
 			return 0
 		fi
 	fi
-
-	local release_draft="0"
-	local release_prerelease="0"
-	local release_immutable="0"
-	local updates_url=""
-	local updates_digest=""
-	local manifest_url=""
-	local manifest_digest=""
-	local sums_url=""
-	local sums_digest=""
-	local parsed_release=""
 
 	if [ -n "$release_json" ]; then
 		if ! parsed_release="$(printf '%s' "$release_json" | self_update_parse_release_metadata 2>/dev/null)"; then
@@ -1282,7 +1364,19 @@ maybe_self_update() {
 		done <<<"$parsed_release"
 
 		if [ -n "$cache_file" ] && [ -n "$current_epoch" ] && [ -n "$tag" ]; then
-			self_update_cache_write "$cache_file" "$current_epoch" "$tag" || true
+			self_update_cache_write \
+				"$cache_file" \
+				"$current_epoch" \
+				"$tag" \
+				"$release_draft" \
+				"$release_prerelease" \
+				"$release_immutable" \
+				"$updates_url" \
+				"$updates_digest" \
+				"$manifest_url" \
+				"$manifest_digest" \
+				"$sums_url" \
+				"$sums_digest" || true
 		fi
 	fi
 

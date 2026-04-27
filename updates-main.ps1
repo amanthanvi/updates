@@ -1310,11 +1310,29 @@ function Read-SelfUpdateCache {
     try {
         $checkedAt = $null
         $latestTag = $null
+        $draft = $null
+        $prerelease = $null
+        $immutable = $null
+        $windowsUrl = $null
+        $windowsDigest = $null
+        $manifestUrl = $null
+        $manifestDigest = $null
+        $sumsUrl = $null
+        $sumsDigest = $null
         foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
-            if ($line -match '^(checked_at|latest_tag)=(.*)$') {
+            if ($line -match '^(checked_at|latest_tag|draft|prerelease|immutable|windows_url|windows_digest|manifest_url|manifest_digest|sums_url|sums_digest)=(.*)$') {
                 switch ($Matches[1]) {
                     'checked_at' { $checkedAt = $Matches[2] }
                     'latest_tag' { $latestTag = $Matches[2] }
+                    'draft' { $draft = $Matches[2] }
+                    'prerelease' { $prerelease = $Matches[2] }
+                    'immutable' { $immutable = $Matches[2] }
+                    'windows_url' { $windowsUrl = $Matches[2] }
+                    'windows_digest' { $windowsDigest = $Matches[2] }
+                    'manifest_url' { $manifestUrl = $Matches[2] }
+                    'manifest_digest' { $manifestDigest = $Matches[2] }
+                    'sums_url' { $sumsUrl = $Matches[2] }
+                    'sums_digest' { $sumsDigest = $Matches[2] }
                 }
             }
         }
@@ -1324,8 +1342,17 @@ function Read-SelfUpdateCache {
         }
 
         return [pscustomobject]@{
-            CheckedAt = [int64]$checkedAt
-            LatestTag = $latestTag
+            CheckedAt      = [int64]$checkedAt
+            LatestTag      = $latestTag
+            Draft          = $draft
+            Prerelease     = $prerelease
+            Immutable      = $immutable
+            WindowsUrl     = $windowsUrl
+            WindowsDigest  = $windowsDigest
+            ManifestUrl    = $manifestUrl
+            ManifestDigest = $manifestDigest
+            SumsUrl        = $sumsUrl
+            SumsDigest     = $sumsDigest
         }
     } catch {
         return $null
@@ -1345,11 +1372,42 @@ function Test-SelfUpdateCacheFresh {
     return (($CurrentEpoch - $CheckedAt) -lt $script:SelfUpdateCacheTtl)
 }
 
+function Test-SelfUpdateCacheHasReleaseMetadata {
+    param($Cache)
+
+    if ($null -eq $Cache) {
+        return $false
+    }
+
+    foreach ($name in @('Draft', 'Prerelease', 'Immutable')) {
+        if ([string]$Cache.$name -notin @('0', '1')) {
+            return $false
+        }
+    }
+
+    foreach ($name in @('WindowsUrl', 'WindowsDigest', 'ManifestUrl', 'ManifestDigest', 'SumsUrl', 'SumsDigest')) {
+        if ([string]::IsNullOrWhiteSpace([string]$Cache.$name)) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
 function Write-SelfUpdateCache {
     param(
         [string]$Path,
         [int64]$CheckedAt,
-        [string]$LatestTag
+        [string]$LatestTag,
+        [string]$Draft = '',
+        [string]$Prerelease = '',
+        [string]$Immutable = '',
+        [string]$WindowsUrl = '',
+        [string]$WindowsDigest = '',
+        [string]$ManifestUrl = '',
+        [string]$ManifestDigest = '',
+        [string]$SumsUrl = '',
+        [string]$SumsDigest = ''
     )
 
     if (-not $Path -or [string]::IsNullOrWhiteSpace($LatestTag)) {
@@ -1362,7 +1420,21 @@ function Write-SelfUpdateCache {
             $null = New-Item -ItemType Directory -Path $dir -Force
         }
         $temp = Join-Path $dir ('.cache-{0}.tmp' -f [guid]::NewGuid().ToString('N'))
-        [System.IO.File]::WriteAllText($temp, ("checked_at={0}`nlatest_tag={1}`n" -f $CheckedAt, $LatestTag), [System.Text.UTF8Encoding]::new($false))
+        $content = @(
+            ("checked_at={0}" -f $CheckedAt)
+            ("latest_tag={0}" -f $LatestTag)
+            ("draft={0}" -f $Draft)
+            ("prerelease={0}" -f $Prerelease)
+            ("immutable={0}" -f $Immutable)
+            ("windows_url={0}" -f $WindowsUrl)
+            ("windows_digest={0}" -f $WindowsDigest)
+            ("manifest_url={0}" -f $ManifestUrl)
+            ("manifest_digest={0}" -f $ManifestDigest)
+            ("sums_url={0}" -f $SumsUrl)
+            ("sums_digest={0}" -f $SumsDigest)
+            ''
+        ) -join "`n"
+        [System.IO.File]::WriteAllText($temp, $content, [System.Text.UTF8Encoding]::new($false))
         Move-Item -LiteralPath $temp -Destination $Path -Force
         return $true
     } catch {
@@ -1406,41 +1478,106 @@ function Invoke-WindowsSelfUpdate {
 
     $cachePath = Get-SelfUpdateCachePath
     $currentEpoch = Get-SelfUpdateEpoch
+    $latestTag = $null
+    $latestVersion = $null
+    $releaseDraft = $false
+    $releasePrerelease = $false
+    $releaseImmutable = $false
+    $assets = @{}
     if (-not $script:ForceSelfUpdate) {
         $cache = Read-SelfUpdateCache -Path $cachePath
         if ($cache -and (Test-SelfUpdateCacheFresh -CurrentEpoch $currentEpoch -CheckedAt $cache.CheckedAt)) {
             $cachedTag = [string]$cache.LatestTag
             if ($cachedTag -match '^v?(\d+\.\d+\.\d+)$') {
-                Write-DebugLine ("self-update: using cached release tag ({0}) from {1}" -f $cachedTag, $cachePath)
-                return
+                $cachedVersion = $Matches[1]
+                if ([version]$cachedVersion -le [version]$script:UpdatesVersion) {
+                    Write-DebugLine ("self-update: using cached release tag ({0}) from {1}" -f $cachedTag, $cachePath)
+                    return
+                }
+                if (Test-SelfUpdateCacheHasReleaseMetadata -Cache $cache) {
+                    $latestTag = $cachedTag
+                    $latestVersion = $cachedVersion
+                    $releaseDraft = ([string]$cache.Draft -eq '1')
+                    $releasePrerelease = ([string]$cache.Prerelease -eq '1')
+                    $releaseImmutable = ([string]$cache.Immutable -eq '1')
+                    $assets = @{
+                        $script:WindowsAssetName = [pscustomobject]@{
+                            name = $script:WindowsAssetName
+                            digest = [string]$cache.WindowsDigest
+                            browser_download_url = [string]$cache.WindowsUrl
+                        }
+                        $script:ReleaseManifestName = [pscustomobject]@{
+                            name = $script:ReleaseManifestName
+                            digest = [string]$cache.ManifestDigest
+                            browser_download_url = [string]$cache.ManifestUrl
+                        }
+                        $script:ChecksumAssetName = [pscustomobject]@{
+                            name = $script:ChecksumAssetName
+                            digest = [string]$cache.SumsDigest
+                            browser_download_url = [string]$cache.SumsUrl
+                        }
+                    }
+                    Write-DebugLine ("self-update: using cached release metadata for newer tag ({0}) from {1}" -f $cachedTag, $cachePath)
+                } else {
+                    Write-DebugLine ("self-update: cached release tag ({0}) is newer but metadata is incomplete; fetching live metadata" -f $cachedTag)
+                }
             }
         }
     }
 
-    $release = $null
-    try {
-        $release = Get-LatestReleaseMetadata
-    } catch {
-        Write-WarnLine 'updates: self-update metadata fetch failed; continuing.'
-        return
+    if (-not $latestVersion) {
+        $release = $null
+        try {
+            $release = Get-LatestReleaseMetadata
+        } catch {
+            Write-WarnLine 'updates: self-update metadata fetch failed; continuing.'
+            return
+        }
+
+        $latestTag = [string]$release.tag_name
+        if ($latestTag -notmatch '^v?(\d+\.\d+\.\d+)$') {
+            Write-WarnLine 'updates: self-update metadata returned an invalid tag; continuing.'
+            return
+        }
+        $latestVersion = $Matches[1]
+        $releaseDraft = [bool]$release.draft
+        $releasePrerelease = [bool]$release.prerelease
+        $releaseImmutable = [bool]$release.immutable
+        $assets = Get-ReleaseAssetMap -Release $release
+
+        $windowsAsset = if ($assets.ContainsKey($script:WindowsAssetName)) { $assets[$script:WindowsAssetName] } else { $null }
+        $manifestAsset = if ($assets.ContainsKey($script:ReleaseManifestName)) { $assets[$script:ReleaseManifestName] } else { $null }
+        $sumsAsset = if ($assets.ContainsKey($script:ChecksumAssetName)) { $assets[$script:ChecksumAssetName] } else { $null }
+        $windowsUrl = if ($null -ne $windowsAsset) { [string]$windowsAsset.browser_download_url } else { '' }
+        $windowsDigest = if ($null -ne $windowsAsset) { [string]$windowsAsset.digest } else { '' }
+        $manifestUrl = if ($null -ne $manifestAsset) { [string]$manifestAsset.browser_download_url } else { '' }
+        $manifestDigest = if ($null -ne $manifestAsset) { [string]$manifestAsset.digest } else { '' }
+        $sumsUrl = if ($null -ne $sumsAsset) { [string]$sumsAsset.browser_download_url } else { '' }
+        $sumsDigest = if ($null -ne $sumsAsset) { [string]$sumsAsset.digest } else { '' }
+        $null = Write-SelfUpdateCache `
+            -Path $cachePath `
+            -CheckedAt $currentEpoch `
+            -LatestTag $latestTag `
+            -Draft $(if ($releaseDraft) { '1' } else { '0' }) `
+            -Prerelease $(if ($releasePrerelease) { '1' } else { '0' }) `
+            -Immutable $(if ($releaseImmutable) { '1' } else { '0' }) `
+            -WindowsUrl $windowsUrl `
+            -WindowsDigest $windowsDigest `
+            -ManifestUrl $manifestUrl `
+            -ManifestDigest $manifestDigest `
+            -SumsUrl $sumsUrl `
+            -SumsDigest $sumsDigest
+
+        if ([version]$latestVersion -le [version]$script:UpdatesVersion) {
+            return
+        }
     }
 
-    $latestTag = [string]$release.tag_name
-    if ($latestTag -notmatch '^v?(\d+\.\d+\.\d+)$') {
-        Write-WarnLine 'updates: self-update metadata returned an invalid tag; continuing.'
-        return
-    }
-    $null = Write-SelfUpdateCache -Path $cachePath -CheckedAt $currentEpoch -LatestTag $latestTag
-    $latestVersion = $Matches[1]
-    if ([version]$latestVersion -le [version]$script:UpdatesVersion) {
-        return
-    }
-    if ($release.draft -or $release.prerelease -or (-not $release.immutable)) {
+    if ($releaseDraft -or $releasePrerelease -or (-not $releaseImmutable)) {
         Write-WarnLine 'updates: self-update release metadata did not satisfy trust requirements; continuing.'
         return
     }
 
-    $assets = Get-ReleaseAssetMap -Release $release
     foreach ($name in @($script:WindowsAssetName, $script:ReleaseManifestName, $script:ChecksumAssetName)) {
         if (-not $assets.ContainsKey($name)) {
             Write-WarnLine 'updates: self-update release assets are incomplete; continuing.'
