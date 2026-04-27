@@ -350,7 +350,7 @@ Execution order: `brew`, `shell`, `repos`, `linux`, `winget`, `node`, `bun`, `py
 | `linux`  |  No   |  Yes  | Yes |   No    | Requires a supported package manager + optional `sudo` |
 | `winget` |  No   |  No   | No  |   Yes   | Requires `winget`; default-on on native Windows |
 | `node`   |  Yes  |  Yes  | Yes |   Yes   | Requires `npm`; resolves npm-check-updates per platform |
-| `bun`    |  No   |  No   | No  |   Yes   | Requires `bun`; global package upgrades always, Bun CLI upgrade only when standalone-installed |
+| `bun`    |  Yes  |  Yes  | Yes |   Yes   | Requires `bun`; global package upgrades always, Bun CLI upgrade only when standalone-installed |
 | `python` |  Yes  |  Yes  | Yes |   Yes   | Requires a resolved Python launcher with `pip` |
 | `uv`     |  Yes  |  Yes  | Yes |   Yes   | Requires `uv`; Windows self-update of `uv` only when standalone-installed |
 | `mas`    |  Yes  |  No   | No  |   No    | Requires `mas` (opt-in) |

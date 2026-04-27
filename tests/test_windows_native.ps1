@@ -608,6 +608,8 @@ if (Should-RunTest 'native payload self-update applies a verified Windows releas
             $logPath = Join-Path $installRoot 'self-update.log'
             $relaunchArgsPath = Join-Path $installRoot 'relaunch-args.txt'
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
+            $localAppData = Join-Path $installRoot 'localappdata'
+            $null = New-Item -ItemType Directory -Path $localAppData -Force
 
             & {
                 . $payloadSource
@@ -618,6 +620,7 @@ if (Should-RunTest 'native payload self-update applies a verified Windows releas
                 $script:LogLevelNum = 2
                 $script:DryRun = $false
                 $script:SelfUpdate = $true
+                $env:LOCALAPPDATA = $localAppData
 
                 function Test-InstallRootWritable { return $true }
                 function Test-GitCheckout { return $false }
@@ -673,6 +676,8 @@ if (Should-RunTest 'native payload self-update preserves rollback pointer during
             Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -WithReceipt
             $fixture = New-SelfUpdateFixture -Root $installRoot -Version '2.0.1'
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
+            $localAppData = Join-Path $installRoot 'localappdata'
+            $null = New-Item -ItemType Directory -Path $localAppData -Force
 
             Set-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Value 'broken-version' -NoNewline
             Set-Content -LiteralPath (Join-Path $installRoot 'previous.txt') -Value '2.0.0' -NoNewline
@@ -685,6 +690,7 @@ if (Should-RunTest 'native payload self-update preserves rollback pointer during
                 $script:LogLevelNum = 2
                 $script:DryRun = $false
                 $script:SelfUpdate = $true
+                $env:LOCALAPPDATA = $localAppData
 
                 function Test-InstallRootWritable { return $true }
                 function Test-GitCheckout { return $false }
@@ -758,6 +764,41 @@ if (Should-RunTest 'native payload self-update skips live metadata fetch when ca
     }
 }
 
+if (Should-RunTest 'native payload fresh newer-version cache still suppresses live metadata fetch') {
+    Invoke-TestCase 'native payload fresh newer-version cache still suppresses live metadata fetch' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -WithReceipt
+            $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
+            $localAppData = Join-Path $installRoot 'localappdata'
+            $null = New-Item -ItemType Directory -Path $localAppData -Force
+
+            & {
+                . $payloadSource
+                $script:InstallRoot = $installRoot
+                $script:JsonMode = $false
+                $script:LogLevel = 'debug'
+                $script:LogLevelNum = 3
+                $script:DryRun = $false
+                $script:SelfUpdate = $true
+                $script:ForceSelfUpdate = $false
+                $env:LOCALAPPDATA = $localAppData
+
+                function Test-InstallRootWritable { return $true }
+                function Test-GitCheckout { return $false }
+                function Test-SymlinkedInstall { return $false }
+                function Get-LatestReleaseMetadata { throw 'Get-LatestReleaseMetadata should not run with a fresh newer-version cache' }
+
+                $cachePath = Get-SelfUpdateCachePath
+                $null = Write-SelfUpdateCache -Path $cachePath -CheckedAt (Get-SelfUpdateEpoch) -LatestTag 'v2.0.1'
+                $result = Invoke-WindowsSelfUpdate -OriginalArgs @()
+                Assert-True -Condition ($null -eq $result) -Message 'fresh newer-version cache should still suppress live metadata fetches on normal runs'
+            }
+        }
+    }
+}
+
 if (Should-RunTest 'native payload force self-update bypasses fresh cache') {
     Invoke-TestCase 'native payload force self-update bypasses fresh cache' {
         Invoke-WithTempInstall {
@@ -806,6 +847,54 @@ if (Should-RunTest 'native payload force self-update bypasses fresh cache') {
     }
 }
 
+if (Should-RunTest 'native payload self-update continues when asset download retries fail') {
+    Invoke-TestCase 'native payload self-update continues when asset download retries fail' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -WithReceipt
+            $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
+            $logPath = Join-Path $installRoot 'self-update.log'
+
+            & {
+                . $payloadSource
+                $script:InstallRoot = $installRoot
+                $script:LogFile = $logPath
+                $script:JsonMode = $false
+                $script:LogLevel = 'debug'
+                $script:LogLevelNum = 3
+                $script:DryRun = $false
+                $script:SelfUpdate = $true
+
+                function Test-InstallRootWritable { return $true }
+                function Test-GitCheckout { return $false }
+                function Test-SymlinkedInstall { return $false }
+                function Get-LatestReleaseMetadata {
+                    return [pscustomobject]@{
+                        tag_name   = 'v2.0.1'
+                        draft      = $false
+                        prerelease = $false
+                        immutable  = $true
+                        assets     = @(
+                            [pscustomobject]@{ name = 'updates-windows.zip'; digest = 'sha256:deadbeef'; browser_download_url = 'https://example.invalid/updates-windows.zip' },
+                            [pscustomobject]@{ name = 'updates-release.json'; digest = 'sha256:deadbeef'; browser_download_url = 'https://example.invalid/updates-release.json' },
+                            [pscustomobject]@{ name = 'SHA256SUMS'; digest = 'sha256:deadbeef'; browser_download_url = 'https://example.invalid/SHA256SUMS' }
+                        )
+                    }
+                }
+                function Invoke-WebRequest { throw 'simulated download failure' }
+
+                Ensure-LogFileReady
+                $result = Invoke-WindowsSelfUpdate -OriginalArgs @()
+                Assert-True -Condition ($null -eq $result) -Message 'download failure should stay non-fatal and skip relaunch'
+            }
+
+            Assert-Equal -Expected '2.0.0' -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message 'download failure should leave current.txt unchanged'
+            Assert-Match -Text (Get-Content -LiteralPath $logPath -Raw) -Pattern 'self-update asset download or staging failed; continuing' -Message 'download failure should emit the non-fatal warning'
+        }
+    }
+}
+
 if (Should-RunTest 'native payload hard-errors when UPDATES_SELF_UPDATE_REPO is set') {
     Invoke-TestCase 'native payload hard-errors when UPDATES_SELF_UPDATE_REPO is set' {
         Invoke-WithTempInstall {
@@ -841,6 +930,8 @@ if (Should-RunTest 'native payload self-update skips on release digest mismatch'
             $fixture = New-SelfUpdateFixture -Root $installRoot -Version '2.0.1'
             $logPath = Join-Path $installRoot 'self-update.log'
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
+            $localAppData = Join-Path $installRoot 'localappdata'
+            $null = New-Item -ItemType Directory -Path $localAppData -Force
 
             & {
                 . $payloadSource
@@ -851,6 +942,7 @@ if (Should-RunTest 'native payload self-update skips on release digest mismatch'
                 $script:LogLevelNum = 2
                 $script:DryRun = $false
                 $script:SelfUpdate = $true
+                $env:LOCALAPPDATA = $localAppData
 
                 function Test-InstallRootWritable { return $true }
                 function Test-GitCheckout { return $false }
@@ -920,6 +1012,8 @@ if (Should-RunTest 'native payload self-update skips when extracted payload mani
             $fixture = New-SelfUpdateFixture -Root $installRoot -Version '2.0.1' -PayloadBootstrapMin 99
             $logPath = Join-Path $installRoot 'self-update.log'
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
+            $localAppData = Join-Path $installRoot 'localappdata'
+            $null = New-Item -ItemType Directory -Path $localAppData -Force
 
             & {
                 . $payloadSource
@@ -930,6 +1024,7 @@ if (Should-RunTest 'native payload self-update skips when extracted payload mani
                 $script:LogLevelNum = 2
                 $script:DryRun = $false
                 $script:SelfUpdate = $true
+                $env:LOCALAPPDATA = $localAppData
 
                 function Test-InstallRootWritable { return $true }
                 function Test-GitCheckout { return $false }

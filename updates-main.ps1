@@ -1410,7 +1410,7 @@ function Invoke-WindowsSelfUpdate {
         $cache = Read-SelfUpdateCache -Path $cachePath
         if ($cache -and (Test-SelfUpdateCacheFresh -CurrentEpoch $currentEpoch -CheckedAt $cache.CheckedAt)) {
             $cachedTag = [string]$cache.LatestTag
-            if ($cachedTag -match '^v?(\d+\.\d+\.\d+)$' -and [version]$Matches[1] -le [version]$script:UpdatesVersion) {
+            if ($cachedTag -match '^v?(\d+\.\d+\.\d+)$') {
                 Write-DebugLine ("self-update: using cached release tag ({0}) from {1}" -f $cachedTag, $cachePath)
                 return
             }
@@ -1523,6 +1523,11 @@ function Invoke-WindowsSelfUpdate {
             Relaunched = $true
             ExitCode   = (Invoke-SelfUpdatedRelaunch -OriginalArgs $OriginalArgs)
         }
+    }
+    catch {
+        Write-DebugLine ("self-update: non-fatal failure during asset download or staging: {0}" -f $_.Exception.Message)
+        Write-WarnLine 'updates: self-update asset download or staging failed; continuing.'
+        return
     }
     finally {
         if (Test-Path -LiteralPath $tempRoot) {

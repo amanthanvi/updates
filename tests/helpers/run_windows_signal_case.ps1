@@ -20,6 +20,7 @@ $nativeProcess = $null
 $result = [ordered]@{
     signal_type = $SignalType
     status = 'error'
+    helper_exit = $null
     child_exit = $null
     message = ''
 }
@@ -79,6 +80,12 @@ catch {
     $result.message = $_.Exception.Message
 }
 finally {
+    if ($result.status -eq 'ok') {
+        $result.helper_exit = 0
+    } else {
+        $result.helper_exit = 1
+    }
+
     if ($nativeProcess) {
         try {
             Stop-NativeProcess -Process $nativeProcess

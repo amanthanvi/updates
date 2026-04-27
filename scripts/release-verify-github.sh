@@ -49,15 +49,10 @@ if [ "$MODE" = "published" ] && [ "$IMMUTABLE_STATE" != "true" ]; then
 fi
 
 EXPECTED_ASSETS="$(release_expected_assets | sort)"
-ACTUAL_ASSETS="$(printf '%s' "$RELEASE_JSON" | jq -r '.assets[].name' | sort)"
-while IFS= read -r asset; do
-	[ -n "$asset" ] || continue
-	if ! printf '%s\n' "$ACTUAL_ASSETS" | grep -Fxq "$asset"; then
-		release_fail "Missing required GitHub release asset for $TAG: $asset"
-	fi
-done <<EOF
-$EXPECTED_ASSETS
-EOF
+ACTUAL_ASSETS="$(printf '%s' "$RELEASE_JSON" | jq -r '.assets[].name' | sort -u)"
+if [ "$ACTUAL_ASSETS" != "$EXPECTED_ASSETS" ]; then
+	release_fail "$(printf 'Unexpected GitHub release asset set for %s\nExpected:\n%s\nActual:\n%s' "$TAG" "$EXPECTED_ASSETS" "$ACTUAL_ASSETS")"
+fi
 
 while IFS= read -r asset; do
 	local_digest="sha256:$(release_sha256 "$DIST_DIR/$asset")"
