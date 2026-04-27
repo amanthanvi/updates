@@ -697,6 +697,22 @@ function Resolve-PythonLauncher {
     return $null
 }
 
+function Test-ExternallyManagedPython {
+    param($Python)
+
+    if (-not $Python) {
+        return $false
+    }
+
+    $probe = Invoke-CapturedProcess -FilePath $Python.FilePath -ArgumentList (
+        $Python.Prefix + @(
+            '-c',
+            'import sysconfig, pathlib; paths=sysconfig.get_paths(); c=[pathlib.Path(paths[k])/"EXTERNALLY-MANAGED" for k in ("stdlib","platstdlib","purelib","platlib") if paths.get(k)]; print("1" if any(p.exists() for p in c) else "0")'
+        )
+    )
+    return ($probe.ExitCode -eq 0 -and $probe.Stdout.Trim() -eq '1')
+}
+
 function Resolve-MissingDependency {
     param(
         [string]$ModuleName,
@@ -898,8 +914,18 @@ function Invoke-ModulePython {
 
     $listArgs = $python.Prefix + @('-m', 'pip', '--disable-pip-version-check', 'list', '--outdated', '--format=json')
     $installPrefix = $python.Prefix + @('-m', 'pip', '--disable-pip-version-check', 'install', '-U')
+    $useUser = $false
+    if (-not $script:PipForce -and (Test-ExternallyManagedPython -Python $python)) {
+        $useUser = $true
+        Write-LogLine 'python: externally-managed environment detected; upgrading user-site packages.'
+        Write-LogLine 'python: use --pip-force to override (dangerous).'
+    }
     if ($script:NonInteractive) {
         $installPrefix += '--no-input'
+    }
+    if ($useUser) {
+        $listArgs += '--user'
+        $installPrefix += '--user'
     }
     if ($script:PipForce) {
         $installPrefix += '--break-system-packages'
@@ -1731,7 +1757,7 @@ function Invoke-UpdatesMain {
     Read-Config
     Parse-Args -CliInput $script:EffectiveCliArgs
 
-    if (-not [string]::IsNullOrWhiteSpace($env:UPDATES_SELF_UPDATE_REPO)) {
+    if (Test-Path Env:UPDATES_SELF_UPDATE_REPO) {
         Fail-Usage ("UPDATES_SELF_UPDATE_REPO is no longer supported in v2.0.0; self-update is fixed to {0}" -f $script:CanonicalRepo)
     }
 

@@ -619,6 +619,11 @@ function Install-RepoWindowsRuntime {
     Set-VersionPointers -InstallRoot $InstallRoot -CurrentVersion $Version
     if ($WithReceipt) {
         Write-InstallReceipt -InstallRoot $InstallRoot -InstalledVersion $Version
+    } else {
+        $receiptPath = Join-Path $InstallRoot 'install-source.json'
+        if (Test-Path -LiteralPath $receiptPath -PathType Leaf) {
+            Remove-Item -LiteralPath $receiptPath -Force
+        }
     }
 }
 

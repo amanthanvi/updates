@@ -231,6 +231,23 @@ while (`$true) {
     }
 }
 
+if (Should-RunTest 'Install-RepoWindowsRuntime removes stale receipt when omitted') {
+    Invoke-TestCase 'Install-RepoWindowsRuntime removes stale receipt when omitted' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -WithReceipt
+            $receiptPath = Join-Path $installRoot 'install-source.json'
+            Assert-FileExists -Path $receiptPath -Message 'helper should write a receipt when requested'
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+            if (Test-Path -LiteralPath $receiptPath -PathType Leaf) {
+                throw "expected Install-RepoWindowsRuntime without -WithReceipt to remove stale install-source.json at $receiptPath"
+            }
+        }
+    }
+}
+
 if (Should-RunTest 'native payload errors when --only selects an unsupported Windows module') {
     Invoke-TestCase 'native payload errors when --only selects an unsupported Windows module' {
         Invoke-WithTempInstall {
@@ -349,6 +366,44 @@ if (Should-RunTest 'native payload dry-run covers winget, node fallback, bun, py
             Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*rustup(\.cmd)? update' -Message 'rustup dry-run command mismatch'
             Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*go(\.cmd)? install example\.com/cmd/foo@latest' -Message 'go should default missing versions to @latest'
             Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*go(\.cmd)? install example\.com/cmd/bar@v1\.2\.3' -Message 'go should preserve explicit versions'
+        }
+    }
+}
+
+if (Should-RunTest 'native payload uses --user for externally managed Python environments') {
+    Invoke-TestCase 'native payload uses --user for externally managed Python environments' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'py.cmd') -Lines @(
+                'if "%~1"=="-3" shift',
+                'if "%~1"=="-c" (echo 1 & exit /b 0)',
+                'if "%~1"=="-m" if "%~2"=="pip" if "%~3"=="--version" echo pip 25.0 from py-stub'
+            )
+
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
+                '--no-self-update',
+                '--dry-run',
+                '--only', 'python',
+                '--no-color',
+                '--no-emoji'
+            ) -Environment @{
+                PATH        = $stubDir
+                HOME        = $installRoot
+                USERPROFILE = $installRoot
+            }
+
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'externally managed Python dry-run should still succeed'
+            Assert-Match -Text $result.Output -Pattern '(?i)externally-managed environment detected; upgrading user-site packages\.' -Message 'PEP 668 detection should be explicit'
+            Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*py(\.cmd)? -3 -m pip --disable-pip-version-check list --outdated --format=json --user' -Message 'externally managed Python should query user-site packages'
+            Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*py(\.cmd)? -3 -m pip --disable-pip-version-check install -U --user <package>' -Message 'externally managed Python should install into the user site'
+            if ($result.Output -match '--break-system-packages') {
+                throw 'externally managed Python dry-run should not add --break-system-packages without --pip-force'
+            }
         }
     }
 }
@@ -984,14 +1039,16 @@ if (Should-RunTest 'native payload hard-errors when UPDATES_SELF_UPDATE_REPO is 
             $emptyPath = Join-Path $installRoot 'empty-path'
             $null = New-Item -ItemType Directory -Path $emptyPath -Force
 
-            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-color', '--no-emoji') -Environment @{
-                PATH                     = $emptyPath
-                UPDATES_SELF_UPDATE_REPO = 'other/repo'
-            }
+            foreach ($overrideValue in @('other/repo', '')) {
+                $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-color', '--no-emoji') -Environment @{
+                    PATH                     = $emptyPath
+                    UPDATES_SELF_UPDATE_REPO = $overrideValue
+                }
 
-            Assert-Equal -Expected 2 -Actual $result.ExitCode -Message 'custom self-update repo override should be a usage error on Windows v2'
-            Assert-Match -Text $result.Output -Pattern 'UPDATES_SELF_UPDATE_REPO' -Message 'error should reference UPDATES_SELF_UPDATE_REPO explicitly'
-            Assert-Match -Text $result.Output -Pattern '(?i)(not supported|no longer supported|unsupported)' -Message 'error should explain that custom self-update repos are not supported'
+                Assert-Equal -Expected 2 -Actual $result.ExitCode -Message 'custom self-update repo override should be a usage error on Windows v2'
+                Assert-Match -Text $result.Output -Pattern 'UPDATES_SELF_UPDATE_REPO' -Message 'error should reference UPDATES_SELF_UPDATE_REPO explicitly'
+                Assert-Match -Text $result.Output -Pattern '(?i)(not supported|no longer supported|unsupported)' -Message 'error should explain that custom self-update repos are not supported'
+            }
         }
     }
 }

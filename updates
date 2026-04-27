@@ -874,6 +874,123 @@ self_update_latest_release_json_github() {
 	curl -fsSL --connect-timeout 2 --max-time 5 "$api" 2>/dev/null || return 1
 }
 
+self_update_json_compact() {
+	tr '\r\n' ' ' | sed 's/[[:space:]]\+/ /g'
+}
+
+self_update_json_unescape() {
+	printf '%s' "$1" | sed 's/\\\\/\\/g; s/\\"/"/g; s#\\/#/#g'
+}
+
+self_update_json_extract_string() {
+	local json="$1"
+	local key="$2"
+	local optional="${3:-0}"
+	local value=""
+
+	if ! printf '%s\n' "$json" | grep -Eq "\"${key}\"[[:space:]]*:"; then
+		if [ "$optional" -eq 1 ]; then
+			stdout_print ""
+			return 0
+		fi
+		return 1
+	fi
+
+	if printf '%s\n' "$json" | grep -Eq "\"${key}\"[[:space:]]*:[[:space:]]*null"; then
+		stdout_print ""
+		return 0
+	fi
+
+	value="$(printf '%s\n' "$json" | sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n 1)"
+	if [ -n "$value" ] || printf '%s\n' "$json" | grep -Eq "\"${key}\"[[:space:]]*:[[:space:]]*\"\""; then
+		value="$(self_update_json_unescape "$value")"
+		stdout_print "$value"
+		return 0
+	fi
+
+	if [ "$optional" -eq 1 ]; then
+		stdout_print ""
+		return 0
+	fi
+	return 1
+}
+
+self_update_json_extract_bool() {
+	local json="$1"
+	local key="$2"
+
+	if printf '%s\n' "$json" | grep -Eq "\"${key}\"[[:space:]]*:[[:space:]]*true"; then
+		stdout_print "1"
+		return 0
+	fi
+	if printf '%s\n' "$json" | grep -Eq "\"${key}\"[[:space:]]*:[[:space:]]*false"; then
+		stdout_print "0"
+		return 0
+	fi
+	return 1
+}
+
+self_update_parse_release_metadata_sh() {
+	local json=""
+	local tag_name=""
+	local draft=""
+	local prerelease=""
+	local immutable=""
+	local assets=""
+	local item=""
+	local name=""
+	local digest=""
+	local url=""
+
+	json="$(self_update_json_compact)" || return 1
+	tag_name="$(self_update_json_extract_string "$json" "tag_name")" || return 1
+	draft="$(self_update_json_extract_bool "$json" "draft")" || return 1
+	prerelease="$(self_update_json_extract_bool "$json" "prerelease")" || return 1
+	immutable="$(self_update_json_extract_bool "$json" "immutable")" || return 1
+
+	printf 'tag_name\t%s\n' "$tag_name"
+	printf 'draft\t%s\n' "$draft"
+	printf 'prerelease\t%s\n' "$prerelease"
+	printf 'immutable\t%s\n' "$immutable"
+
+	if ! printf '%s\n' "$json" | grep -Eq '"assets"[[:space:]]*:'; then
+		return 1
+	fi
+	if printf '%s\n' "$json" | grep -Eq '"assets"[[:space:]]*:[[:space:]]*\[[[:space:]]*\]'; then
+		return 0
+	fi
+
+	assets="$(printf '%s\n' "$json" | sed -n 's/.*"assets"[[:space:]]*:[[:space:]]*\[\(.*\)\][[:space:]]*[,}].*/\1/p' | head -n 1)"
+	[ -n "$assets" ] || return 1
+	assets="$(printf '%s\n' "$assets" | sed 's/}[[:space:]]*,[[:space:]]*{/\}\n\{/g')"
+
+	while IFS= read -r item; do
+		[ -n "$item" ] || continue
+		name="$(self_update_json_extract_string "$item" "name" 1)"
+		digest="$(self_update_json_extract_string "$item" "digest" 1)"
+		url="$(self_update_json_extract_string "$item" "browser_download_url" 1)"
+		printf 'asset\t%s\t%s\t%s\n' "$name" "$digest" "$url"
+	done <<EOF
+$assets
+EOF
+
+	return 0
+}
+
+self_update_parse_release_manifest_sh() {
+	local json=""
+	local key=""
+	local value=""
+
+	json="$(self_update_json_compact)" || return 1
+	for key in version source_repo channel bootstrap_min windows_asset unix_asset checksum_asset; do
+		value="$(self_update_json_extract_string "$json" "$key")" || return 1
+		printf '%s\t%s\n' "$key" "$value"
+	done
+
+	return 0
+}
+
 self_update_parse_release_metadata() {
 	if python_launcher_resolve; then
 		python_run_cmd -c 'import json, sys
@@ -897,7 +1014,7 @@ for asset in obj.get("assets", []) or []:
 		return $?
 	fi
 
-	return 1
+	self_update_parse_release_metadata_sh
 }
 
 self_update_parse_release_manifest() {
@@ -915,7 +1032,7 @@ for key in ("version", "source_repo", "channel", "bootstrap_min", "windows_asset
 		return $?
 	fi
 
-	return 1
+	self_update_parse_release_manifest_sh
 }
 
 self_update_verify_digest() {
@@ -1014,7 +1131,7 @@ self_update_cache_latest_is_newer_than_current() {
 }
 
 self_update_reject_removed_repo_override() {
-	if [ -n "${UPDATES_SELF_UPDATE_REPO+x}" ] && [ -n "${UPDATES_SELF_UPDATE_REPO}" ]; then
+	if [ "${UPDATES_SELF_UPDATE_REPO+x}" = "x" ]; then
 		die "UPDATES_SELF_UPDATE_REPO is no longer supported in v2.0.0; self-update is fixed to ${SELF_UPDATE_REPO}"
 	fi
 }

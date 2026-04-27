@@ -232,6 +232,31 @@ sums_digest=sha256:$(sha256_file_test "${fixture_dir}/SHA256SUMS")
 EOF
 }
 
+assert_self_update_override_rejected() {
+	local override_value="$1"
+	local label="$2"
+	local out=""
+	local rc=0
+
+	set +e
+	out="$(UPDATES_SELF_UPDATE_REPO="$override_value" "$SCRIPT" --dry-run --only brew --no-emoji --no-color 2>&1)"
+	rc=$?
+	set -e
+
+	if [ "$rc" -ne 2 ]; then
+		echo "Expected exit code 2 when UPDATES_SELF_UPDATE_REPO is ${label} (got $rc)" >&2
+		echo "$out" >&2
+		exit 1
+	fi
+	echo "$out" | grep -q 'UPDATES_SELF_UPDATE_REPO'
+	echo "$out" | grep -Eq 'no longer supported|fixed to'
+	if echo "$out" | grep -q '^DRY RUN:'; then
+		echo "Expected UPDATES_SELF_UPDATE_REPO validation to stop before any dry-run action (${label})" >&2
+		echo "$out" >&2
+		exit 1
+	fi
+}
+
 CALL_LOG="${tmp_dir}/calls.log"
 export CALL_LOG
 
@@ -704,21 +729,8 @@ echo "$out" | grep -q "DRY RUN: git -C ${repos_dry_dir}/aman-dry-setup pull --ff
 echo "$out" | grep -q "DRY RUN: (cd ${repos_dry_dir}/aman-dry-setup && ./scripts/update.sh)"
 
 echo "Test: removed self-update repo override errors"
-set +e
-self_update_override_out="$(UPDATES_SELF_UPDATE_REPO=fake/repo "$SCRIPT" --dry-run --only brew --no-emoji --no-color 2>&1)"
-self_update_override_rc=$?
-set -e
-if [ "$self_update_override_rc" -ne 2 ]; then
-	echo "Expected exit code 2 when UPDATES_SELF_UPDATE_REPO is set (got $self_update_override_rc)" >&2
-	exit 1
-fi
-echo "$self_update_override_out" | grep -q 'UPDATES_SELF_UPDATE_REPO'
-echo "$self_update_override_out" | grep -Eq 'no longer supported|fixed to'
-if echo "$self_update_override_out" | grep -q '^DRY RUN:'; then
-	echo "Expected UPDATES_SELF_UPDATE_REPO validation to stop before any dry-run action" >&2
-	echo "$self_update_override_out" >&2
-	exit 1
-fi
+assert_self_update_override_rejected 'fake/repo' 'non-empty'
+assert_self_update_override_rejected '' 'empty'
 
 echo "Test: Unix self-update fresh newer-version cache reuses cached metadata"
 self_update_cache_install="${tmp_dir}/self-update-install-cache"
@@ -797,6 +809,32 @@ if [ "$("$self_update_manifest_script" --version)" != "2.0.0" ]; then
 	echo "Expected invalid manifest to leave installed version unchanged" >&2
 	exit 1
 fi
+
+echo "Test: Unix self-update works without Python or Node parsers"
+self_update_fallback_install="${tmp_dir}/self-update-install-fallback"
+self_update_fallback_script="$(make_installed_copy "$self_update_fallback_install")"
+self_update_fallback_bin="${tmp_dir}/self-update-bin-fallback"
+self_update_fallback_fixture="${tmp_dir}/self-update-fixture-fallback"
+self_update_fallback_xdg="${tmp_dir}/self-update-xdg-fallback"
+self_update_fallback_http_log="${tmp_dir}/self-update-http-fallback.log"
+mkdir -p "$self_update_fallback_bin" "$self_update_fallback_fixture" "${self_update_fallback_xdg}/updates"
+write_stub_to_dir "$self_update_fallback_bin" uname 'echo Darwin'
+# shellcheck disable=SC2016
+write_stub_to_dir "$self_update_fallback_bin" brew 'echo "brew $*" >>"$CALL_LOG"'
+write_self_update_curl_stub "$self_update_fallback_bin"
+create_self_update_fixture "$self_update_fallback_fixture" '2.0.1'
+: >"$self_update_fallback_http_log"
+: >"$CALL_LOG"
+out="$(UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_fallback_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_fallback_fixture" SELF_UPDATE_CALL_LOG="$self_update_fallback_http_log" PATH="${self_update_fallback_bin}:${BASE_PATH}" "$self_update_fallback_script" --only brew --no-emoji --no-color 2>&1)"
+grep -q '^curl https://api.github.com/repos/amanthanvi/updates/releases/latest$' "$self_update_fallback_http_log"
+grep -q '^curl https://example.invalid/updates-release.json$' "$self_update_fallback_http_log"
+grep -q '^curl https://example.invalid/updates$' "$self_update_fallback_http_log"
+if [ "$("$self_update_fallback_script" --version)" != "2.0.1" ]; then
+	echo "Expected shell-only self-update fallback to install version 2.0.1" >&2
+	echo "$out" >&2
+	exit 1
+fi
+grep -q '^brew update$' "$CALL_LOG"
 
 echo "Test: config BOM is tolerated"
 config_home_bom="${tmp_dir}/home-config-bom"
