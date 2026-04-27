@@ -159,7 +159,7 @@ create_self_update_fixture() {
   "version": "${version}",
   "source_repo": "${manifest_source_repo}",
   "channel": "github-release",
-  "bootstrap_min": "0",
+  "bootstrap_min": 0,
   "windows_asset": "updates-windows.zip",
   "unix_asset": "updates",
   "checksum_asset": "SHA256SUMS"
@@ -822,6 +822,9 @@ mkdir -p "$self_update_fallback_bin" "$self_update_fallback_fixture" "${self_upd
 write_stub_to_dir "$self_update_fallback_bin" uname 'echo Darwin'
 # shellcheck disable=SC2016
 write_stub_to_dir "$self_update_fallback_bin" brew 'echo "brew $*" >>"$CALL_LOG"'
+write_stub_to_dir "$self_update_fallback_bin" python 'exit 127'
+write_stub_to_dir "$self_update_fallback_bin" python3 'exit 127'
+write_stub_to_dir "$self_update_fallback_bin" node 'exit 127'
 write_self_update_curl_stub "$self_update_fallback_bin"
 create_self_update_fixture "$self_update_fallback_fixture" '2.0.1'
 : >"$self_update_fallback_http_log"

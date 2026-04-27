@@ -718,10 +718,10 @@ python_launcher_resolve() {
 		PYTHON_CMD="py"
 		PYTHON_CMD_ARG="-3"
 		PYTHON_CMD_LABEL="py -3"
-	elif cmd_exists python; then
+	elif cmd_exists python && python -c 'import sys' >/dev/null 2>&1; then
 		PYTHON_CMD="python"
 		PYTHON_CMD_LABEL="python"
-	elif cmd_exists python3; then
+	elif cmd_exists python3 && python3 -c 'import sys' >/dev/null 2>&1; then
 		PYTHON_CMD="python3"
 		PYTHON_CMD_LABEL="python3"
 	fi
@@ -930,6 +930,33 @@ self_update_json_extract_bool() {
 	return 1
 }
 
+self_update_json_extract_number() {
+	local json="$1"
+	local key="$2"
+	local optional="${3:-0}"
+	local value=""
+
+	if ! printf '%s\n' "$json" | grep -Eq "\"${key}\"[[:space:]]*:"; then
+		if [ "$optional" -eq 1 ]; then
+			stdout_print ""
+			return 0
+		fi
+		return 1
+	fi
+
+	value="$(printf '%s\n' "$json" | sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p" | head -n 1)"
+	if [ -n "$value" ]; then
+		stdout_print "$value"
+		return 0
+	fi
+
+	if [ "$optional" -eq 1 ]; then
+		stdout_print ""
+		return 0
+	fi
+	return 1
+}
+
 self_update_parse_release_metadata_sh() {
 	local json=""
 	local tag_name=""
@@ -984,7 +1011,11 @@ self_update_parse_release_manifest_sh() {
 
 	json="$(self_update_json_compact)" || return 1
 	for key in version source_repo channel bootstrap_min windows_asset unix_asset checksum_asset; do
-		value="$(self_update_json_extract_string "$json" "$key")" || return 1
+		if [ "$key" = "bootstrap_min" ]; then
+			value="$(self_update_json_extract_number "$json" "$key")" || return 1
+		else
+			value="$(self_update_json_extract_string "$json" "$key")" || return 1
+		fi
 		printf '%s\t%s\n' "$key" "$value"
 	done
 
@@ -1008,7 +1039,7 @@ for asset in obj.get("assets", []) or []:
 		return $?
 	fi
 
-	if cmd_exists node; then
+	if cmd_exists node && node -e 'process.exit(0)' >/dev/null 2>&1; then
 		# shellcheck disable=SC2016
 		node -e 'let data="";process.stdin.on("data",c=>data+=c);process.stdin.on("end",()=>{const obj=JSON.parse(data||"{}");const bool=v=>v?"1":"0";process.stdout.write(`tag_name\t${obj.tag_name||""}\n`);process.stdout.write(`draft\t${bool(obj.draft)}\n`);process.stdout.write(`prerelease\t${bool(obj.prerelease)}\n`);process.stdout.write(`immutable\t${bool(obj.immutable)}\n`);for(const asset of (obj.assets||[])){process.stdout.write(`asset\t${asset.name||""}\t${asset.digest||""}\t${asset.browser_download_url||""}\n`);}});' 2>/dev/null
 		return $?
@@ -1026,7 +1057,7 @@ for key in ("version", "source_repo", "channel", "bootstrap_min", "windows_asset
 		return $?
 	fi
 
-	if cmd_exists node; then
+	if cmd_exists node && node -e 'process.exit(0)' >/dev/null 2>&1; then
 		# shellcheck disable=SC2016
 		node -e 'let data="";process.stdin.on("data",c=>data+=c);process.stdin.on("end",()=>{const obj=JSON.parse(data||"{}");for(const key of ["version","source_repo","channel","bootstrap_min","windows_asset","unix_asset","checksum_asset"]){process.stdout.write(`${key}\t${obj[key] ?? ""}\n`);}});' 2>/dev/null
 		return $?

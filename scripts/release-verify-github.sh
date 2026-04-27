@@ -55,7 +55,7 @@ if [ "$ACTUAL_ASSETS" != "$EXPECTED_ASSETS" ]; then
 fi
 
 while IFS= read -r asset; do
-	local_digest="sha256:$(release_sha256 "$DIST_DIR/$asset")"
+	digest="sha256:$(release_sha256 "$DIST_DIR/$asset")"
 	remote_digest="$(
 		printf '%s' "$RELEASE_JSON" |
 			jq -r --arg asset "$asset" '.assets[] | select(.name == $asset) | .digest'
@@ -63,8 +63,8 @@ while IFS= read -r asset; do
 	if [ -z "$remote_digest" ] || [ "$remote_digest" = "null" ]; then
 		release_fail "GitHub release asset $asset missing digest"
 	fi
-	if [ "$remote_digest" != "$local_digest" ]; then
-		release_fail "Digest mismatch for $asset: expected $local_digest, got $remote_digest"
+	if [ "$remote_digest" != "$digest" ]; then
+		release_fail "Digest mismatch for $asset: expected $digest, got $remote_digest"
 	fi
 done <<EOF
 $EXPECTED_ASSETS
