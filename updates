@@ -1028,7 +1028,7 @@ for key in ("version", "source_repo", "channel", "bootstrap_min", "windows_asset
 
 	if cmd_exists node; then
 		# shellcheck disable=SC2016
-		node -e 'let data="";process.stdin.on("data",c=>data+=c);process.stdin.on("end",()=>{const obj=JSON.parse(data||"{}");for(const key of ["version","source_repo","channel","bootstrap_min","windows_asset","unix_asset","checksum_asset"]){process.stdout.write(`${key}\t${obj[key]||""}\n`);}});' 2>/dev/null
+		node -e 'let data="";process.stdin.on("data",c=>data+=c);process.stdin.on("end",()=>{const obj=JSON.parse(data||"{}");for(const key of ["version","source_repo","channel","bootstrap_min","windows_asset","unix_asset","checksum_asset"]){process.stdout.write(`${key}\t${obj[key] ?? ""}\n`);}});' 2>/dev/null
 		return $?
 	fi
 

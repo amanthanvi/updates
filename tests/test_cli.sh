@@ -17,6 +17,7 @@ export ZSH_CUSTOM=""
 stub_bin="${tmp_dir}/bin"
 mkdir -p "$stub_bin"
 
+SYSTEM_NODE="$(command -v node 2>/dev/null || true)"
 BASE_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH="${stub_bin}:${BASE_PATH}"
 
@@ -835,6 +836,32 @@ if [ "$("$self_update_fallback_script" --version)" != "2.0.1" ]; then
 	exit 1
 fi
 grep -q '^brew update$' "$CALL_LOG"
+
+if [ -n "$SYSTEM_NODE" ]; then
+	echo "Test: Unix self-update works with Node manifest parsing and no Python"
+	self_update_node_install="${tmp_dir}/self-update-install-node"
+	self_update_node_script="$(make_installed_copy "$self_update_node_install")"
+	self_update_node_bin="${tmp_dir}/self-update-bin-node"
+	self_update_node_fixture="${tmp_dir}/self-update-fixture-node"
+	self_update_node_xdg="${tmp_dir}/self-update-xdg-node"
+	self_update_node_http_log="${tmp_dir}/self-update-http-node.log"
+	mkdir -p "$self_update_node_bin" "$self_update_node_fixture" "${self_update_node_xdg}/updates"
+	write_stub_to_dir "$self_update_node_bin" uname 'echo Darwin'
+	# shellcheck disable=SC2016
+	write_stub_to_dir "$self_update_node_bin" brew 'echo "brew $*" >>"$CALL_LOG"'
+	write_stub_to_dir "$self_update_node_bin" node "exec \"$SYSTEM_NODE\" \"\$@\""
+	write_self_update_curl_stub "$self_update_node_bin"
+	create_self_update_fixture "$self_update_node_fixture" '2.0.1'
+	: >"$self_update_node_http_log"
+	: >"$CALL_LOG"
+	out="$(UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_node_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_node_fixture" SELF_UPDATE_CALL_LOG="$self_update_node_http_log" PATH="${self_update_node_bin}:${BASE_PATH}" "$self_update_node_script" --only brew --no-emoji --no-color 2>&1)"
+	if [ "$("$self_update_node_script" --version)" != "2.0.1" ]; then
+		echo "Expected node-only self-update parsing to preserve bootstrap_min=0 and install version 2.0.1" >&2
+		echo "$out" >&2
+		exit 1
+	fi
+	grep -q '^brew update$' "$CALL_LOG"
+fi
 
 echo "Test: config BOM is tolerated"
 config_home_bom="${tmp_dir}/home-config-bom"
