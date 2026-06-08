@@ -749,7 +749,7 @@ create_self_update_fixture "$self_update_cache_fixture" '2.0.1' 'unsupported-dig
 write_self_update_cache_with_metadata "${self_update_cache_xdg}/updates/self-update-amanthanvi_updates.cache" "$(date +%s)" 'v2.0.1' "$self_update_cache_fixture" 'md5:deadbeef'
 : >"$self_update_cache_http_log"
 : >"$CALL_LOG"
-out="$(UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_cache_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_cache_fixture" SELF_UPDATE_CALL_LOG="$self_update_cache_http_log" PATH="${self_update_cache_bin}:${BASE_PATH}" "$self_update_cache_script" --only brew --no-emoji --no-color 2>&1)"
+out="$(CI='' UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_cache_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_cache_fixture" SELF_UPDATE_CALL_LOG="$self_update_cache_http_log" PATH="${self_update_cache_bin}:${BASE_PATH}" "$self_update_cache_script" --only brew --no-emoji --no-color 2>&1)"
 if grep -q '^curl https://api.github.com/repos/amanthanvi/updates/releases/latest$' "$self_update_cache_http_log"; then
 	echo "Expected cached release metadata to suppress live GitHub metadata fetches" >&2
 	cat "$self_update_cache_http_log" >&2
@@ -779,7 +779,7 @@ create_self_update_fixture "$self_update_digest_fixture" '2.0.1' 'unsupported-di
 printf 'checked_at=%s\nlatest_tag=%s\n' "$(date +%s)" 'v2.0.1' >"${self_update_digest_xdg}/updates/self-update-amanthanvi_updates.cache"
 : >"$self_update_digest_http_log"
 : >"$CALL_LOG"
-out="$(UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_digest_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_digest_fixture" SELF_UPDATE_CALL_LOG="$self_update_digest_http_log" PATH="${self_update_digest_bin}:${BASE_PATH}" "$self_update_digest_script" --only brew --no-emoji --no-color 2>&1)"
+out="$(CI='' UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_digest_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_digest_fixture" SELF_UPDATE_CALL_LOG="$self_update_digest_http_log" PATH="${self_update_digest_bin}:${BASE_PATH}" "$self_update_digest_script" --only brew --no-emoji --no-color 2>&1)"
 echo "$out" | grep -q 'self-update manifest digest missing or unsupported; continuing'
 grep -q '^curl https://api.github.com/repos/amanthanvi/updates/releases/latest$' "$self_update_digest_http_log"
 grep -q '^curl https://example.invalid/updates-release.json$' "$self_update_digest_http_log"
@@ -803,7 +803,7 @@ write_self_update_curl_stub "$self_update_manifest_bin"
 create_self_update_fixture "$self_update_manifest_fixture" '2.0.1' 'invalid-manifest'
 : >"$self_update_manifest_http_log"
 : >"$CALL_LOG"
-out="$(UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_manifest_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_manifest_fixture" SELF_UPDATE_CALL_LOG="$self_update_manifest_http_log" PATH="${self_update_manifest_bin}:${BASE_PATH}" "$self_update_manifest_script" --only brew --no-emoji --no-color 2>&1)"
+out="$(CI='' UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_manifest_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_manifest_fixture" SELF_UPDATE_CALL_LOG="$self_update_manifest_http_log" PATH="${self_update_manifest_bin}:${BASE_PATH}" "$self_update_manifest_script" --only brew --no-emoji --no-color 2>&1)"
 echo "$out" | grep -q 'self-update manifest is invalid; continuing'
 grep -q '^curl https://example.invalid/updates$' "$self_update_manifest_http_log"
 if [ "$("$self_update_manifest_script" --version)" != "2.0.0" ]; then
@@ -829,7 +829,7 @@ write_self_update_curl_stub "$self_update_fallback_bin"
 create_self_update_fixture "$self_update_fallback_fixture" '2.0.1'
 : >"$self_update_fallback_http_log"
 : >"$CALL_LOG"
-out="$(UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_fallback_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_fallback_fixture" SELF_UPDATE_CALL_LOG="$self_update_fallback_http_log" PATH="${self_update_fallback_bin}:${BASE_PATH}" "$self_update_fallback_script" --only brew --no-emoji --no-color 2>&1)"
+out="$(CI='' UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_fallback_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_fallback_fixture" SELF_UPDATE_CALL_LOG="$self_update_fallback_http_log" PATH="${self_update_fallback_bin}:${BASE_PATH}" "$self_update_fallback_script" --only brew --no-emoji --no-color 2>&1)"
 grep -q '^curl https://api.github.com/repos/amanthanvi/updates/releases/latest$' "$self_update_fallback_http_log"
 grep -q '^curl https://example.invalid/updates-release.json$' "$self_update_fallback_http_log"
 grep -q '^curl https://example.invalid/updates$' "$self_update_fallback_http_log"
@@ -857,7 +857,7 @@ if [ -n "$SYSTEM_NODE" ]; then
 	create_self_update_fixture "$self_update_node_fixture" '2.0.1'
 	: >"$self_update_node_http_log"
 	: >"$CALL_LOG"
-	out="$(UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_node_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_node_fixture" SELF_UPDATE_CALL_LOG="$self_update_node_http_log" PATH="${self_update_node_bin}:${BASE_PATH}" "$self_update_node_script" --only brew --no-emoji --no-color 2>&1)"
+	out="$(CI='' UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_node_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_node_fixture" SELF_UPDATE_CALL_LOG="$self_update_node_http_log" PATH="${self_update_node_bin}:${BASE_PATH}" "$self_update_node_script" --only brew --no-emoji --no-color 2>&1)"
 	if [ "$("$self_update_node_script" --version)" != "2.0.1" ]; then
 		echo "Expected node-only self-update parsing to preserve bootstrap_min=0 and install version 2.0.1" >&2
 		echo "$out" >&2
