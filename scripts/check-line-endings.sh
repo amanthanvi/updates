@@ -31,16 +31,14 @@ while IFS= read -r line; do
 	[ -n "$line" ] || continue
 
 	case "$line" in
-	*" eol=lf "* | *" eol=lf"$'\t'*)
-		;;
+	*" eol=lf "* | *" eol=lf"$'\t'*) ;;
 	*)
 		bad_attr="${bad_attr}${line}"$'\n'
 		;;
 	esac
 
 	case "$line" in
-	*" w/lf "* | *" w/lf"$'\t'*)
-		;;
+	*" w/lf "* | *" w/lf"$'\t'*) ;;
 	*)
 		bad_worktree="${bad_worktree}${line}"$'\n'
 		;;
