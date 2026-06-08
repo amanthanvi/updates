@@ -31,7 +31,15 @@ release_require_command gh
 release_require_command jq
 bash "$RELEASE_REPO_ROOT/scripts/release-verify-dist.sh" "$VERSION" "$DIST_DIR"
 
-RELEASE_JSON="$(gh api "repos/$REPO/releases/tags/$TAG")"
+if [ "$MODE" = "draft" ]; then
+	RELEASE_JSON="$(
+		gh api "repos/$REPO/releases" --paginate |
+			jq -cer --arg tag "$TAG" '.[] | select(.tag_name == $tag)' |
+			head -n 1
+	)"
+else
+	RELEASE_JSON="$(gh api "repos/$REPO/releases/tags/$TAG")"
+fi
 DRAFT_STATE="$(printf '%s' "$RELEASE_JSON" | jq -r '.draft')"
 PRERELEASE_STATE="$(printf '%s' "$RELEASE_JSON" | jq -r '.prerelease')"
 IMMUTABLE_STATE="$(printf '%s' "$RELEASE_JSON" | jq -r '.immutable')"
