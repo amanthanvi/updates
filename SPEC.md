@@ -8,9 +8,9 @@ If anything here disagrees with other docs, update the other docs (or this spec)
 
 - **Title:** updates v2.0.0 specification
 - **Owner (DRI):** Aman Thanvi (@amanthanvi)
-- **Status:** Draft
-- **Last updated:** 2026-04-26
-- **Target ship date:** TBD
+- **Status:** Released
+- **Last updated:** 2026-06-07
+- **Release date:** 2026-06-07
 - **Links:** [Repository](https://github.com/amanthanvi/updates)
 
 ## 1) Executive Summary
@@ -615,6 +615,7 @@ Purpose: list available macOS software updates.
   - reopen the installed copy and verify its embedded version before re-exec
   - re-exec once, guarded by `UPDATES_SELF_UPDATED=1`
 - Native Windows self-update is supported only for official standalone installs rooted at `%LOCALAPPDATA%\\Programs\\updates`.
+- `install-windows.ps1` creates the official native Windows standalone layout from the published `updates-windows.zip` release asset, or from a local `-SourceZip`/repository `-SourceRoot` for verification.
 - Native Windows standalone layout:
   - `updates.cmd`
   - `updates.ps1`
@@ -770,11 +771,13 @@ Versioning:
 
 - SemVer, tagged as `vX.Y.Z`.
 - Script version is `UPDATES_VERSION="<version>"` inside `updates`.
+- Windows payload version is `$script:UpdatesVersion = '<version>'` inside `updates-main.ps1`.
 - Windows payload manifests and `updates-release.json` **MUST** carry the same release version as the Git tag.
 
 Invariants (enforced in CI/release):
 
 - Tag version `vX.Y.Z` **MUST** match `UPDATES_VERSION="X.Y.Z"`.
+- Tag version `vX.Y.Z` **MUST** match `$script:UpdatesVersion = 'X.Y.Z'`.
 - Tag version `vX.Y.Z` **MUST** match `updates-release.json` `version`.
 - `CHANGELOG.md` **MUST** contain a header `## [X.Y.Z]` for the release.
 - Published GitHub Releases **MUST** include `updates`, `updates-windows.zip`, `updates-release.json`, and `SHA256SUMS`.
@@ -799,6 +802,7 @@ Sections: globals, output, colors, platform, registry, utilities, self-update, c
 
 Native Windows uses:
 
+- `install-windows.ps1` as the official standalone layout installer
 - `updates.cmd` as the thin launcher
 - `updates.ps1` as the stable bootstrap
 - `versions/<semver>/updates-main.ps1` as the mutable payload

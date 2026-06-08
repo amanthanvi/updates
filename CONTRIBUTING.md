@@ -33,7 +33,7 @@ This repo uses Conventional Commits:
 ## Release process (maintainers)
 
 1. Update `CHANGELOG.md` for the release.
-2. Bump `UPDATES_VERSION` in `updates` to the release version.
+2. Confirm `UPDATES_VERSION` in `updates` and `$script:UpdatesVersion` in `updates-main.ps1` match the release version.
 3. Run `./scripts/lint.sh` and `./scripts/test.sh`.
 4. Tag and push (manual), or use `./scripts/release.sh X.Y.Z`:
    - `git tag -a vX.Y.Z -m "vX.Y.Z"`

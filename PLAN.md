@@ -1,6 +1,6 @@
 # Plan: v2.0.0
 
-This is the execution plan for shipping `updates` **v2.0.0**. It adds native Windows support, hardens self-update around first-party GitHub Releases only, and removes custom self-update repo overrides.
+This is the released execution record for `updates` **v2.0.0**. It adds native Windows support, hardens self-update around first-party GitHub Releases only, and removes custom self-update repo overrides.
 
 ## Goals (v2.0.0)
 
@@ -32,6 +32,7 @@ This is the execution plan for shipping `updates` **v2.0.0**. It adds native Win
 
 - [x] Add `updates.cmd` as the thin Windows launcher.
 - [x] Add `updates.ps1` as the stable Windows bootstrap.
+- [x] Add `install-windows.ps1` for the official standalone Windows layout.
 - [x] Add the Windows payload layout under `%LOCALAPPDATA%\\Programs\\updates`.
 - [x] Add `install-source.json`, `current.txt`, `previous.txt`, and versioned payload manifests.
 
@@ -66,6 +67,7 @@ This is the execution plan for shipping `updates` **v2.0.0**. It adds native Win
 - [x] Add Windows module coverage for `winget`, `bun`, `node`, `python`, `uv`, `pipx`, `rustup`, and `go`.
 - [x] Add Windows signal coverage for `Ctrl+C` / `Ctrl+Break` => `130`.
 - [x] Add release-artifact smoke validation for `updates`, `updates-windows.zip`, `updates-release.json`, and `SHA256SUMS`.
+- [x] Run release-artifact build/verification on normal push/PR CI.
 - [x] Add post-publish verification with `gh release verify` and `gh release verify-asset`.
 
 ## Notes / decisions (locked)

@@ -18,9 +18,9 @@ jobs:
         run: ./scripts/ci-guard-lf.ps1
       - name: Syntax check
         run: bash -n updates
-      - name: Install ShellCheck (Linux)
+      - name: Install ShellCheck + release tools (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+        run: sudo apt-get update && sudo apt-get install -y jq shellcheck unzip zip
       - name: Install shfmt (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -35,6 +35,15 @@ jobs:
         run: ./scripts/lint.sh
       - name: Tests
         run: ./scripts/test.sh
+      - name: Release artifact guard
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source ./scripts/release-lib.sh
+          VERSION="$(release_script_version)"
+          bash ./scripts/release-build.sh "$VERSION"
+          bash ./scripts/release-verify-dist.sh "$VERSION"
 
   windows-powershell-smoke:
     runs-on: windows-latest
