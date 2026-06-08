@@ -33,9 +33,10 @@ bash "$RELEASE_REPO_ROOT/scripts/release-verify-dist.sh" "$VERSION" "$DIST_DIR"
 
 if [ "$MODE" = "draft" ]; then
 	RELEASE_JSON="$(
-		gh api "repos/$REPO/releases" --paginate |
-			jq -cer --arg tag "$TAG" '.[] | select(.tag_name == $tag)' |
-			head -n 1
+		gh release view "$TAG" \
+			--repo "$REPO" \
+			--json tagName,isDraft,isPrerelease,assets \
+			--jq '{tag_name:.tagName,draft:.isDraft,prerelease:.isPrerelease,immutable:null,assets:.assets}'
 	)"
 else
 	RELEASE_JSON="$(gh api "repos/$REPO/releases/tags/$TAG")"
@@ -67,8 +68,18 @@ while IFS= read -r asset; do
 	digest="sha256:$(release_sha256 "$DIST_DIR/$asset")"
 	remote_digest="$(
 		printf '%s' "$RELEASE_JSON" |
-			jq -r --arg asset "$asset" '.assets[] | select(.name == $asset) | .digest'
+			jq -r --arg asset "$asset" '.assets[] | select(.name == $asset) | (.digest // empty)'
 	)"
+	if [ "$MODE" = "draft" ] && [ -z "$remote_digest" ]; then
+		asset_api_url="$(
+			printf '%s' "$RELEASE_JSON" |
+				jq -r --arg asset "$asset" '.assets[] | select(.name == $asset) | (.apiUrl // .api_url // empty)'
+		)"
+		if [ -n "$asset_api_url" ]; then
+			asset_api_path="${asset_api_url#https://api.github.com/}"
+			remote_digest="$(gh api "$asset_api_path" --jq '.digest // empty')"
+		fi
+	fi
 	if [ -z "$remote_digest" ] || [ "$remote_digest" = "null" ]; then
 		release_fail "GitHub release asset $asset missing digest"
 	fi
