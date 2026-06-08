@@ -69,6 +69,7 @@ if command -v pwsh >/dev/null 2>&1; then
 	# shellcheck disable=SC2016
 	pwsh -NoLogo -NoProfile -Command '
 		$files = @(
+			"install-windows.ps1",
 			"updates.ps1",
 			"updates-main.ps1",
 			"tests/test_windows_native.ps1"

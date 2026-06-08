@@ -89,6 +89,68 @@ function New-SelfUpdateFixture {
     }
 }
 
+if (Should-RunTest 'install-windows.ps1 creates official standalone layout under LOCALAPPDATA') {
+    Invoke-TestCase 'install-windows.ps1 creates official standalone layout under LOCALAPPDATA' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            $localAppData = Join-Path $installRoot 'localappdata'
+            $installerPath = Join-Path $repoRoot 'install-windows.ps1'
+
+            $result = Invoke-ProcessCapture `
+                -FilePath (Get-PwshPath) `
+                -ArgumentList @(
+                    '-NoLogo',
+                    '-NoProfile',
+                    '-ExecutionPolicy', 'Bypass',
+                    '-File', $installerPath,
+                    '-Version', '2.0.0',
+                    '-SourceRoot', $repoRoot
+                ) `
+                -WorkingDirectory $repoRoot `
+                -Environment @{
+                    LOCALAPPDATA = $localAppData
+                }
+
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message "install-windows.ps1 should exit 0`n$result.Output"
+
+            $officialRoot = Join-Path $localAppData 'Programs\updates'
+            foreach ($path in @(
+                (Join-Path $officialRoot 'updates.cmd'),
+                (Join-Path $officialRoot 'updates.ps1'),
+                (Join-Path $officialRoot 'current.txt'),
+                (Join-Path $officialRoot 'previous.txt'),
+                (Join-Path $officialRoot 'install-source.json'),
+                (Join-Path $officialRoot 'versions\2.0.0\manifest.json'),
+                (Join-Path $officialRoot 'versions\2.0.0\updates-main.ps1')
+            )) {
+                Assert-FileExists -Path $path -Message 'installer should create expected Windows layout file'
+            }
+
+            Assert-Equal -Expected '2.0.0' -Actual ((Get-Content -LiteralPath (Join-Path $officialRoot 'current.txt') -Raw).Trim()) -Message 'current.txt should point at the installed version'
+            Assert-Equal -Expected '' -Actual ([System.IO.File]::ReadAllText((Join-Path $officialRoot 'previous.txt'))) -Message 'previous.txt should be present and empty for a fresh install'
+
+            $receipt = Get-Content -LiteralPath (Join-Path $officialRoot 'install-source.json') -Raw | ConvertFrom-Json -AsHashtable
+            Assert-Equal -Expected 'standalone' -Actual $receipt.kind -Message 'install receipt should mark a standalone install'
+            Assert-Equal -Expected 'github-release' -Actual $receipt.channel -Message 'install receipt should use the GitHub release channel'
+            Assert-Equal -Expected 'amanthanvi/updates' -Actual $receipt.source_repo -Message 'install receipt should use the canonical repo'
+            Assert-Equal -Expected 'user' -Actual $receipt.scope -Message 'install receipt should use user scope'
+            Assert-Equal -Expected '2.0.0' -Actual $receipt.installed_version -Message 'install receipt should record the installed version'
+
+            $manifest = Get-Content -LiteralPath (Join-Path $officialRoot 'versions\2.0.0\manifest.json') -Raw | ConvertFrom-Json -AsHashtable
+            Assert-Equal -Expected '2.0.0' -Actual $manifest.version -Message 'payload manifest should record the installed version'
+            Assert-Equal -Expected 1 -Actual ([int]$manifest.bootstrap_min) -Message 'payload manifest should require bootstrap schema 1'
+            Assert-Equal -Expected 'updates-main.ps1' -Actual $manifest.entry_script -Message 'payload manifest should target updates-main.ps1'
+
+            $versionResult = Invoke-Launcher -InstallRoot $officialRoot -ArgumentList @('--version') -Environment @{
+                LOCALAPPDATA = $localAppData
+            }
+            Assert-Equal -Expected 0 -Actual $versionResult.ExitCode -Message 'installed updates.cmd --version should exit 0'
+            Assert-Equal -Expected '2.0.0' -Actual ($versionResult.Stdout.Trim()) -Message 'installed updates.cmd --version should print the payload version'
+        }
+    }
+}
+
 if (Should-RunTest 'updates.cmd invokes sibling bootstrap with pwsh flags and preserves exit code') {
     Invoke-TestCase 'updates.cmd invokes sibling bootstrap with pwsh flags and preserves exit code' {
         Invoke-WithTempInstall {

@@ -5,6 +5,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
 
 $targets = @(
+    'install-windows.ps1',
     'updates',
     '.github/workflows',
     'scripts',

@@ -7,10 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-06-07
+
 ### Added
 
 - Native Windows support via `updates.cmd` and `updates.ps1` with PowerShell 7 (`pwsh`) as the only supported Windows runtime.
+- Native Windows installer/bootstrap script for the official `%LOCALAPPDATA%\\Programs\\updates` standalone layout.
 - New Windows-facing release artifacts: `updates-windows.zip`, `updates-release.json`, and `install-source.json`.
+- CI now builds and verifies release dist artifacts on normal push/PR runs.
 - Windows modules: `winget` and `bun`.
 - Native Windows support for `node`, `python`, `uv`, `pipx`, `rustup`, and `go`.
 
@@ -24,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Removed
 
 - `UPDATES_SELF_UPDATE_REPO`; custom self-update repos are no longer supported.
-- Any documented expectation that `updates` itself will ship through third-party package-manager channels.
+- Any documented expectation that `updates` itself ships through third-party package-manager channels.
 
 ## [1.3.0] - 2026-04-14
 

@@ -2,7 +2,7 @@
 
 A small, modular CLI to update common macOS, Linux, WSL, and Windows tooling.
 
-The current main-branch docs target the in-flight `v2.0.0` release contract: Bash remains the entrypoint on macOS/Linux/WSL, while native Windows support uses `pwsh` via `updates.cmd` and `updates.ps1`.
+`v2.0.0` is the current release contract: Bash remains the entrypoint on macOS/Linux/WSL, while native Windows support uses `pwsh` via `updates.cmd` and `updates.ps1`.
 
 This script can be disruptive (it updates global environments). Use `--dry-run` and scope with `--only` / `--skip`.
 
@@ -29,16 +29,19 @@ sudo mkdir -p /usr/local/bin
 sudo install -m 0755 ./updates /usr/local/bin/updates
 ```
 
-Planned native Windows install (`v2.0.0`):
+Native Windows (`v2.0.0`, PowerShell 7):
 
 ```powershell
-# Official channel: GitHub Releases only
-# Extract updates-windows.zip to:
-$env:LOCALAPPDATA\Programs\updates
+$version = '2.0.0'
+$installer = Join-Path $env:TEMP 'install-updates-windows.ps1'
 
-# Then run:
-$env:LOCALAPPDATA\Programs\updates\updates.cmd
+Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/amanthanvi/updates/v$version/install-windows.ps1" -OutFile $installer
+pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $installer -Version $version
+
+& "$env:LOCALAPPDATA\Programs\updates\updates.cmd" --version
 ```
+
+The installer downloads the official `updates-windows.zip` GitHub Release asset and lays out `updates.cmd`, `updates.ps1`, versioned payload files, `current.txt`, `previous.txt`, and `install-source.json` under `%LOCALAPPDATA%\Programs\updates`. If you already downloaded the release ZIP, pass `-SourceZip .\updates-windows.zip`. The installer does not modify PATH.
 
 ## Usage
 
