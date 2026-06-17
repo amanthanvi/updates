@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-06-17
+
+### Fixed
+
+- Retry global npm upgrades with `--legacy-peer-deps` only when npm fails with `ERESOLVE`, allowing packages with upstream optional peer metadata conflicts to update while keeping normal npm failures strict.
+
 ## [2.0.0] - 2026-06-08
 
 ### Added

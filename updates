@@ -6,7 +6,7 @@ set -o pipefail
 # SECTION: globals — version, state variables, module registry
 ###############################################################################
 
-UPDATES_VERSION="2.0.0"
+UPDATES_VERSION="2.0.1"
 
 SCRIPT_NAME="$(basename "$0")"
 
@@ -670,6 +670,52 @@ run() {
 	else
 		"$@"
 	fi
+}
+
+run_npm_global_install() {
+	if [ "$DRY_RUN" -eq 1 ]; then
+		run npm install -g -- "$@"
+		return $?
+	fi
+
+	local npm_err_log tmp_base
+	tmp_base="${TMPDIR:-/tmp}"
+	npm_err_log="$(mktemp "${tmp_base%/}/updates-npm.XXXXXX" 2>/dev/null || mktemp -t updates-npm.XXXXXX 2>/dev/null)" || {
+		run npm install -g -- "$@"
+		return $?
+	}
+
+	debug "+ npm install -g -- $*"
+	if [ "$JSON" -eq 1 ]; then
+		npm install -g -- "$@" 1>&2 2>"$npm_err_log"
+	else
+		npm install -g -- "$@" 2>"$npm_err_log"
+	fi
+	local status=$?
+
+	if [ "$status" -eq 0 ]; then
+		if [ -s "$npm_err_log" ]; then
+			cat "$npm_err_log" >&2
+		fi
+		rm -f "$npm_err_log"
+		return 0
+	fi
+
+	if grep -q 'ERESOLVE' "$npm_err_log"; then
+		warn "node: npm peer dependency resolution failed; retrying with --legacy-peer-deps"
+		if [ -s "$npm_err_log" ]; then
+			cat "$npm_err_log" >&2
+		fi
+		rm -f "$npm_err_log"
+		run npm install -g --legacy-peer-deps -- "$@"
+		return $?
+	fi
+
+	if [ -s "$npm_err_log" ]; then
+		cat "$npm_err_log" >&2
+	fi
+	rm -f "$npm_err_log"
+	return "$status"
 }
 
 semver_is_valid() {
@@ -2628,7 +2674,7 @@ module_node() {
 		log "  - $p"
 	done
 
-	run npm install -g -- "${packages[@]}" || return 1
+	run_npm_global_install "${packages[@]}" || return 1
 	return 0
 }
 
