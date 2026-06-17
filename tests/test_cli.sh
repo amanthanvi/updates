@@ -23,6 +23,8 @@ export PATH="${stub_bin}:${BASE_PATH}"
 
 # Self-update hits the network by default; disable for deterministic tests.
 export UPDATES_SELF_UPDATE=0
+SELF_UPDATE_CURRENT_TEST_VERSION="2.0.1"
+SELF_UPDATE_NEXT_TEST_VERSION="2.0.2"
 
 write_stub_to_dir() {
 	local dir="$1"
@@ -745,8 +747,8 @@ write_stub_to_dir "$self_update_cache_bin" uname 'echo Darwin'
 # shellcheck disable=SC2016
 write_stub_to_dir "$self_update_cache_bin" brew 'echo "brew $*" >>"$CALL_LOG"'
 write_self_update_curl_stub "$self_update_cache_bin"
-create_self_update_fixture "$self_update_cache_fixture" '2.0.1' 'unsupported-digest'
-write_self_update_cache_with_metadata "${self_update_cache_xdg}/updates/self-update-amanthanvi_updates.cache" "$(date +%s)" 'v2.0.1' "$self_update_cache_fixture" 'md5:deadbeef'
+create_self_update_fixture "$self_update_cache_fixture" "$SELF_UPDATE_NEXT_TEST_VERSION" 'unsupported-digest'
+write_self_update_cache_with_metadata "${self_update_cache_xdg}/updates/self-update-amanthanvi_updates.cache" "$(date +%s)" "v${SELF_UPDATE_NEXT_TEST_VERSION}" "$self_update_cache_fixture" 'md5:deadbeef'
 : >"$self_update_cache_http_log"
 : >"$CALL_LOG"
 out="$(CI='' UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_cache_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_cache_fixture" SELF_UPDATE_CALL_LOG="$self_update_cache_http_log" PATH="${self_update_cache_bin}:${BASE_PATH}" "$self_update_cache_script" --only brew --no-emoji --no-color 2>&1)"
@@ -757,7 +759,7 @@ if grep -q '^curl https://api.github.com/repos/amanthanvi/updates/releases/lates
 fi
 grep -q '^curl https://example.invalid/updates-release.json$' "$self_update_cache_http_log"
 echo "$out" | grep -q 'self-update manifest digest missing or unsupported; continuing'
-if [ "$("$self_update_cache_script" --version)" != "2.0.0" ]; then
+if [ "$("$self_update_cache_script" --version)" != "$SELF_UPDATE_CURRENT_TEST_VERSION" ]; then
 	echo "Expected cached unsupported digest metadata to leave installed version unchanged" >&2
 	exit 1
 fi
@@ -775,15 +777,15 @@ write_stub_to_dir "$self_update_digest_bin" uname 'echo Darwin'
 # shellcheck disable=SC2016
 write_stub_to_dir "$self_update_digest_bin" brew 'echo "brew $*" >>"$CALL_LOG"'
 write_self_update_curl_stub "$self_update_digest_bin"
-create_self_update_fixture "$self_update_digest_fixture" '2.0.1' 'unsupported-digest'
-printf 'checked_at=%s\nlatest_tag=%s\n' "$(date +%s)" 'v2.0.1' >"${self_update_digest_xdg}/updates/self-update-amanthanvi_updates.cache"
+create_self_update_fixture "$self_update_digest_fixture" "$SELF_UPDATE_NEXT_TEST_VERSION" 'unsupported-digest'
+printf 'checked_at=%s\nlatest_tag=%s\n' "$(date +%s)" "v${SELF_UPDATE_NEXT_TEST_VERSION}" >"${self_update_digest_xdg}/updates/self-update-amanthanvi_updates.cache"
 : >"$self_update_digest_http_log"
 : >"$CALL_LOG"
 out="$(CI='' UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_digest_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_digest_fixture" SELF_UPDATE_CALL_LOG="$self_update_digest_http_log" PATH="${self_update_digest_bin}:${BASE_PATH}" "$self_update_digest_script" --only brew --no-emoji --no-color 2>&1)"
 echo "$out" | grep -q 'self-update manifest digest missing or unsupported; continuing'
 grep -q '^curl https://api.github.com/repos/amanthanvi/updates/releases/latest$' "$self_update_digest_http_log"
 grep -q '^curl https://example.invalid/updates-release.json$' "$self_update_digest_http_log"
-if [ "$("$self_update_digest_script" --version)" != "2.0.0" ]; then
+if [ "$("$self_update_digest_script" --version)" != "$SELF_UPDATE_CURRENT_TEST_VERSION" ]; then
 	echo "Expected unsupported digest metadata to leave installed version unchanged" >&2
 	exit 1
 fi
@@ -800,13 +802,13 @@ write_stub_to_dir "$self_update_manifest_bin" uname 'echo Darwin'
 # shellcheck disable=SC2016
 write_stub_to_dir "$self_update_manifest_bin" brew 'echo "brew $*" >>"$CALL_LOG"'
 write_self_update_curl_stub "$self_update_manifest_bin"
-create_self_update_fixture "$self_update_manifest_fixture" '2.0.1' 'invalid-manifest'
+create_self_update_fixture "$self_update_manifest_fixture" "$SELF_UPDATE_NEXT_TEST_VERSION" 'invalid-manifest'
 : >"$self_update_manifest_http_log"
 : >"$CALL_LOG"
 out="$(CI='' UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_manifest_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_manifest_fixture" SELF_UPDATE_CALL_LOG="$self_update_manifest_http_log" PATH="${self_update_manifest_bin}:${BASE_PATH}" "$self_update_manifest_script" --only brew --no-emoji --no-color 2>&1)"
 echo "$out" | grep -q 'self-update manifest is invalid; continuing'
 grep -q '^curl https://example.invalid/updates$' "$self_update_manifest_http_log"
-if [ "$("$self_update_manifest_script" --version)" != "2.0.0" ]; then
+if [ "$("$self_update_manifest_script" --version)" != "$SELF_UPDATE_CURRENT_TEST_VERSION" ]; then
 	echo "Expected invalid manifest to leave installed version unchanged" >&2
 	exit 1
 fi
@@ -826,15 +828,15 @@ write_stub_to_dir "$self_update_fallback_bin" python 'exit 127'
 write_stub_to_dir "$self_update_fallback_bin" python3 'exit 127'
 write_stub_to_dir "$self_update_fallback_bin" node 'exit 127'
 write_self_update_curl_stub "$self_update_fallback_bin"
-create_self_update_fixture "$self_update_fallback_fixture" '2.0.1'
+create_self_update_fixture "$self_update_fallback_fixture" "$SELF_UPDATE_NEXT_TEST_VERSION"
 : >"$self_update_fallback_http_log"
 : >"$CALL_LOG"
 out="$(CI='' UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_fallback_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_fallback_fixture" SELF_UPDATE_CALL_LOG="$self_update_fallback_http_log" PATH="${self_update_fallback_bin}:${BASE_PATH}" "$self_update_fallback_script" --only brew --no-emoji --no-color 2>&1)"
 grep -q '^curl https://api.github.com/repos/amanthanvi/updates/releases/latest$' "$self_update_fallback_http_log"
 grep -q '^curl https://example.invalid/updates-release.json$' "$self_update_fallback_http_log"
 grep -q '^curl https://example.invalid/updates$' "$self_update_fallback_http_log"
-if [ "$("$self_update_fallback_script" --version)" != "2.0.1" ]; then
-	echo "Expected shell-only self-update fallback to install version 2.0.1" >&2
+if [ "$("$self_update_fallback_script" --version)" != "$SELF_UPDATE_NEXT_TEST_VERSION" ]; then
+	echo "Expected shell-only self-update fallback to install version ${SELF_UPDATE_NEXT_TEST_VERSION}" >&2
 	echo "$out" >&2
 	exit 1
 fi
@@ -854,12 +856,12 @@ if [ -n "$SYSTEM_NODE" ]; then
 	write_stub_to_dir "$self_update_node_bin" brew 'echo "brew $*" >>"$CALL_LOG"'
 	write_stub_to_dir "$self_update_node_bin" node "exec \"$SYSTEM_NODE\" \"\$@\""
 	write_self_update_curl_stub "$self_update_node_bin"
-	create_self_update_fixture "$self_update_node_fixture" '2.0.1'
+	create_self_update_fixture "$self_update_node_fixture" "$SELF_UPDATE_NEXT_TEST_VERSION"
 	: >"$self_update_node_http_log"
 	: >"$CALL_LOG"
 	out="$(CI='' UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_node_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_node_fixture" SELF_UPDATE_CALL_LOG="$self_update_node_http_log" PATH="${self_update_node_bin}:${BASE_PATH}" "$self_update_node_script" --only brew --no-emoji --no-color 2>&1)"
-	if [ "$("$self_update_node_script" --version)" != "2.0.1" ]; then
-		echo "Expected node-only self-update parsing to preserve bootstrap_min=0 and install version 2.0.1" >&2
+	if [ "$("$self_update_node_script" --version)" != "$SELF_UPDATE_NEXT_TEST_VERSION" ]; then
+		echo "Expected node-only self-update parsing to preserve bootstrap_min=0 and install version ${SELF_UPDATE_NEXT_TEST_VERSION}" >&2
 		echo "$out" >&2
 		exit 1
 	fi
@@ -932,6 +934,57 @@ write_stub ncu 'echo "{}"'
 out="$("$SCRIPT" --only node --no-emoji --no-color)"
 echo "$out" | grep -q 'All global npm packages are up-to-date'
 write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
+
+echo "Test: node retries npm ERESOLVE with legacy peer deps"
+write_stub ncu 'echo "{\"@tarquinen/opencode-dcp\":\"3.1.13\"}"'
+# shellcheck disable=SC2016
+write_stub npm '
+echo "npm $*" >>"$CALL_LOG"
+case " $* " in
+*" --legacy-peer-deps "*)
+	;;
+*" @tarquinen/opencode-dcp@3.1.13 "*)
+	echo "npm error code ERESOLVE" >&2
+	exit 1
+	;;
+esac
+'
+: >"$CALL_LOG"
+npm_eresolve_stderr="${tmp_dir}/npm-eresolve-stderr.log"
+out="$("$SCRIPT" --only node --no-emoji --no-color 2>"$npm_eresolve_stderr")"
+echo "$out" | grep -q '^==> node END (OK)'
+grep -q '^npm install -g -- @tarquinen/opencode-dcp@3.1.13$' "$CALL_LOG"
+grep -q '^npm install -g --legacy-peer-deps -- @tarquinen/opencode-dcp@3.1.13$' "$CALL_LOG"
+grep -q 'npm error code ERESOLVE' "$npm_eresolve_stderr"
+grep -q 'retrying with --legacy-peer-deps' "$npm_eresolve_stderr"
+
+echo "Test: node fails when npm ERESOLVE retry fails"
+write_stub ncu 'echo "{\"@tarquinen/opencode-dcp\":\"3.1.13\"}"'
+# shellcheck disable=SC2016
+write_stub npm '
+echo "npm $*" >>"$CALL_LOG"
+echo "npm error code ERESOLVE" >&2
+exit 1
+'
+: >"$CALL_LOG"
+npm_eresolve_retry_stderr="${tmp_dir}/npm-eresolve-retry-stderr.log"
+set +e
+out="$("$SCRIPT" --only node --no-emoji --no-color 2>"$npm_eresolve_retry_stderr")"
+rc=$?
+set -e
+if [ "$rc" -eq 0 ]; then
+	echo "Expected node to fail when the legacy peer deps retry also fails" >&2
+	exit 1
+fi
+echo "$out" | grep -q '^==> node END (FAIL)'
+grep -q '^npm install -g -- @tarquinen/opencode-dcp@3.1.13$' "$CALL_LOG"
+grep -q '^npm install -g --legacy-peer-deps -- @tarquinen/opencode-dcp@3.1.13$' "$CALL_LOG"
+grep -q 'npm error code ERESOLVE' "$npm_eresolve_retry_stderr"
+grep -q 'retrying with --legacy-peer-deps' "$npm_eresolve_retry_stderr"
+
+write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
+# shellcheck disable=SC2016
+write_stub npm 'echo "npm $*" >>"$CALL_LOG"'
 
 echo "Test: node falls back to npx npm-check-updates"
 rm -f "${stub_bin}/ncu"

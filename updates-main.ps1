@@ -19,7 +19,7 @@ if ($CliArgs -and $CliArgs.Count -gt 0) {
     }
 }
 
-$script:UpdatesVersion = '2.0.0'
+$script:UpdatesVersion = '2.0.1'
 $script:CanonicalRepo = 'amanthanvi/updates'
 $script:ReleaseChannel = 'github-release'
 $script:ReleaseManifestName = 'updates-release.json'
@@ -750,6 +750,30 @@ function Resolve-NcuRunner {
     return $null
 }
 
+function Invoke-NpmGlobalInstall {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Npm,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Packages
+    )
+
+    $installArgs = @('install', '-g', '--') + @($Packages)
+    $installResult = Invoke-LoggedProcess -FilePath $Npm -ArgumentList $installArgs
+    if ($installResult.ExitCode -eq 0) {
+        return 0
+    }
+
+    if ($installResult.Output -match 'ERESOLVE') {
+        Write-WarnLine 'node: npm peer dependency resolution failed; retrying with --legacy-peer-deps'
+        $retryArgs = @('install', '-g', '--legacy-peer-deps', '--') + @($Packages)
+        $retryResult = Invoke-LoggedProcess -FilePath $Npm -ArgumentList $retryArgs
+        return [int]$retryResult.ExitCode
+    }
+
+    return [int]$installResult.ExitCode
+}
+
 function Test-BunStandaloneInstall {
     param([string]$BunPath)
 
@@ -857,9 +881,8 @@ function Invoke-ModuleNode {
         return 0
     }
 
-    $installArgs = @('install', '-g', '--') + @($packages)
-    $installResult = Invoke-LoggedProcess -FilePath $npm -ArgumentList $installArgs
-    if ($installResult.ExitCode -ne 0) {
+    $installExitCode = Invoke-NpmGlobalInstall -Npm $npm -Packages @($packages)
+    if ($installExitCode -ne 0) {
         Write-ErrorLine 'node: npm install failed'
         return 1
     }

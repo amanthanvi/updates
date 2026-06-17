@@ -14,6 +14,8 @@ if (-not $IsWindows) {
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$currentReleaseVersion = '2.0.1'
+$previousReleaseVersion = '2.0.0'
 
 function Should-RunTest {
     param(
@@ -104,7 +106,6 @@ if (Should-RunTest 'install-windows.ps1 creates official standalone layout under
                     '-NoProfile',
                     '-ExecutionPolicy', 'Bypass',
                     '-File', $installerPath,
-                    '-Version', '2.0.0',
                     '-SourceRoot', $repoRoot
                 ) `
                 -WorkingDirectory $repoRoot `
@@ -121,13 +122,13 @@ if (Should-RunTest 'install-windows.ps1 creates official standalone layout under
                 (Join-Path $officialRoot 'current.txt'),
                 (Join-Path $officialRoot 'previous.txt'),
                 (Join-Path $officialRoot 'install-source.json'),
-                (Join-Path $officialRoot 'versions\2.0.0\manifest.json'),
-                (Join-Path $officialRoot 'versions\2.0.0\updates-main.ps1')
+                (Join-Path $officialRoot ("versions\{0}\manifest.json" -f $currentReleaseVersion)),
+                (Join-Path $officialRoot ("versions\{0}\updates-main.ps1" -f $currentReleaseVersion))
             )) {
                 Assert-FileExists -Path $path -Message 'installer should create expected Windows layout file'
             }
 
-            Assert-Equal -Expected '2.0.0' -Actual ((Get-Content -LiteralPath (Join-Path $officialRoot 'current.txt') -Raw).Trim()) -Message 'current.txt should point at the installed version'
+            Assert-Equal -Expected $currentReleaseVersion -Actual ((Get-Content -LiteralPath (Join-Path $officialRoot 'current.txt') -Raw).Trim()) -Message 'current.txt should point at the installed version'
             Assert-Equal -Expected '' -Actual ([System.IO.File]::ReadAllText((Join-Path $officialRoot 'previous.txt'))) -Message 'previous.txt should be present and empty for a fresh install'
 
             $receipt = Get-Content -LiteralPath (Join-Path $officialRoot 'install-source.json') -Raw | ConvertFrom-Json -AsHashtable
@@ -135,10 +136,10 @@ if (Should-RunTest 'install-windows.ps1 creates official standalone layout under
             Assert-Equal -Expected 'github-release' -Actual $receipt.channel -Message 'install receipt should use the GitHub release channel'
             Assert-Equal -Expected 'amanthanvi/updates' -Actual $receipt.source_repo -Message 'install receipt should use the canonical repo'
             Assert-Equal -Expected 'user' -Actual $receipt.scope -Message 'install receipt should use user scope'
-            Assert-Equal -Expected '2.0.0' -Actual $receipt.installed_version -Message 'install receipt should record the installed version'
+            Assert-Equal -Expected $currentReleaseVersion -Actual $receipt.installed_version -Message 'install receipt should record the installed version'
 
-            $manifest = Get-Content -LiteralPath (Join-Path $officialRoot 'versions\2.0.0\manifest.json') -Raw | ConvertFrom-Json -AsHashtable
-            Assert-Equal -Expected '2.0.0' -Actual $manifest.version -Message 'payload manifest should record the installed version'
+            $manifest = Get-Content -LiteralPath (Join-Path $officialRoot ("versions\{0}\manifest.json" -f $currentReleaseVersion)) -Raw | ConvertFrom-Json -AsHashtable
+            Assert-Equal -Expected $currentReleaseVersion -Actual $manifest.version -Message 'payload manifest should record the installed version'
             Assert-Equal -Expected 1 -Actual ([int]$manifest.bootstrap_min) -Message 'payload manifest should require bootstrap schema 1'
             Assert-Equal -Expected 'updates-main.ps1' -Actual $manifest.entry_script -Message 'payload manifest should target updates-main.ps1'
 
@@ -146,7 +147,7 @@ if (Should-RunTest 'install-windows.ps1 creates official standalone layout under
                 LOCALAPPDATA = $localAppData
             }
             Assert-Equal -Expected 0 -Actual $versionResult.ExitCode -Message 'installed updates.cmd --version should exit 0'
-            Assert-Equal -Expected '2.0.0' -Actual ($versionResult.Stdout.Trim()) -Message 'installed updates.cmd --version should print the payload version'
+            Assert-Equal -Expected $currentReleaseVersion -Actual ($versionResult.Stdout.Trim()) -Message 'installed updates.cmd --version should print the payload version'
         }
     }
 }
@@ -220,8 +221,8 @@ if (Should-RunTest 'updates.cmd forwards --version through bootstrap to the real
             Copy-RepoWindowsCmd -RepoRoot $repoRoot -InstallRoot $installRoot
             Copy-RepoWindowsBootstrap -RepoRoot $repoRoot -InstallRoot $installRoot
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
-            New-VersionedPayload -InstallRoot $installRoot -Version '2.0.0' -PayloadPath $payloadSource
-            Set-VersionPointers -InstallRoot $installRoot -CurrentVersion '2.0.0'
+            New-VersionedPayload -InstallRoot $installRoot -Version $currentReleaseVersion -PayloadPath $payloadSource
+            Set-VersionPointers -InstallRoot $installRoot -CurrentVersion $currentReleaseVersion
             $pwshOnlyPath = @(
                 (Split-Path -Parent (Get-PwshPath)),
                 (Join-Path $env:SystemRoot 'System32')
@@ -232,7 +233,7 @@ if (Should-RunTest 'updates.cmd forwards --version through bootstrap to the real
             }
 
             Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'updates.cmd --version should exit 0'
-            Assert-Equal -Expected '2.0.0' -Actual ($result.Stdout.Trim()) -Message 'updates.cmd --version should print the payload version'
+            Assert-Equal -Expected $currentReleaseVersion -Actual ($result.Stdout.Trim()) -Message 'updates.cmd --version should print the payload version'
         }
     }
 }
@@ -428,6 +429,52 @@ if (Should-RunTest 'native payload dry-run covers winget, node fallback, bun, py
             Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*rustup(\.cmd)? update' -Message 'rustup dry-run command mismatch'
             Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*go(\.cmd)? install example\.com/cmd/foo@latest' -Message 'go should default missing versions to @latest'
             Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*go(\.cmd)? install example\.com/cmd/bar@v1\.2\.3' -Message 'go should preserve explicit versions'
+        }
+    }
+}
+
+if (Should-RunTest 'native payload node retries npm ERESOLVE with legacy peer deps') {
+    Invoke-TestCase 'native payload node retries npm ERESOLVE with legacy peer deps' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'npx.cmd') -Lines @(
+                'echo {"@tarquinen/opencode-dcp":"3.1.13"}'
+            )
+            Write-CmdStub -Path (Join-Path $stubDir 'npm.cmd') -Lines @(
+                'echo npm %*>>"%NODE_MARKER%"',
+                'echo %* | findstr /C:"--legacy-peer-deps" >nul',
+                'if not errorlevel 1 exit /b 0',
+                'echo %* | findstr /C:"@tarquinen/opencode-dcp@3.1.13" >nul',
+                'if not errorlevel 1 (',
+                '  echo npm error code ERESOLVE 1>&2',
+                '  exit /b 1',
+                ')'
+            )
+
+            $markerPath = Join-Path $installRoot 'node-marker.txt'
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
+                '--no-self-update',
+                '--only', 'node',
+                '--no-color',
+                '--no-emoji'
+            ) -Environment @{
+                PATH        = $stubDir
+                HOME        = $installRoot
+                USERPROFILE = $installRoot
+                NODE_MARKER = $markerPath
+            }
+
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'node ERESOLVE retry should succeed'
+            $marker = Get-Content -LiteralPath $markerPath -Raw
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g -- @tarquinen/opencode-dcp@3\.1\.13$' -Message 'node should first try strict npm install'
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --legacy-peer-deps -- @tarquinen/opencode-dcp@3\.1\.13$' -Message 'node should retry with legacy peer deps'
+            Assert-Match -Text $result.Output -Pattern 'npm error code ERESOLVE' -Message 'original npm ERESOLVE stderr should be visible'
+            Assert-Match -Text $result.Output -Pattern 'retrying with --legacy-peer-deps' -Message 'retry warning should be visible'
         }
     }
 }
@@ -720,7 +767,7 @@ if (Should-RunTest 'native payload self-update applies a verified Windows releas
         Invoke-WithTempInstall {
             param($installRoot)
 
-            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -WithReceipt
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
             $fixture = New-SelfUpdateFixture -Root $installRoot -Version '2.0.1'
             $logPath = Join-Path $installRoot 'self-update.log'
             $relaunchArgsPath = Join-Path $installRoot 'relaunch-args.txt'
@@ -730,6 +777,7 @@ if (Should-RunTest 'native payload self-update applies a verified Windows releas
 
             & {
                 . $payloadSource
+                $script:UpdatesVersion = $previousReleaseVersion
                 $script:InstallRoot = $installRoot
                 $script:LogFile = $logPath
                 $script:JsonMode = $false
@@ -790,7 +838,7 @@ if (Should-RunTest 'native payload self-update preserves rollback pointer during
         Invoke-WithTempInstall {
             param($installRoot)
 
-            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -WithReceipt
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
             $fixture = New-SelfUpdateFixture -Root $installRoot -Version '2.0.1'
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
             $localAppData = Join-Path $installRoot 'localappdata'
@@ -801,6 +849,7 @@ if (Should-RunTest 'native payload self-update preserves rollback pointer during
 
             & {
                 . $payloadSource
+                $script:UpdatesVersion = $previousReleaseVersion
                 $script:InstallRoot = $installRoot
                 $script:JsonMode = $false
                 $script:LogLevel = 'info'
@@ -851,13 +900,14 @@ if (Should-RunTest 'native payload self-update skips live metadata fetch when ca
         Invoke-WithTempInstall {
             param($installRoot)
 
-            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -WithReceipt
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
             $localAppData = Join-Path $installRoot 'localappdata'
             $null = New-Item -ItemType Directory -Path $localAppData -Force
 
             & {
                 . $payloadSource
+                $script:UpdatesVersion = $previousReleaseVersion
                 $script:InstallRoot = $installRoot
                 $script:JsonMode = $false
                 $script:LogLevel = 'debug'
@@ -886,7 +936,7 @@ if (Should-RunTest 'native payload fresh newer-version cache reuses cached relea
         Invoke-WithTempInstall {
             param($installRoot)
 
-            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -WithReceipt
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
             $fixture = New-SelfUpdateFixture -Root $installRoot -Version '2.0.1'
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
             $localAppData = Join-Path $installRoot 'localappdata'
@@ -895,6 +945,7 @@ if (Should-RunTest 'native payload fresh newer-version cache reuses cached relea
 
             & {
                 . $payloadSource
+                $script:UpdatesVersion = $previousReleaseVersion
                 $script:InstallRoot = $installRoot
                 $script:JsonMode = $false
                 $script:LogLevel = 'debug'
@@ -948,7 +999,7 @@ if (Should-RunTest 'native payload fresh newer-version tag-only cache fetches li
         Invoke-WithTempInstall {
             param($installRoot)
 
-            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -WithReceipt
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
             $localAppData = Join-Path $installRoot 'localappdata'
             $markerPath = Join-Path $installRoot 'live-metadata-marker.txt'
@@ -956,6 +1007,7 @@ if (Should-RunTest 'native payload fresh newer-version tag-only cache fetches li
 
             & {
                 . $payloadSource
+                $script:UpdatesVersion = $previousReleaseVersion
                 $script:InstallRoot = $installRoot
                 $script:JsonMode = $false
                 $script:LogLevel = 'debug'
@@ -996,7 +1048,7 @@ if (Should-RunTest 'native payload force self-update bypasses fresh cache') {
         Invoke-WithTempInstall {
             param($installRoot)
 
-            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -WithReceipt
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
             $localAppData = Join-Path $installRoot 'localappdata'
             $markerPath = Join-Path $installRoot 'force-self-update-marker.txt'
@@ -1004,6 +1056,7 @@ if (Should-RunTest 'native payload force self-update bypasses fresh cache') {
 
             & {
                 . $payloadSource
+                $script:UpdatesVersion = $previousReleaseVersion
                 $script:InstallRoot = $installRoot
                 $script:JsonMode = $false
                 $script:LogLevel = 'debug'
@@ -1044,12 +1097,13 @@ if (Should-RunTest 'native payload self-update continues when asset download ret
         Invoke-WithTempInstall {
             param($installRoot)
 
-            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -WithReceipt
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
             $logPath = Join-Path $installRoot 'self-update.log'
 
             & {
                 . $payloadSource
+                $script:UpdatesVersion = $previousReleaseVersion
                 $script:InstallRoot = $installRoot
                 $script:LogFile = $logPath
                 $script:JsonMode = $false
@@ -1120,7 +1174,7 @@ if (Should-RunTest 'native payload self-update skips on release digest mismatch'
         Invoke-WithTempInstall {
             param($installRoot)
 
-            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -WithReceipt
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
             $fixture = New-SelfUpdateFixture -Root $installRoot -Version '2.0.1'
             $logPath = Join-Path $installRoot 'self-update.log'
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
@@ -1129,6 +1183,7 @@ if (Should-RunTest 'native payload self-update skips on release digest mismatch'
 
             & {
                 . $payloadSource
+                $script:UpdatesVersion = $previousReleaseVersion
                 $script:InstallRoot = $installRoot
                 $script:LogFile = $logPath
                 $script:JsonMode = $false
@@ -1202,7 +1257,7 @@ if (Should-RunTest 'native payload self-update skips when extracted payload mani
         Invoke-WithTempInstall {
             param($installRoot)
 
-            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -WithReceipt
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
             $fixture = New-SelfUpdateFixture -Root $installRoot -Version '2.0.1' -PayloadBootstrapMin 99
             $logPath = Join-Path $installRoot 'self-update.log'
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
@@ -1211,6 +1266,7 @@ if (Should-RunTest 'native payload self-update skips when extracted payload mani
 
             & {
                 . $payloadSource
+                $script:UpdatesVersion = $previousReleaseVersion
                 $script:InstallRoot = $installRoot
                 $script:LogFile = $logPath
                 $script:JsonMode = $false
