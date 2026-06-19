@@ -19,7 +19,7 @@ if ($CliArgs -and $CliArgs.Count -gt 0) {
     }
 }
 
-$script:UpdatesVersion = '2.0.1'
+$script:UpdatesVersion = '2.0.2'
 $script:CanonicalRepo = 'amanthanvi/updates'
 $script:ReleaseChannel = 'github-release'
 $script:ReleaseManifestName = 'updates-release.json'
@@ -640,6 +640,27 @@ function Invoke-CapturedProcess {
     }
 }
 
+function Write-ProcessResultOutput {
+    param($Result)
+
+    if ($Result.Stdout) {
+        if ($script:JsonMode) {
+            [Console]::Error.Write($Result.Stdout)
+        } else {
+            [Console]::Out.Write($Result.Stdout)
+        }
+        if ($script:LogFile) {
+            [System.IO.File]::AppendAllText($script:LogFile, $Result.Stdout, [System.Text.UTF8Encoding]::new($false))
+        }
+    }
+    if ($Result.Stderr) {
+        [Console]::Error.Write($Result.Stderr)
+        if ($script:LogFile) {
+            [System.IO.File]::AppendAllText($script:LogFile, $Result.Stderr, [System.Text.UTF8Encoding]::new($false))
+        }
+    }
+}
+
 function Invoke-LoggedProcess {
     param(
         [Parameter(Mandatory = $true)]
@@ -658,22 +679,7 @@ function Invoke-LoggedProcess {
 
     $result = Invoke-CapturedProcess -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory
     if (-not $Capture) {
-        if ($result.Stdout) {
-            if ($script:JsonMode) {
-                [Console]::Error.Write($result.Stdout)
-            } else {
-                [Console]::Out.Write($result.Stdout)
-            }
-            if ($script:LogFile) {
-                [System.IO.File]::AppendAllText($script:LogFile, $result.Stdout, [System.Text.UTF8Encoding]::new($false))
-            }
-        }
-        if ($result.Stderr) {
-            [Console]::Error.Write($result.Stderr)
-            if ($script:LogFile) {
-                [System.IO.File]::AppendAllText($script:LogFile, $result.Stderr, [System.Text.UTF8Encoding]::new($false))
-            }
-        }
+        Write-ProcessResultOutput -Result $result
     }
     return $result
 }
@@ -750,6 +756,68 @@ function Resolve-NcuRunner {
     return $null
 }
 
+function New-NpmInstallArguments {
+    param(
+        [AllowEmptyCollection()]
+        [string[]]$Options = @(),
+        [Parameter(Mandatory = $true)]
+        [string[]]$Packages
+    )
+
+    return (@('install', '-g') + @($Options) + @('--') + @($Packages))
+}
+
+function Get-NpmAllowScriptsArgument {
+    param(
+        [AllowEmptyString()]
+        [string]$Output
+    )
+
+    $match = [regex]::Match($Output, '--allow-scripts=[^`\s]+')
+    if ($match.Success) {
+        return $match.Value
+    }
+    return ''
+}
+
+function Test-NpmAllowScriptsWarning {
+    param(
+        [AllowEmptyString()]
+        [string]$Output
+    )
+
+    return ($Output -match 'npm warn allow-scripts')
+}
+
+function Complete-NpmGlobalInstallSuccess {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Npm,
+        [AllowEmptyCollection()]
+        [string[]]$Options = @(),
+        [Parameter(Mandatory = $true)]
+        [string[]]$Packages,
+        [Parameter(Mandatory = $true)]
+        $Result
+    )
+
+    $allowScriptsArg = Get-NpmAllowScriptsArgument -Output $Result.Output
+    if ($allowScriptsArg) {
+        Write-WarnLine 'node: npm install scripts need approval; retrying once with npm-provided allow-scripts list'
+        $retryArgs = New-NpmInstallArguments -Options (@($allowScriptsArg) + @($Options)) -Packages @($Packages)
+        $retryResult = Invoke-LoggedProcess -FilePath $Npm -ArgumentList $retryArgs -Capture
+        Write-ProcessResultOutput -Result $retryResult
+        return [int]$retryResult.ExitCode
+    }
+
+    if (Test-NpmAllowScriptsWarning -Output $Result.Output) {
+        Write-WarnLine 'node: npm reported install scripts needing approval, but no allow-scripts list could be parsed'
+    }
+
+    Write-ProcessResultOutput -Result $Result
+    return 0
+}
+
 function Invoke-NpmGlobalInstall {
     param(
         [Parameter(Mandatory = $true)]
@@ -758,19 +826,24 @@ function Invoke-NpmGlobalInstall {
         [string[]]$Packages
     )
 
-    $installArgs = @('install', '-g', '--') + @($Packages)
-    $installResult = Invoke-LoggedProcess -FilePath $Npm -ArgumentList $installArgs
+    $installArgs = New-NpmInstallArguments -Packages @($Packages)
+    $installResult = Invoke-LoggedProcess -FilePath $Npm -ArgumentList $installArgs -Capture
     if ($installResult.ExitCode -eq 0) {
-        return 0
+        return (Complete-NpmGlobalInstallSuccess -Npm $Npm -Packages @($Packages) -Result $installResult)
     }
 
     if ($installResult.Output -match 'ERESOLVE') {
         Write-WarnLine 'node: npm peer dependency resolution failed; retrying with --legacy-peer-deps'
-        $retryArgs = @('install', '-g', '--legacy-peer-deps', '--') + @($Packages)
-        $retryResult = Invoke-LoggedProcess -FilePath $Npm -ArgumentList $retryArgs
+        $retryArgs = New-NpmInstallArguments -Options @('--legacy-peer-deps') -Packages @($Packages)
+        $retryResult = Invoke-LoggedProcess -FilePath $Npm -ArgumentList $retryArgs -Capture
+        if ($retryResult.ExitCode -eq 0) {
+            return (Complete-NpmGlobalInstallSuccess -Npm $Npm -Options @('--legacy-peer-deps') -Packages @($Packages) -Result $retryResult)
+        }
+        Write-ProcessResultOutput -Result $retryResult
         return [int]$retryResult.ExitCode
     }
 
+    Write-ProcessResultOutput -Result $installResult
     return [int]$installResult.ExitCode
 }
 

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-06-19
+
+### Fixed
+
+- Source NVM before resolving npm tooling for global Node updates, so NVM-managed npm/ncu binaries are preferred in non-interactive runs.
+- Suppress the expected first-pass npm `ERESOLVE` details when the `--legacy-peer-deps` retry succeeds.
+- Retry once with npm's suggested one-shot `--allow-scripts=...` list when npm reports skipped global install scripts.
+
 ## [2.0.1] - 2026-06-17
 
 ### Fixed

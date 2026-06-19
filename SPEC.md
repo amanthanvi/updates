@@ -459,8 +459,11 @@ Purpose: upgrade installed Windows packages and applications via Windows Package
 Purpose: upgrade global npm packages using `npm-check-updates`.
 
 - Requires: `npm` plus one of `ncu.cmd`, `ncu`, or `npx npm-check-updates`.
+- On macOS/Linux, sources `$NVM_DIR/nvm.sh` or `~/.nvm/nvm.sh` when present before resolving `npm`, `ncu`, or `npx`.
 - On Windows, updater resolution order is `ncu.cmd`, then `ncu`, then `npx npm-check-updates`.
 - Non-dry-run: resolved updater command with `-g --jsonUpgraded` to detect upgrades, then `npm install -g -- <name@version>...`.
+- If npm fails with `ERESOLVE`, retries once with `--legacy-peer-deps`; the first-pass npm error details are only surfaced when no retry path applies.
+- If npm succeeds but reports pending global install scripts, retries once with npm's suggested one-shot `--allow-scripts=...` list.
 - Side effects: upgrades global npm packages.
 
 ### 8.7 `bun`

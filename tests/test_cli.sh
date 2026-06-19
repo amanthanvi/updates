@@ -13,6 +13,7 @@ mkdir -p "$HOME_DIR"
 export HOME="$HOME_DIR"
 export ZSH=""
 export ZSH_CUSTOM=""
+unset NVM_DIR
 
 stub_bin="${tmp_dir}/bin"
 mkdir -p "$stub_bin"
@@ -23,8 +24,8 @@ export PATH="${stub_bin}:${BASE_PATH}"
 
 # Self-update hits the network by default; disable for deterministic tests.
 export UPDATES_SELF_UPDATE=0
-SELF_UPDATE_CURRENT_TEST_VERSION="2.0.1"
-SELF_UPDATE_NEXT_TEST_VERSION="2.0.2"
+SELF_UPDATE_CURRENT_TEST_VERSION="2.0.2"
+SELF_UPDATE_NEXT_TEST_VERSION="2.0.3"
 
 write_stub_to_dir() {
 	local dir="$1"
@@ -941,7 +942,10 @@ write_stub ncu 'echo "{\"@tarquinen/opencode-dcp\":\"3.1.13\"}"'
 write_stub npm '
 echo "npm $*" >>"$CALL_LOG"
 case " $* " in
+*" --allow-scripts=opencode-ai,koffi "*)
+	;;
 *" --legacy-peer-deps "*)
+	echo "npm warn allow-scripts Run \`npm install -g --allow-scripts=opencode-ai,koffi\` to allow these scripts once" >&2
 	;;
 *" @tarquinen/opencode-dcp@3.1.13 "*)
 	echo "npm error code ERESOLVE" >&2
@@ -955,8 +959,17 @@ out="$("$SCRIPT" --only node --no-emoji --no-color 2>"$npm_eresolve_stderr")"
 echo "$out" | grep -q '^==> node END (OK)'
 grep -q '^npm install -g -- @tarquinen/opencode-dcp@3.1.13$' "$CALL_LOG"
 grep -q '^npm install -g --legacy-peer-deps -- @tarquinen/opencode-dcp@3.1.13$' "$CALL_LOG"
-grep -q 'npm error code ERESOLVE' "$npm_eresolve_stderr"
+grep -q '^npm install -g --allow-scripts=opencode-ai,koffi --legacy-peer-deps -- @tarquinen/opencode-dcp@3.1.13$' "$CALL_LOG"
+if grep -q 'npm error code ERESOLVE' "$npm_eresolve_stderr"; then
+	echo "Expected successful ERESOLVE retry to suppress first-pass npm error details" >&2
+	exit 1
+fi
+if grep -q 'npm warn allow-scripts' "$npm_eresolve_stderr"; then
+	echo "Expected successful allow-scripts retry to suppress first-pass npm warning details" >&2
+	exit 1
+fi
 grep -q 'retrying with --legacy-peer-deps' "$npm_eresolve_stderr"
+grep -q 'retrying once with npm-provided allow-scripts list' "$npm_eresolve_stderr"
 
 echo "Test: node fails when npm ERESOLVE retry fails"
 write_stub ncu 'echo "{\"@tarquinen/opencode-dcp\":\"3.1.13\"}"'
@@ -982,12 +995,117 @@ grep -q '^npm install -g --legacy-peer-deps -- @tarquinen/opencode-dcp@3.1.13$' 
 grep -q 'npm error code ERESOLVE' "$npm_eresolve_retry_stderr"
 grep -q 'retrying with --legacy-peer-deps' "$npm_eresolve_retry_stderr"
 
+echo "Test: node reruns npm with allow-scripts when npm requests approval"
+write_stub ncu 'echo "{\"opencode-ai\":\"1.17.8\"}"'
+# shellcheck disable=SC2016
+write_stub npm '
+echo "npm $*" >>"$CALL_LOG"
+case " $* " in
+*" --allow-scripts=opencode-ai,koffi "*)
+	;;
+*)
+	echo "npm warn allow-scripts Run npm install -g --allow-scripts=opencode-ai,koffi to allow these scripts once" >&2
+	;;
+esac
+'
+: >"$CALL_LOG"
+npm_allow_scripts_stderr="${tmp_dir}/npm-allow-scripts-stderr.log"
+out="$("$SCRIPT" --only node --no-emoji --no-color 2>"$npm_allow_scripts_stderr")"
+echo "$out" | grep -q '^==> node END (OK)'
+grep -q '^npm install -g -- opencode-ai@1.17.8$' "$CALL_LOG"
+grep -q '^npm install -g --allow-scripts=opencode-ai,koffi -- opencode-ai@1.17.8$' "$CALL_LOG"
+if grep -q 'npm warn allow-scripts' "$npm_allow_scripts_stderr"; then
+	echo "Expected successful allow-scripts retry to suppress npm warning details" >&2
+	exit 1
+fi
+grep -q 'retrying once with npm-provided allow-scripts list' "$npm_allow_scripts_stderr"
+
+echo "Test: node extracts allow-scripts flag without npm command wording"
+write_stub ncu 'echo "{\"opencode-ai\":\"1.17.8\"}"'
+# shellcheck disable=SC2016
+write_stub npm '
+echo "npm $*" >>"$CALL_LOG"
+case " $* " in
+*" --allow-scripts=opencode-ai,koffi "*)
+	;;
+*)
+	echo "npm warn allow-scripts approve with --allow-scripts=opencode-ai,koffi" >&2
+	;;
+esac
+'
+: >"$CALL_LOG"
+npm_allow_scripts_flag_only_stderr="${tmp_dir}/npm-allow-scripts-flag-only-stderr.log"
+out="$("$SCRIPT" --only node --no-emoji --no-color 2>"$npm_allow_scripts_flag_only_stderr")"
+echo "$out" | grep -q '^==> node END (OK)'
+grep -q '^npm install -g -- opencode-ai@1.17.8$' "$CALL_LOG"
+grep -q '^npm install -g --allow-scripts=opencode-ai,koffi -- opencode-ai@1.17.8$' "$CALL_LOG"
+if grep -q 'npm warn allow-scripts' "$npm_allow_scripts_flag_only_stderr"; then
+	echo "Expected successful flag-only allow-scripts retry to suppress npm warning details" >&2
+	exit 1
+fi
+grep -q 'retrying once with npm-provided allow-scripts list' "$npm_allow_scripts_flag_only_stderr"
+
+echo "Test: node surfaces unparseable allow-scripts warnings without retrying"
+write_stub ncu 'echo "{\"opencode-ai\":\"1.17.8\"}"'
+# shellcheck disable=SC2016
+write_stub npm '
+echo "npm $*" >>"$CALL_LOG"
+echo "npm warn allow-scripts install scripts need approval" >&2
+'
+: >"$CALL_LOG"
+npm_allow_scripts_unparseable_stderr="${tmp_dir}/npm-allow-scripts-unparseable-stderr.log"
+out="$("$SCRIPT" --only node --no-emoji --no-color 2>"$npm_allow_scripts_unparseable_stderr")"
+echo "$out" | grep -q '^==> node END (OK)'
+grep -q '^npm install -g -- opencode-ai@1.17.8$' "$CALL_LOG"
+if grep -q '^npm install -g --allow-scripts=' "$CALL_LOG"; then
+	echo "Expected unparseable allow-scripts warning to avoid a guessed retry" >&2
+	exit 1
+fi
+grep -q 'no allow-scripts list could be parsed' "$npm_allow_scripts_unparseable_stderr"
+grep -q 'npm warn allow-scripts install scripts need approval' "$npm_allow_scripts_unparseable_stderr"
+
 write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
 # shellcheck disable=SC2016
 write_stub npm 'echo "npm $*" >>"$CALL_LOG"'
 
+echo "Test: node sources nvm before resolving npm tools"
+nvm_home="${tmp_dir}/home-nvm"
+nvm_root="${nvm_home}/.nvm"
+nvm_bin="${nvm_root}/versions/node/v99.0.0/bin"
+mkdir -p "$nvm_bin"
+write_stub_to_dir "$nvm_bin" ncu 'echo "{\"npm\":\"11.7.0\"}"'
+# shellcheck disable=SC2016
+write_stub_to_dir "$nvm_bin" npm 'echo "nvm npm $*" >>"$CALL_LOG"'
+cat >"${nvm_root}/nvm.sh" <<EOF
+export NVM_BIN="${nvm_bin}"
+export PATH="${nvm_bin}:\$PATH"
+nvm() { return 0; }
+EOF
+: >"$CALL_LOG"
+out="$(HOME="$nvm_home" NVM_DIR="$nvm_root" PATH="$BASE_PATH" "$SCRIPT" --only node --no-emoji --no-color)"
+echo "$out" | grep -q '^==> node END (OK)'
+grep -q '^nvm npm install -g -- npm@11.7.0$' "$CALL_LOG"
+
+echo "Test: node tolerates failing nvm.sh"
+failing_nvm_home="${tmp_dir}/home-nvm-failing"
+failing_nvm_root="${failing_nvm_home}/.nvm"
+mkdir -p "$failing_nvm_root"
+cat >"${failing_nvm_root}/nvm.sh" <<'EOF'
+false
+return 1
+EOF
+write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
+# shellcheck disable=SC2016
+write_stub npm 'echo "fallback npm $*" >>"$CALL_LOG"'
+: >"$CALL_LOG"
+out="$(HOME="$failing_nvm_home" NVM_DIR="$failing_nvm_root" "$SCRIPT" --only node --no-emoji --no-color)"
+echo "$out" | grep -q '^==> node END (OK)'
+grep -q '^fallback npm install -g -- npm@11.7.0$' "$CALL_LOG"
+
 echo "Test: node falls back to npx npm-check-updates"
 rm -f "${stub_bin}/ncu"
+# shellcheck disable=SC2016
+write_stub npm 'echo "npm $*" >>"$CALL_LOG"'
 # shellcheck disable=SC2016
 write_stub npx '
 echo "npx $*" >>"$CALL_LOG"

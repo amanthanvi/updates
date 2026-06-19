@@ -29,10 +29,10 @@ sudo mkdir -p /usr/local/bin
 sudo install -m 0755 ./updates /usr/local/bin/updates
 ```
 
-Native Windows (`v2.0.1`, PowerShell 7):
+Native Windows (`v2.0.2`, PowerShell 7):
 
 ```powershell
-$version = '2.0.1'
+$version = '2.0.2'
 $installer = Join-Path $env:TEMP 'install-updates-windows.ps1'
 
 Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/amanthanvi/updates/v$version/install-windows.ps1" -OutFile $installer
@@ -88,7 +88,7 @@ Modules are auto-detected: if the underlying command isn’t installed, the modu
 - `repos`: update aman dev repos under `~/GitRepos` (auto-detected `aman-*-setup` dirs)
 - `linux`: upgrade Linux system packages (auto-detects `apt-get`/`dnf`/`yum`/`pacman`/`zypper`/`apk`)
 - `winget`: upgrade installed Windows packages/apps via `winget` (Windows only)
-- `node`: upgrade global npm packages via resolved npm-check-updates + `npm`
+- `node`: upgrade global npm packages via resolved npm-check-updates + `npm` (sources NVM first when available on macOS/Linux)
 - `bun`: upgrade Bun global packages everywhere; native Windows only self-updates the Bun CLI when it appears standalone-installed
 - `python`: upgrade global/user Python packages via a resolved launcher (`py -3`, `python`, then `python3`)
 - `uv`: update uv-managed tools everywhere; native Windows only self-updates uv when it appears standalone-installed
@@ -129,7 +129,7 @@ Install what you actually use:
 
 - `brew` (Homebrew)
 - `git` (for the `shell` and `repos` modules)
-- `ncu` or `npx npm-check-updates` (for the `node` module)
+- NVM-managed `npm`/`ncu` are preferred when `$NVM_DIR/nvm.sh` or `~/.nvm/nvm.sh` exists; otherwise use `npm` plus `ncu` or `npx npm-check-updates` (for the `node` module)
 - `pwsh` (PowerShell 7) for native Windows support
 - `winget` for the `winget` module on Windows
 - `bun` for the `bun` module
@@ -154,9 +154,10 @@ Install what you actually use:
 
 - This script updates _global_ environments (`npm -g`, `pip`), which can be disruptive.
 - Use `--dry-run` first, and consider `--only`/`--skip` to control scope.
+- For npm 11+ global installs, `updates` may retry once with npm's suggested one-shot `--allow-scripts=...` list so package postinstall steps can finish without changing persistent npm config.
 - Since `v2.0.0`, `updates` itself is distributed through GitHub Releases only. No third-party package manager channel is supported.
 - Since `v2.0.0`, self-update is fixed to the canonical GitHub repo `amanthanvi/updates`; `UPDATES_SELF_UPDATE_REPO` is removed and setting it is an error.
-- Official self-update artifacts for `v2.0.1` are `updates`, `updates-windows.zip`, `updates-release.json`, and `SHA256SUMS`.
+- Official self-update artifacts for `v2.0.2` are `updates`, `updates-windows.zip`, `updates-release.json`, and `SHA256SUMS`.
 - Normal runs throttle GitHub release checks to about once every 24 hours using a small local cache under `XDG_CACHE_HOME`, `~/Library/Caches`, `~/.cache`, or `%LOCALAPPDATA%\\updates`; explicit `--self-update` forces a live check.
 - Native Windows self-update works only for official standalone installs rooted at `%LOCALAPPDATA%\\Programs\\updates` with a valid `install-source.json` receipt. Manual file copies warn and skip instead of being overwritten.
 - On macOS, Homebrew casks are disabled by default; enable with `--brew-mode casks` or `--brew-mode greedy` (or `--full`). On macOS 26+, cask upgrades may be blocked unless your terminal app is allowed under **Privacy & Security → App Management** (e.g. Ghostty). If you see a system notification like “\<Terminal App\> tried modifying your system…”, enable App Management or rerun with `--brew-mode formula`.

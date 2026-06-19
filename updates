@@ -6,7 +6,7 @@ set -o pipefail
 # SECTION: globals — version, state variables, module registry
 ###############################################################################
 
-UPDATES_VERSION="2.0.1"
+UPDATES_VERSION="2.0.2"
 
 SCRIPT_NAME="$(basename "$0")"
 
@@ -118,6 +118,7 @@ PYTHON_CMD_LABEL=""
 NCU_RESOLVED=0
 NCU_MODE=""
 NCU_CMD=""
+NVM_NODE_TOOLS_READY=0
 
 ###############################################################################
 # SECTION: output — print, log, warn, err, emoji, JSON emission
@@ -673,6 +674,8 @@ run() {
 }
 
 run_npm_global_install() {
+	init_nvm_node_tools
+
 	if [ "$DRY_RUN" -eq 1 ]; then
 		run npm install -g -- "$@"
 		return $?
@@ -685,30 +688,32 @@ run_npm_global_install() {
 		return $?
 	}
 
-	debug "+ npm install -g -- $*"
-	if [ "$JSON" -eq 1 ]; then
-		npm install -g -- "$@" 1>&2 2>"$npm_err_log"
-	else
-		npm install -g -- "$@" 2>"$npm_err_log"
-	fi
+	run_npm_global_install_logged "$npm_err_log" -- "$@"
 	local status=$?
 
 	if [ "$status" -eq 0 ]; then
-		if [ -s "$npm_err_log" ]; then
-			cat "$npm_err_log" >&2
-		fi
-		rm -f "$npm_err_log"
-		return 0
+		handle_npm_global_install_success "$npm_err_log" -- "$@"
+		return $?
 	fi
 
 	if grep -q 'ERESOLVE' "$npm_err_log"; then
 		warn "node: npm peer dependency resolution failed; retrying with --legacy-peer-deps"
+		rm -f "$npm_err_log"
+		npm_err_log="$(mktemp "${tmp_base%/}/updates-npm.XXXXXX" 2>/dev/null || mktemp -t updates-npm.XXXXXX 2>/dev/null)" || {
+			run npm install -g --legacy-peer-deps -- "$@"
+			return $?
+		}
+		run_npm_global_install_logged "$npm_err_log" --legacy-peer-deps -- "$@"
+		status=$?
+		if [ "$status" -eq 0 ]; then
+			handle_npm_global_install_success "$npm_err_log" --legacy-peer-deps -- "$@"
+			return $?
+		fi
 		if [ -s "$npm_err_log" ]; then
 			cat "$npm_err_log" >&2
 		fi
 		rm -f "$npm_err_log"
-		run npm install -g --legacy-peer-deps -- "$@"
-		return $?
+		return "$status"
 	fi
 
 	if [ -s "$npm_err_log" ]; then
@@ -716,6 +721,65 @@ run_npm_global_install() {
 	fi
 	rm -f "$npm_err_log"
 	return "$status"
+}
+
+run_npm_global_install_logged() {
+	local npm_err_log="$1"
+	shift
+
+	debug "+ npm install -g $*"
+	if [ "$JSON" -eq 1 ]; then
+		npm install -g "$@" 1>&2 2>"$npm_err_log"
+	else
+		npm install -g "$@" 2>"$npm_err_log"
+	fi
+}
+
+npm_allow_scripts_arg_from_log() {
+	local npm_err_log="$1"
+	sed -n 's/.*\(--allow-scripts=[^`[:space:]]*\).*/\1/p' "$npm_err_log" | head -n 1
+}
+
+npm_allow_scripts_warning_in_log() {
+	local npm_err_log="$1"
+	grep -q 'npm warn allow-scripts' "$npm_err_log"
+}
+
+handle_npm_global_install_success() {
+	local npm_err_log="$1"
+	shift
+
+	local allow_scripts_arg=""
+	allow_scripts_arg="$(npm_allow_scripts_arg_from_log "$npm_err_log")"
+	if [ -n "$allow_scripts_arg" ]; then
+		warn "node: npm install scripts need approval; retrying once with npm-provided allow-scripts list"
+		rm -f "$npm_err_log"
+
+		local allow_err_log tmp_base
+		tmp_base="${TMPDIR:-/tmp}"
+		allow_err_log="$(mktemp "${tmp_base%/}/updates-npm.XXXXXX" 2>/dev/null || mktemp -t updates-npm.XXXXXX 2>/dev/null)" || {
+			run npm install -g "$allow_scripts_arg" "$@"
+			return $?
+		}
+
+		run_npm_global_install_logged "$allow_err_log" "$allow_scripts_arg" "$@"
+		local status=$?
+		if [ -s "$allow_err_log" ]; then
+			cat "$allow_err_log" >&2
+		fi
+		rm -f "$allow_err_log"
+		return "$status"
+	fi
+
+	if npm_allow_scripts_warning_in_log "$npm_err_log"; then
+		warn "node: npm reported install scripts needing approval, but no allow-scripts list could be parsed"
+	fi
+
+	if [ -s "$npm_err_log" ]; then
+		cat "$npm_err_log" >&2
+	fi
+	rm -f "$npm_err_log"
+	return 0
 }
 
 semver_is_valid() {
@@ -790,6 +854,8 @@ python_run_cmd() {
 }
 
 resolve_ncu_runner() {
+	init_nvm_node_tools
+
 	if [ "$NCU_RESOLVED" -eq 1 ]; then
 		[ -n "$NCU_MODE" ]
 		return $?
@@ -815,6 +881,45 @@ resolve_ncu_runner() {
 		return 0
 	fi
 	return 1
+}
+
+init_nvm_node_tools() {
+	if [ "$NVM_NODE_TOOLS_READY" -eq 1 ]; then
+		return 0
+	fi
+	NVM_NODE_TOOLS_READY=1
+
+	local nvm_dir=""
+	local home_dir=""
+	if [ -n "${NVM_DIR:-}" ]; then
+		nvm_dir="$NVM_DIR"
+	elif home_dir="$(updates_home_dir 2>/dev/null)"; then
+		nvm_dir="${home_dir}/.nvm"
+	fi
+	[ -n "$nvm_dir" ] || return 0
+
+	local nvm_sh="${nvm_dir%/}/nvm.sh"
+	[ -s "$nvm_sh" ] || return 0
+
+	local old_opts source_status
+	old_opts="$(set +o)"
+	set +e
+	set +u
+	# shellcheck disable=SC1090
+	. "$nvm_sh" >/dev/null 2>&1
+	source_status=$?
+	eval "$old_opts"
+	[ "$source_status" -eq 0 ] || return 0
+
+	local npm_path=""
+	npm_path="$(command -v npm 2>/dev/null || true)"
+	case "$npm_path" in
+	"${nvm_dir%/}"/*) return 0 ;;
+	esac
+
+	if command -v nvm >/dev/null 2>&1; then
+		nvm use --silent default >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1 || true
+	fi
 }
 
 ncu_command_label() {

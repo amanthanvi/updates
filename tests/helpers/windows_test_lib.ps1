@@ -124,6 +124,22 @@ function Assert-Match {
     }
 }
 
+function Assert-NotMatch {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Text,
+        [Parameter(Mandatory = $true)]
+        [string]$Pattern,
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    if ($Text -match $Pattern) {
+        throw "{0}`nPattern: {1}`nText:`n{2}" -f $Message, $Pattern, $Text
+    }
+}
+
 function Assert-FileExists {
     param(
         [Parameter(Mandatory = $true)]
@@ -609,7 +625,7 @@ function Install-RepoWindowsRuntime {
         [string]$RepoRoot,
         [Parameter(Mandatory = $true)]
         [string]$InstallRoot,
-        [string]$Version = '2.0.1',
+        [string]$Version = '2.0.2',
         [switch]$WithReceipt
     )
 
