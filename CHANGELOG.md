@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `NODE_NPM_INSTALL_FLAGS` config key in `~/.updatesrc` to pass extra flags (e.g. `--legacy-peer-deps`) to the node module's `npm install -g` invocation, scoped to `updates` instead of requiring a global `~/.npmrc` override. Supported on both Bash and native Windows PowerShell.
+
 ## [2.0.1] - 2026-06-17
 
 ### Fixed

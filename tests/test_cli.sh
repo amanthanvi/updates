@@ -1194,4 +1194,25 @@ if [ "$rc" -ne 2 ]; then
 fi
 echo "$linux_on_mac_out" | grep -q 'not supported'
 
+echo "Test: NODE_NPM_INSTALL_FLAGS appears in node dry-run output"
+write_stub uname 'echo Darwin'
+write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
+# shellcheck disable=SC2016
+write_stub npm 'echo "npm $*" >>"$CALL_LOG"'
+config_home_npm_flags="${tmp_dir}/home-npm-flags"
+mkdir -p "$config_home_npm_flags"
+cat >"${config_home_npm_flags}/.updatesrc" <<EOF
+NODE_NPM_INSTALL_FLAGS=--legacy-peer-deps
+EOF
+out="$(HOME="$config_home_npm_flags" UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only node --no-emoji --no-color)"
+echo "$out" | grep -q 'DRY RUN: npm install -g --legacy-peer-deps -- <packages\.\.\.>'
+
+echo "Test: node dry-run without NODE_NPM_INSTALL_FLAGS omits extra flags"
+config_home_no_npm_flags="${tmp_dir}/home-no-npm-flags"
+mkdir -p "$config_home_no_npm_flags"
+cat >"${config_home_no_npm_flags}/.updatesrc" <<EOF
+EOF
+out="$(HOME="$config_home_no_npm_flags" UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only node --no-emoji --no-color)"
+echo "$out" | grep -q 'DRY RUN: npm install -g -- <packages\.\.\.>'
+
 echo "All tests passed."

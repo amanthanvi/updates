@@ -263,6 +263,7 @@ The file is skipped if it does not exist. Pass `--no-config` to ignore it entire
 | `NO_COLOR`      | 0/1                    | `--no-color`                | `NO_COLOR=1`                                                               |
 | `GO_BINARIES`   | CSV (module[@version]) | go module binary list       | `GO_BINARIES="golang.org/x/tools/gopls,github.com/go-delve/delve/cmd/dlv"` |
 | `REPOS_DIR`     | path                   | repos module base directory | `REPOS_DIR=/home/user/projects`                                            |
+| `NODE_NPM_INSTALL_FLAGS` | string          | extra flags for `npm install -g` | `NODE_NPM_INSTALL_FLAGS="--legacy-peer-deps"`                         |
 
 Unknown keys are silently ignored (forward compatibility).
 

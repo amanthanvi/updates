@@ -58,6 +58,7 @@ $script:FullMode = $false
 $script:LogFile = $null
 $script:GoBinaries = ''
 $script:ReposDir = ''
+$script:NodeNpmInstallFlags = ''
 $script:MasUpgrade = $false
 $script:MacosUpdates = $false
 
@@ -406,6 +407,7 @@ function Read-Config {
             'NO_COLOR' { Set-ConfigBool -Name $key -Value $value -Apply { param($v) $script:NoColor = $v } }
             'GO_BINARIES' { $script:GoBinaries = $value }
             'REPOS_DIR' { $script:ReposDir = $value }
+            'NODE_NPM_INSTALL_FLAGS' { $script:NodeNpmInstallFlags = $value }
             'MAS_UPGRADE' { Set-ConfigBool -Name $key -Value $value -Apply { param($v) $script:MasUpgrade = $v } }
             'MACOS_UPDATES' { Set-ConfigBool -Name $key -Value $value -Apply { param($v) $script:MacosUpdates = $v } }
             default { }
@@ -758,7 +760,12 @@ function Invoke-NpmGlobalInstall {
         [string[]]$Packages
     )
 
-    $installArgs = @('install', '-g', '--') + @($Packages)
+    $extraFlags = @()
+    if (-not [string]::IsNullOrWhiteSpace($script:NodeNpmInstallFlags)) {
+        $extraFlags = @($script:NodeNpmInstallFlags -split '\s+' | Where-Object { $_ -ne '' })
+    }
+
+    $installArgs = @('install', '-g') + $extraFlags + @('--') + @($Packages)
     $installResult = Invoke-LoggedProcess -FilePath $Npm -ArgumentList $installArgs
     if ($installResult.ExitCode -eq 0) {
         return 0
@@ -766,7 +773,7 @@ function Invoke-NpmGlobalInstall {
 
     if ($installResult.Output -match 'ERESOLVE') {
         Write-WarnLine 'node: npm peer dependency resolution failed; retrying with --legacy-peer-deps'
-        $retryArgs = @('install', '-g', '--legacy-peer-deps', '--') + @($Packages)
+        $retryArgs = @('install', '-g', '--legacy-peer-deps') + $extraFlags + @('--') + @($Packages)
         $retryResult = Invoke-LoggedProcess -FilePath $Npm -ArgumentList $retryArgs
         return [int]$retryResult.ExitCode
     }
@@ -853,7 +860,12 @@ function Invoke-ModuleNode {
 
     if ($script:DryRun) {
         Write-LogLine ("DRY RUN: {0}" -f $runner.Label)
-        Write-LogLine ("DRY RUN: {0}" -f (Format-Command @($npm, 'install', '-g', '--', '<packages...>')))
+        $dryRunInstallParts = @($npm, 'install', '-g')
+        if (-not [string]::IsNullOrWhiteSpace($script:NodeNpmInstallFlags)) {
+            $dryRunInstallParts += @($script:NodeNpmInstallFlags -split '\s+' | Where-Object { $_ -ne '' })
+        }
+        $dryRunInstallParts += @('--', '<packages...>')
+        Write-LogLine ("DRY RUN: {0}" -f (Format-Command $dryRunInstallParts))
         return 0
     }
 

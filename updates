@@ -24,6 +24,7 @@ NO_CONFIG=0
 JSON=0
 GO_BINARIES=""
 REPOS_DIR=""
+NODE_NPM_INSTALL_FLAGS=""
 
 LOG_LEVEL="info"
 LOG_LEVEL_NUM=2
@@ -673,23 +674,30 @@ run() {
 }
 
 run_npm_global_install() {
+	# Build the extra-flags array from NODE_NPM_INSTALL_FLAGS (word-split is intentional).
+	local -a npm_extra_flags=()
+	if [ -n "$NODE_NPM_INSTALL_FLAGS" ]; then
+		# shellcheck disable=SC2206
+		npm_extra_flags=($NODE_NPM_INSTALL_FLAGS)
+	fi
+
 	if [ "$DRY_RUN" -eq 1 ]; then
-		run npm install -g -- "$@"
+		run npm install -g "${npm_extra_flags[@]}" -- "$@"
 		return $?
 	fi
 
 	local npm_err_log tmp_base
 	tmp_base="${TMPDIR:-/tmp}"
 	npm_err_log="$(mktemp "${tmp_base%/}/updates-npm.XXXXXX" 2>/dev/null || mktemp -t updates-npm.XXXXXX 2>/dev/null)" || {
-		run npm install -g -- "$@"
+		run npm install -g "${npm_extra_flags[@]}" -- "$@"
 		return $?
 	}
 
-	debug "+ npm install -g -- $*"
+	debug "+ npm install -g ${npm_extra_flags[*]} -- $*"
 	if [ "$JSON" -eq 1 ]; then
-		npm install -g -- "$@" 1>&2 2>"$npm_err_log"
+		npm install -g "${npm_extra_flags[@]}" -- "$@" 1>&2 2>"$npm_err_log"
 	else
-		npm install -g -- "$@" 2>"$npm_err_log"
+		npm install -g "${npm_extra_flags[@]}" -- "$@" 2>"$npm_err_log"
 	fi
 	local status=$?
 
@@ -707,7 +715,7 @@ run_npm_global_install() {
 			cat "$npm_err_log" >&2
 		fi
 		rm -f "$npm_err_log"
-		run npm install -g --legacy-peer-deps -- "$@"
+		run npm install -g --legacy-peer-deps "${npm_extra_flags[@]}" -- "$@"
 		return $?
 	fi
 
@@ -1996,6 +2004,9 @@ read_config() {
 		REPOS_DIR)
 			REPOS_DIR="$val"
 			;;
+		NODE_NPM_INSTALL_FLAGS)
+			NODE_NPM_INSTALL_FLAGS="$val"
+			;;
 		*)
 			# Unknown keys are ignored for forward compatibility.
 			:
@@ -2640,7 +2651,11 @@ module_node() {
 
 	if [ "$DRY_RUN" -eq 1 ]; then
 		log "DRY RUN: $(ncu_command_label)"
-		log "DRY RUN: npm install -g -- <packages...>"
+		if [ -n "$NODE_NPM_INSTALL_FLAGS" ]; then
+			log "DRY RUN: npm install -g ${NODE_NPM_INSTALL_FLAGS} -- <packages...>"
+		else
+			log "DRY RUN: npm install -g -- <packages...>"
+		fi
 		return 0
 	fi
 

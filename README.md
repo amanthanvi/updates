@@ -119,9 +119,12 @@ BREW_MODE=formula
 BREW_CLEANUP=1
 LOG_LEVEL=info
 GO_BINARIES="golang.org/x/tools/gopls,github.com/go-delve/delve/cmd/dlv"
+NODE_NPM_INSTALL_FLAGS="--legacy-peer-deps"
 ```
 
 For `GO_BINARIES`, entries may be `module` or `module@version`. If `@version` is omitted, it defaults to `@latest`.
+
+`NODE_NPM_INSTALL_FLAGS` passes extra flags to `npm install -g` in the `node` module. Default is empty (no extra flags). This is useful when peer-dependency conflicts cause `ERESOLVE` errors and you want to scope `--legacy-peer-deps` to `updates` instead of setting it globally in `~/.npmrc`.
 
 ## Prerequisites
 

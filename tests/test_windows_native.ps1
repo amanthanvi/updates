@@ -1381,5 +1381,39 @@ exit $LASTEXITCODE
     }
 }
 
+if (Should-RunTest 'NODE_NPM_INSTALL_FLAGS appears in node dry-run output') {
+    Invoke-TestCase 'NODE_NPM_INSTALL_FLAGS appears in node dry-run output' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'npx.cmd') -Lines @()
+            Write-CmdStub -Path (Join-Path $stubDir 'npm.cmd') -Lines @()
+
+            Write-Utf8NoBom -Path (Join-Path $installRoot '.updatesrc') -Content "NODE_NPM_INSTALL_FLAGS=--legacy-peer-deps`n"
+
+            $envMap = @{
+                PATH        = $stubDir
+                HOME        = $installRoot
+                USERPROFILE = $installRoot
+            }
+
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
+                '--no-self-update',
+                '--dry-run',
+                '--only', 'node',
+                '--no-color',
+                '--no-emoji'
+            ) -Environment $envMap
+
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'NODE_NPM_INSTALL_FLAGS dry-run should succeed'
+            Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*npm(\.cmd)? install -g --legacy-peer-deps -- <packages\.\.\.>' -Message 'node dry-run should include NODE_NPM_INSTALL_FLAGS'
+        }
+    }
+}
+
 Complete-TestRun
 Write-Host 'All Windows-native tests passed.'
