@@ -773,7 +773,8 @@ function Invoke-NpmGlobalInstall {
 
     if ($installResult.Output -match 'ERESOLVE') {
         Write-WarnLine 'node: npm peer dependency resolution failed; retrying with --legacy-peer-deps'
-        $retryArgs = @('install', '-g', '--legacy-peer-deps') + $extraFlags + @('--') + @($Packages)
+        $retryExtraFlags = @($extraFlags | Where-Object { $_ -ne '--legacy-peer-deps' })
+        $retryArgs = @('install', '-g') + $retryExtraFlags + @('--legacy-peer-deps', '--') + @($Packages)
         $retryResult = Invoke-LoggedProcess -FilePath $Npm -ArgumentList $retryArgs
         return [int]$retryResult.ExitCode
     }

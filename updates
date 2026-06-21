@@ -677,8 +677,10 @@ run_npm_global_install() {
 	# Build the extra-flags array from NODE_NPM_INSTALL_FLAGS (word-split is intentional).
 	local -a npm_extra_flags=()
 	if [ -n "$NODE_NPM_INSTALL_FLAGS" ]; then
+		set -f
 		# shellcheck disable=SC2206
 		npm_extra_flags=($NODE_NPM_INSTALL_FLAGS)
+		set +f
 	fi
 
 	if [ "$DRY_RUN" -eq 1 ]; then
@@ -715,7 +717,14 @@ run_npm_global_install() {
 			cat "$npm_err_log" >&2
 		fi
 		rm -f "$npm_err_log"
-		run npm install -g --legacy-peer-deps "${npm_extra_flags[@]}" -- "$@"
+		local -a retry_flags=()
+		local flag
+		for flag in "${npm_extra_flags[@]}"; do
+			[ "$flag" = "--legacy-peer-deps" ] && continue
+			retry_flags+=("$flag")
+		done
+		retry_flags+=(--legacy-peer-deps)
+		run npm install -g "${retry_flags[@]}" -- "$@"
 		return $?
 	fi
 
