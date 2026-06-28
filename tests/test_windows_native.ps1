@@ -13,6 +13,9 @@ if (-not $IsWindows) {
     exit 0
 }
 
+# Production self-update skips under CI; these fixture tests need the non-CI path.
+Remove-Item Env:CI -ErrorAction SilentlyContinue
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $currentReleaseVersion = '2.0.2'
 $previousReleaseVersion = '2.0.1'

@@ -10,6 +10,7 @@
 - [x] Insert configured npm flags before the `npm install -g --` package separator.
 - [x] Preserve configured flags across ERESOLVE and allow-scripts retry paths, with `--legacy-peer-deps` deduped on ERESOLVE retry.
 - [x] Cover Bash and Windows dry-run/retry behavior.
+- [x] Keep Windows self-update fixture tests on the non-CI path under GitHub Actions.
 - [x] Update README, SPEC, and CHANGELOG contract docs.
 
 ---
