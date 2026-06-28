@@ -995,6 +995,48 @@ grep -q '^npm install -g --legacy-peer-deps -- @tarquinen/opencode-dcp@3.1.13$' 
 grep -q 'npm error code ERESOLVE' "$npm_eresolve_retry_stderr"
 grep -q 'retrying with --legacy-peer-deps' "$npm_eresolve_retry_stderr"
 
+echo "Test: node retry keeps configured npm flags literal and dedupes legacy peer deps"
+touch "${tmp_dir}/--flag=literal-glob-target"
+config_home_npm_retry_flags="${tmp_dir}/home-npm-retry-flags"
+mkdir -p "$config_home_npm_retry_flags"
+cat >"${config_home_npm_retry_flags}/.updatesrc" <<EOF
+NODE_NPM_INSTALL_FLAGS=--flag=* --legacy-peer-deps --strict-peer-deps
+EOF
+# shellcheck disable=SC2016
+write_stub npm '
+echo "npm $*" >>"$CALL_LOG"
+count=0
+if [ -s "$NPM_RETRY_COUNT_FILE" ]; then
+	count="$(cat "$NPM_RETRY_COUNT_FILE")"
+fi
+count=$((count + 1))
+echo "$count" >"$NPM_RETRY_COUNT_FILE"
+if [ "$count" -eq 1 ]; then
+	echo "npm error code ERESOLVE" >&2
+	exit 1
+fi
+case " $* " in
+*" --legacy-peer-deps "*)
+	exit 0
+	;;
+esac
+exit 1
+'
+: >"$CALL_LOG"
+out="$(cd "$tmp_dir" && NPM_RETRY_COUNT_FILE="${tmp_dir}/npm-retry-count" HOME="$config_home_npm_retry_flags" "$SCRIPT" --only node --no-emoji --no-color 2>"$npm_eresolve_stderr")"
+echo "$out" | grep -q '^==> node END (OK)'
+grep -q '^npm install -g --flag=\* --legacy-peer-deps --strict-peer-deps -- @tarquinen/opencode-dcp@3.1.13$' "$CALL_LOG"
+grep -q '^npm install -g --flag=\* --strict-peer-deps --legacy-peer-deps -- @tarquinen/opencode-dcp@3.1.13$' "$CALL_LOG"
+if grep -q -- '--flag=literal-glob-target' "$CALL_LOG"; then
+	echo "Expected NODE_NPM_INSTALL_FLAGS globs to remain literal" >&2
+	exit 1
+fi
+retry_legacy_count="$(grep '^npm install -g --flag=\* --strict-peer-deps --legacy-peer-deps -- @tarquinen/opencode-dcp@3.1.13$' "$CALL_LOG" | grep -o -- '--legacy-peer-deps' | wc -l | tr -d ' ')"
+if [ "$retry_legacy_count" -ne 1 ]; then
+	echo "Expected retry command to include --legacy-peer-deps exactly once (got $retry_legacy_count)" >&2
+	exit 1
+fi
+
 echo "Test: node reruns npm with allow-scripts when npm requests approval"
 write_stub ncu 'echo "{\"opencode-ai\":\"1.17.8\"}"'
 # shellcheck disable=SC2016
@@ -1063,6 +1105,30 @@ if grep -q '^npm install -g --allow-scripts=' "$CALL_LOG"; then
 fi
 grep -q 'no allow-scripts list could be parsed' "$npm_allow_scripts_unparseable_stderr"
 grep -q 'npm warn allow-scripts install scripts need approval' "$npm_allow_scripts_unparseable_stderr"
+
+echo "Test: NODE_NPM_INSTALL_FLAGS appears in node dry-run output"
+write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
+# shellcheck disable=SC2016
+write_stub npm 'echo "npm $*" >>"$CALL_LOG"'
+config_home_npm_flags="${tmp_dir}/home-npm-flags"
+mkdir -p "$config_home_npm_flags"
+cat >"${config_home_npm_flags}/.updatesrc" <<EOF
+NODE_NPM_INSTALL_FLAGS=--legacy-peer-deps
+EOF
+out="$(HOME="$config_home_npm_flags" UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only node --no-emoji --no-color)"
+echo "$out" | grep -q 'DRY RUN: npm install -g --legacy-peer-deps -- <packages\.\.\.>'
+
+echo "Test: node dry-run without NODE_NPM_INSTALL_FLAGS omits extra flags"
+config_home_no_npm_flags="${tmp_dir}/home-no-npm-flags"
+mkdir -p "$config_home_no_npm_flags"
+cat >"${config_home_no_npm_flags}/.updatesrc" <<EOF
+EOF
+out="$(HOME="$config_home_no_npm_flags" UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only node --no-emoji --no-color)"
+echo "$out" | grep -q 'DRY RUN: npm install -g -- <packages\.\.\.>'
+
+echo "Test: node dry-run without NODE_NPM_INSTALL_FLAGS works under nounset"
+out="$(HOME="$config_home_no_npm_flags" UPDATES_ALLOW_NON_DARWIN=1 bash -u "$SCRIPT" --dry-run --only node --no-emoji --no-color)"
+echo "$out" | grep -q 'DRY RUN: npm install -g -- <packages\.\.\.>'
 
 write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
 # shellcheck disable=SC2016

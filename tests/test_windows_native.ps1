@@ -13,6 +13,9 @@ if (-not $IsWindows) {
     exit 0
 }
 
+# Production self-update skips under CI; these fixture tests need the non-CI path.
+Remove-Item Env:CI -ErrorAction SilentlyContinue
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $currentReleaseVersion = '2.0.2'
 $previousReleaseVersion = '2.0.1'
@@ -433,6 +436,37 @@ if (Should-RunTest 'native payload dry-run covers winget, node fallback, bun, py
     }
 }
 
+if (Should-RunTest 'NODE_NPM_INSTALL_FLAGS appears in node dry-run output') {
+    Invoke-TestCase 'NODE_NPM_INSTALL_FLAGS appears in node dry-run output' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'npx.cmd') -Lines @()
+            Write-CmdStub -Path (Join-Path $stubDir 'npm.cmd') -Lines @()
+            Write-Utf8NoBom -Path (Join-Path $installRoot '.updatesrc') -Content "NODE_NPM_INSTALL_FLAGS=--legacy-peer-deps`n"
+
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
+                '--no-self-update',
+                '--dry-run',
+                '--only', 'node',
+                '--no-color',
+                '--no-emoji'
+            ) -Environment @{
+                PATH        = $stubDir
+                HOME        = $installRoot
+                USERPROFILE = $installRoot
+            }
+
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'NODE_NPM_INSTALL_FLAGS dry-run should succeed'
+            Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*npm(\.cmd)? install -g --legacy-peer-deps -- <packages\.\.\.>' -Message 'node dry-run should include NODE_NPM_INSTALL_FLAGS'
+        }
+    }
+}
+
 if (Should-RunTest 'native payload node retries npm ERESOLVE with legacy peer deps') {
     Invoke-TestCase 'native payload node retries npm ERESOLVE with legacy peer deps' {
         Invoke-WithTempInstall {
@@ -447,9 +481,9 @@ if (Should-RunTest 'native payload node retries npm ERESOLVE with legacy peer de
             )
             Write-CmdStub -Path (Join-Path $stubDir 'npm.cmd') -Lines @(
                 'echo npm %*>>"%NODE_MARKER%"',
-                'echo %* | findstr /C:"--legacy-peer-deps" >nul',
+                'echo %* | "%SystemRoot%\System32\findstr.exe" /C:"--legacy-peer-deps" >nul',
                 'if not errorlevel 1 exit /b 0',
-                'echo %* | findstr /C:"@tarquinen/opencode-dcp@3.1.13" >nul',
+                'echo %* | "%SystemRoot%\System32\findstr.exe" /C:"@tarquinen/opencode-dcp@3.1.13" >nul',
                 'if not errorlevel 1 (',
                 '  echo npm error code ERESOLVE 1>&2',
                 '  exit /b 1',
@@ -471,10 +505,57 @@ if (Should-RunTest 'native payload node retries npm ERESOLVE with legacy peer de
 
             Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'node ERESOLVE retry should succeed'
             $marker = Get-Content -LiteralPath $markerPath -Raw
-            Assert-Match -Text $marker -Pattern '(?im)^npm install -g -- @tarquinen/opencode-dcp@3\.1\.13$' -Message 'node should first try strict npm install'
-            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --legacy-peer-deps -- @tarquinen/opencode-dcp@3\.1\.13$' -Message 'node should retry with legacy peer deps'
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g -- @tarquinen/opencode-dcp@3\.1\.13\r?$' -Message 'node should first try strict npm install'
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --legacy-peer-deps -- @tarquinen/opencode-dcp@3\.1\.13\r?$' -Message 'node should retry with legacy peer deps'
             Assert-NotMatch -Text $result.Output -Pattern 'npm error code ERESOLVE' -Message 'successful ERESOLVE retry should suppress first-pass npm error details'
             Assert-Match -Text $result.Output -Pattern 'retrying with --legacy-peer-deps' -Message 'retry warning should be visible'
+        }
+    }
+}
+
+if (Should-RunTest 'native payload node retry dedupes NODE_NPM_INSTALL_FLAGS legacy peer deps') {
+    Invoke-TestCase 'native payload node retry dedupes NODE_NPM_INSTALL_FLAGS legacy peer deps' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'npx.cmd') -Lines @(
+                'echo {"@tarquinen/opencode-dcp":"3.1.13"}'
+            )
+            Write-CmdStub -Path (Join-Path $stubDir 'npm.cmd') -Lines @(
+                'echo npm %*>>"%NODE_MARKER%"',
+                'echo %* | "%SystemRoot%\System32\findstr.exe" /C:"--strict-peer-deps --legacy-peer-deps -- @tarquinen/opencode-dcp@3.1.13" >nul',
+                'if not errorlevel 1 exit /b 0',
+                'echo %* | "%SystemRoot%\System32\findstr.exe" /C:"@tarquinen/opencode-dcp@3.1.13" >nul',
+                'if not errorlevel 1 (',
+                '  echo npm error code ERESOLVE 1>&2',
+                '  exit /b 1',
+                ')'
+            )
+            Write-Utf8NoBom -Path (Join-Path $installRoot '.updatesrc') -Content "NODE_NPM_INSTALL_FLAGS=--legacy-peer-deps --strict-peer-deps`n"
+
+            $markerPath = Join-Path $installRoot 'node-marker.txt'
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
+                '--no-self-update',
+                '--only', 'node',
+                '--no-color',
+                '--no-emoji'
+            ) -Environment @{
+                PATH        = $stubDir
+                HOME        = $installRoot
+                USERPROFILE = $installRoot
+                NODE_MARKER = $markerPath
+            }
+
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'node ERESOLVE retry should succeed'
+            $marker = Get-Content -LiteralPath $markerPath -Raw
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --legacy-peer-deps --strict-peer-deps -- @tarquinen/opencode-dcp@3\.1\.13\r?$' -Message 'node should first include configured npm flags'
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --strict-peer-deps --legacy-peer-deps -- @tarquinen/opencode-dcp@3\.1\.13\r?$' -Message 'node retry should dedupe and force legacy peer deps last'
+            $retryLine = [regex]::Match($marker, '(?im)^npm install -g --strict-peer-deps --legacy-peer-deps -- @tarquinen/opencode-dcp@3\.1\.13\r?$').Value
+            Assert-Equal -Expected 1 -Actual ([regex]::Matches($retryLine, '--legacy-peer-deps').Count) -Message 'retry should include --legacy-peer-deps exactly once'
         }
     }
 }
@@ -493,7 +574,7 @@ if (Should-RunTest 'native payload node reruns npm with allow-scripts when npm r
             )
             Write-CmdStub -Path (Join-Path $stubDir 'npm.cmd') -Lines @(
                 'echo npm %*>>"%NODE_MARKER%"',
-                'echo %* | findstr /C:"--allow-scripts=opencode-ai,koffi" >nul',
+                'echo %* | "%SystemRoot%\System32\findstr.exe" /C:"--allow-scripts=opencode-ai,koffi" >nul',
                 'if not errorlevel 1 exit /b 0',
                 'echo npm warn allow-scripts approve with --allow-scripts=opencode-ai,koffi 1>&2'
             )
@@ -513,8 +594,8 @@ if (Should-RunTest 'native payload node reruns npm with allow-scripts when npm r
 
             Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'node allow-scripts retry should succeed'
             $marker = Get-Content -LiteralPath $markerPath -Raw
-            Assert-Match -Text $marker -Pattern '(?im)^npm install -g -- opencode-ai@1\.17\.8$' -Message 'node should first try strict npm install'
-            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --allow-scripts=opencode-ai,koffi -- opencode-ai@1\.17\.8$' -Message 'node should retry with npm-provided allow-scripts list'
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g -- opencode-ai@1\.17\.8\r?$' -Message 'node should first try strict npm install'
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --allow-scripts=opencode-ai,koffi -- opencode-ai@1\.17\.8\r?$' -Message 'node should retry with npm-provided allow-scripts list'
             Assert-NotMatch -Text $result.Output -Pattern 'npm warn allow-scripts approve' -Message 'successful allow-scripts retry should suppress first-pass npm warning details'
             Assert-Match -Text $result.Output -Pattern 'retrying once with npm-provided allow-scripts list' -Message 'allow-scripts retry warning should be visible'
         }
@@ -553,7 +634,7 @@ if (Should-RunTest 'native payload node surfaces unparseable allow-scripts warni
 
             Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'node should not fail on unparseable allow-scripts warning'
             $marker = Get-Content -LiteralPath $markerPath -Raw
-            Assert-Match -Text $marker -Pattern '(?im)^npm install -g -- opencode-ai@1\.17\.8$' -Message 'node should run the strict npm install'
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g -- opencode-ai@1\.17\.8\r?$' -Message 'node should run the strict npm install'
             Assert-NotMatch -Text $marker -Pattern '(?im)^npm install -g --allow-scripts=' -Message 'node should not guess an allow-scripts retry'
             Assert-Match -Text $result.Output -Pattern 'no allow-scripts list could be parsed' -Message 'unparseable warning should produce a fallback warning'
             Assert-Match -Text $result.Output -Pattern 'npm warn allow-scripts install scripts need approval' -Message 'unparseable npm warning should remain visible'

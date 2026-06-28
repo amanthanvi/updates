@@ -58,6 +58,7 @@ $script:FullMode = $false
 $script:LogFile = $null
 $script:GoBinaries = ''
 $script:ReposDir = ''
+$script:NodeNpmInstallFlags = ''
 $script:MasUpgrade = $false
 $script:MacosUpdates = $false
 
@@ -406,6 +407,7 @@ function Read-Config {
             'NO_COLOR' { Set-ConfigBool -Name $key -Value $value -Apply { param($v) $script:NoColor = $v } }
             'GO_BINARIES' { $script:GoBinaries = $value }
             'REPOS_DIR' { $script:ReposDir = $value }
+            'NODE_NPM_INSTALL_FLAGS' { $script:NodeNpmInstallFlags = $value }
             'MAS_UPGRADE' { Set-ConfigBool -Name $key -Value $value -Apply { param($v) $script:MasUpgrade = $v } }
             'MACOS_UPDATES' { Set-ConfigBool -Name $key -Value $value -Apply { param($v) $script:MacosUpdates = $v } }
             default { }
@@ -767,6 +769,23 @@ function New-NpmInstallArguments {
     return (@('install', '-g') + @($Options) + @('--') + @($Packages))
 }
 
+function Get-NpmInstallExtraFlags {
+    if ([string]::IsNullOrWhiteSpace($script:NodeNpmInstallFlags)) {
+        return
+    }
+
+    return (($script:NodeNpmInstallFlags -split '\s+') | Where-Object { $_ -ne '' })
+}
+
+function Get-NpmInstallRetryOptions {
+    param(
+        [AllowEmptyCollection()]
+        [string[]]$Options = @()
+    )
+
+    return (@($Options | Where-Object { $_ -ne '--legacy-peer-deps' }) + @('--legacy-peer-deps'))
+}
+
 function Get-NpmAllowScriptsArgument {
     param(
         [AllowEmptyString()]
@@ -826,18 +845,20 @@ function Invoke-NpmGlobalInstall {
         [string[]]$Packages
     )
 
-    $installArgs = New-NpmInstallArguments -Packages @($Packages)
+    $extraFlags = @(Get-NpmInstallExtraFlags)
+    $installArgs = New-NpmInstallArguments -Options $extraFlags -Packages @($Packages)
     $installResult = Invoke-LoggedProcess -FilePath $Npm -ArgumentList $installArgs -Capture
     if ($installResult.ExitCode -eq 0) {
-        return (Complete-NpmGlobalInstallSuccess -Npm $Npm -Packages @($Packages) -Result $installResult)
+        return (Complete-NpmGlobalInstallSuccess -Npm $Npm -Options $extraFlags -Packages @($Packages) -Result $installResult)
     }
 
     if ($installResult.Output -match 'ERESOLVE') {
         Write-WarnLine 'node: npm peer dependency resolution failed; retrying with --legacy-peer-deps'
-        $retryArgs = New-NpmInstallArguments -Options @('--legacy-peer-deps') -Packages @($Packages)
+        $retryOptions = Get-NpmInstallRetryOptions -Options $extraFlags
+        $retryArgs = New-NpmInstallArguments -Options $retryOptions -Packages @($Packages)
         $retryResult = Invoke-LoggedProcess -FilePath $Npm -ArgumentList $retryArgs -Capture
         if ($retryResult.ExitCode -eq 0) {
-            return (Complete-NpmGlobalInstallSuccess -Npm $Npm -Options @('--legacy-peer-deps') -Packages @($Packages) -Result $retryResult)
+            return (Complete-NpmGlobalInstallSuccess -Npm $Npm -Options $retryOptions -Packages @($Packages) -Result $retryResult)
         }
         Write-ProcessResultOutput -Result $retryResult
         return [int]$retryResult.ExitCode
@@ -926,7 +947,8 @@ function Invoke-ModuleNode {
 
     if ($script:DryRun) {
         Write-LogLine ("DRY RUN: {0}" -f $runner.Label)
-        Write-LogLine ("DRY RUN: {0}" -f (Format-Command @($npm, 'install', '-g', '--', '<packages...>')))
+        $dryRunInstallArgs = New-NpmInstallArguments -Options @(Get-NpmInstallExtraFlags) -Packages @('<packages...>')
+        Write-LogLine ("DRY RUN: {0}" -f (Format-Command (@($npm) + $dryRunInstallArgs)))
         return 0
     }
 

@@ -24,6 +24,7 @@ NO_CONFIG=0
 JSON=0
 GO_BINARIES=""
 REPOS_DIR=""
+NODE_NPM_INSTALL_FLAGS=""
 
 LOG_LEVEL="info"
 LOG_LEVEL_NUM=2
@@ -43,6 +44,12 @@ config_skip_modules=()
 successes=()
 skipped=()
 failures=()
+only_modules_count=0
+skip_modules_count=0
+config_skip_modules_count=0
+successes_count=0
+skipped_count=0
+failures_count=0
 
 CURRENT_MODULE="main"
 
@@ -275,7 +282,6 @@ json_emit_summary() {
 	local fail="$3"
 	local total_seconds="$4"
 	shift 4
-	local -a failures=("$@")
 
 	if ! json_enabled; then
 		return 0
@@ -283,13 +289,17 @@ json_emit_summary() {
 
 	local ts
 	ts="$(json_timestamp)"
+	local failures_json="[]"
+	if [ "$fail" -gt 0 ]; then
+		failures_json="$(json_array "$@")"
+	fi
 
 	printf '{"event":"summary","ok":%s,"skip":%s,"fail":%s,"total_seconds":%s,"failures":%s,"timestamp":"%s"}\n' \
 		"$ok" \
 		"$skip" \
 		"$fail" \
 		"$total_seconds" \
-		"$(json_array "${failures[@]}")" \
+		"$failures_json" \
 		"$ts"
 }
 
@@ -644,7 +654,7 @@ require_supported_platform() {
 }
 
 validate_only_modules_supported() {
-	if [ "${#only_modules[@]}" -eq 0 ]; then
+	if [ "$only_modules_count" -eq 0 ]; then
 		return 0
 	fi
 
@@ -676,37 +686,71 @@ run() {
 run_npm_global_install() {
 	init_nvm_node_tools
 
+	local -a packages=("$@")
+	local -a npm_extra_flags=()
+	local -a npm_install_options=(--)
+	local npm_extra_flags_count=0
+	if [ -n "$NODE_NPM_INSTALL_FLAGS" ]; then
+		local restore_glob=0
+		case "$-" in
+		*f*) ;;
+		*)
+			set -f
+			restore_glob=1
+			;;
+		esac
+		# shellcheck disable=SC2086
+		set -- $NODE_NPM_INSTALL_FLAGS
+		[ "$restore_glob" -eq 0 ] || set +f
+		npm_extra_flags_count=$#
+		if [ "$npm_extra_flags_count" -gt 0 ]; then
+			npm_extra_flags=("$@")
+			npm_install_options=("$@" --)
+		fi
+	fi
+	set -- "${packages[@]}"
+
 	if [ "$DRY_RUN" -eq 1 ]; then
-		run npm install -g -- "$@"
+		run npm install -g "${npm_install_options[@]}" "$@"
 		return $?
 	fi
 
 	local npm_err_log tmp_base
 	tmp_base="${TMPDIR:-/tmp}"
 	npm_err_log="$(mktemp "${tmp_base%/}/updates-npm.XXXXXX" 2>/dev/null || mktemp -t updates-npm.XXXXXX 2>/dev/null)" || {
-		run npm install -g -- "$@"
+		run npm install -g "${npm_install_options[@]}" "$@"
 		return $?
 	}
 
-	run_npm_global_install_logged "$npm_err_log" -- "$@"
+	run_npm_global_install_logged "$npm_err_log" "${npm_install_options[@]}" "$@"
 	local status=$?
 
 	if [ "$status" -eq 0 ]; then
-		handle_npm_global_install_success "$npm_err_log" -- "$@"
+		handle_npm_global_install_success "$npm_err_log" "${npm_install_options[@]}" "$@"
 		return $?
 	fi
 
 	if grep -q 'ERESOLVE' "$npm_err_log"; then
 		warn "node: npm peer dependency resolution failed; retrying with --legacy-peer-deps"
 		rm -f "$npm_err_log"
+		local -a retry_flags=(--legacy-peer-deps)
+		local flag
+		if [ "$npm_extra_flags_count" -gt 0 ]; then
+			retry_flags=()
+			for flag in "${npm_extra_flags[@]}"; do
+				[ "$flag" = "--legacy-peer-deps" ] && continue
+				retry_flags+=("$flag")
+			done
+			retry_flags+=(--legacy-peer-deps)
+		fi
 		npm_err_log="$(mktemp "${tmp_base%/}/updates-npm.XXXXXX" 2>/dev/null || mktemp -t updates-npm.XXXXXX 2>/dev/null)" || {
-			run npm install -g --legacy-peer-deps -- "$@"
+			run npm install -g "${retry_flags[@]}" -- "$@"
 			return $?
 		}
-		run_npm_global_install_logged "$npm_err_log" --legacy-peer-deps -- "$@"
+		run_npm_global_install_logged "$npm_err_log" "${retry_flags[@]}" -- "$@"
 		status=$?
 		if [ "$status" -eq 0 ]; then
-			handle_npm_global_install_success "$npm_err_log" --legacy-peer-deps -- "$@"
+			handle_npm_global_install_success "$npm_err_log" "${retry_flags[@]}" -- "$@"
 			return $?
 		fi
 		if [ -s "$npm_err_log" ]; then
@@ -1980,6 +2024,7 @@ config_parse_module_list() {
 			continue
 		fi
 		config_skip_modules+=("$m")
+		config_skip_modules_count=$((config_skip_modules_count + 1))
 	done
 }
 
@@ -2049,6 +2094,7 @@ read_config() {
 		case "$key" in
 		SKIP_MODULES)
 			config_skip_modules=()
+			config_skip_modules_count=0
 			config_parse_module_list "$val"
 			;;
 		BREW_MODE)
@@ -2100,6 +2146,9 @@ read_config() {
 			;;
 		REPOS_DIR)
 			REPOS_DIR="$val"
+			;;
+		NODE_NPM_INSTALL_FLAGS)
+			NODE_NPM_INSTALL_FLAGS="$val"
 			;;
 		*)
 			# Unknown keys are ignored for forward compatibility.
@@ -2192,6 +2241,7 @@ parse_args() {
 			for m in $list; do
 				is_module_known "$m" || die "Unknown module in --only: $m"
 				only_modules+=("$m")
+				only_modules_count=$((only_modules_count + 1))
 			done
 			;;
 		--skip)
@@ -2203,6 +2253,7 @@ parse_args() {
 			for m in $list; do
 				is_module_known "$m" || die "Unknown module in --skip: $m"
 				skip_modules+=("$m")
+				skip_modules_count=$((skip_modules_count + 1))
 			done
 			;;
 		--brew-mode)
@@ -2250,16 +2301,16 @@ parse_args() {
 module_selected() {
 	local name="$1"
 
-	if contains_word "$name" "${skip_modules[@]}"; then
+	if [ "$skip_modules_count" -gt 0 ] && contains_word "$name" "${skip_modules[@]}"; then
 		return 1
 	fi
 
-	if [ "${#only_modules[@]}" -gt 0 ]; then
+	if [ "$only_modules_count" -gt 0 ]; then
 		contains_word "$name" "${only_modules[@]}"
 		return $?
 	fi
 
-	if contains_word "$name" "${config_skip_modules[@]}"; then
+	if [ "$config_skip_modules_count" -gt 0 ] && contains_word "$name" "${config_skip_modules[@]}"; then
 		return 1
 	fi
 
@@ -2272,7 +2323,7 @@ module_selected() {
 
 missing_dependency_is_error() {
 	# In --only mode, missing deps should be treated as an error.
-	if [ "${#only_modules[@]}" -gt 0 ]; then
+	if [ "$only_modules_count" -gt 0 ]; then
 		return 0
 	fi
 	return 1
@@ -2745,7 +2796,11 @@ module_node() {
 
 	if [ "$DRY_RUN" -eq 1 ]; then
 		log "DRY RUN: $(ncu_command_label)"
-		log "DRY RUN: npm install -g -- <packages...>"
+		if [ -n "$NODE_NPM_INSTALL_FLAGS" ]; then
+			log "DRY RUN: npm install -g ${NODE_NPM_INSTALL_FLAGS} -- <packages...>"
+		else
+			log "DRY RUN: npm install -g -- <packages...>"
+		fi
 		return 0
 	fi
 
@@ -3140,6 +3195,9 @@ run_selected_modules() {
 	successes=()
 	skipped=()
 	failures=()
+	successes_count=0
+	skipped_count=0
+	failures_count=0
 
 	local m handler platform opt_in description
 	while IFS='|' read -r -u3 m handler platform opt_in description; do
@@ -3163,6 +3221,7 @@ run_selected_modules() {
 
 		if [ "$rc" -eq 0 ]; then
 			successes+=("$m")
+			successes_count=$((successes_count + 1))
 			json_emit_module_end "$m" ok "$dur"
 			progress "$(format_boundary_end "$m" OK "$dur")"
 			continue
@@ -3171,12 +3230,14 @@ run_selected_modules() {
 		# 2 means "skipped due to missing dependency"
 		if [ "$rc" -eq 2 ]; then
 			skipped+=("$m")
+			skipped_count=$((skipped_count + 1))
 			json_emit_module_end "$m" skip "$dur"
 			progress "$(format_boundary_end "$m" SKIP "$dur")"
 			continue
 		fi
 
 		failures+=("$m")
+		failures_count=$((failures_count + 1))
 		json_emit_module_end "$m" fail "$dur"
 		progress "$(format_boundary_end "$m" FAIL "$dur")"
 		if [ "$STRICT" -eq 1 ]; then
@@ -3184,7 +3245,7 @@ run_selected_modules() {
 		fi
 	done 3<<<"$MODULE_REGISTRY"
 
-	if [ "${#failures[@]}" -gt 0 ]; then
+	if [ "$failures_count" -gt 0 ]; then
 		return 1
 	fi
 	return 0
@@ -3237,20 +3298,22 @@ main() {
 	local rc=0
 	if run_selected_modules; then
 		local total="${SECONDS}"
-		json_emit_summary "${#successes[@]}" "${#skipped[@]}" "${#failures[@]}" "$total" "${failures[@]}"
-		progress "$(format_summary "${#successes[@]}" "${#skipped[@]}" "${#failures[@]}" "$total")"
+		json_emit_summary "$successes_count" "$skipped_count" "$failures_count" "$total"
+		progress "$(format_summary "$successes_count" "$skipped_count" "$failures_count" "$total")"
 		log "Done in ${total}s. $(emoji "🎉")"
 		return 0
 	fi
 
 	local total="${SECONDS}"
 	local failures_csv=""
-	if [ "${#failures[@]}" -gt 0 ]; then
+	if [ "$failures_count" -gt 0 ]; then
 		failures_csv="$(csv_join "${failures[@]}")"
+		json_emit_summary "$successes_count" "$skipped_count" "$failures_count" "$total" "${failures[@]}"
+	else
+		json_emit_summary "$successes_count" "$skipped_count" "$failures_count" "$total"
 	fi
-	json_emit_summary "${#successes[@]}" "${#skipped[@]}" "${#failures[@]}" "$total" "${failures[@]}"
-	progress "$(format_summary "${#successes[@]}" "${#skipped[@]}" "${#failures[@]}" "$total" "$failures_csv")"
-	err "Completed in ${total}s with failures: ${failures[*]}"
+	progress "$(format_summary "$successes_count" "$skipped_count" "$failures_count" "$total" "$failures_csv")"
+	err "Completed in ${total}s with failures: ${failures_csv}"
 	return 1
 }
 

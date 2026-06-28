@@ -263,6 +263,7 @@ The file is skipped if it does not exist. Pass `--no-config` to ignore it entire
 | `NO_COLOR`      | 0/1                    | `--no-color`                | `NO_COLOR=1`                                                               |
 | `GO_BINARIES`   | CSV (module[@version]) | go module binary list       | `GO_BINARIES="golang.org/x/tools/gopls,github.com/go-delve/delve/cmd/dlv"` |
 | `REPOS_DIR`     | path                   | repos module base directory | `REPOS_DIR=/home/user/projects`                                            |
+| `NODE_NPM_INSTALL_FLAGS` | string (whitespace-separated flags) | extra flags for `npm install -g` | `NODE_NPM_INSTALL_FLAGS="--legacy-peer-deps"` |
 
 Unknown keys are silently ignored (forward compatibility).
 
@@ -461,9 +462,10 @@ Purpose: upgrade global npm packages using `npm-check-updates`.
 - Requires: `npm` plus one of `ncu.cmd`, `ncu`, or `npx npm-check-updates`.
 - On macOS/Linux, sources `$NVM_DIR/nvm.sh` or `~/.nvm/nvm.sh` when present before resolving `npm`, `ncu`, or `npx`.
 - On Windows, updater resolution order is `ncu.cmd`, then `ncu`, then `npx npm-check-updates`.
-- Non-dry-run: resolved updater command with `-g --jsonUpgraded` to detect upgrades, then `npm install -g -- <name@version>...`.
-- If npm fails with `ERESOLVE`, retries once with `--legacy-peer-deps`; the first-pass npm error details are only surfaced when no retry path applies.
-- If npm succeeds but reports pending global install scripts, retries once with npm's suggested one-shot `--allow-scripts=...` list.
+- Non-dry-run: resolved updater command with `-g --jsonUpgraded` to detect upgrades, then `npm install -g [NODE_NPM_INSTALL_FLAGS...] -- <name@version>...`.
+- `NODE_NPM_INSTALL_FLAGS` defaults to empty, is split on whitespace, and is inserted before the `--` package separator on Bash and native Windows.
+- If npm fails with `ERESOLVE`, retries once with `--legacy-peer-deps`; configured npm flags are retained, duplicate configured `--legacy-peer-deps` is removed for the retry, and the forced retry flag is appended once. The first-pass npm error details are only surfaced when no retry path applies.
+- If npm succeeds but reports pending global install scripts, retries once with npm's suggested one-shot `--allow-scripts=...` list while retaining configured npm flags.
 - Side effects: upgrades global npm packages.
 
 ### 8.7 `bun`
