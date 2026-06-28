@@ -1,3 +1,19 @@
+# Plan: Unreleased NODE_NPM_INSTALL_FLAGS
+
+## Goal
+
+- Add a scoped `NODE_NPM_INSTALL_FLAGS` config key for the `node` module without changing default npm behavior.
+
+## Execution checklist
+
+- [x] Implement Bash and native Windows PowerShell config parsing.
+- [x] Insert configured npm flags before the `npm install -g --` package separator.
+- [x] Preserve configured flags across ERESOLVE and allow-scripts retry paths, with `--legacy-peer-deps` deduped on ERESOLVE retry.
+- [x] Cover Bash and Windows dry-run/retry behavior.
+- [x] Update README, SPEC, and CHANGELOG contract docs.
+
+---
+
 # Plan: v2.0.0
 
 This is the released execution record for `updates` **v2.0.0**. It adds native Windows support, hardens self-update around first-party GitHub Releases only, and removes custom self-update repo overrides.

@@ -9,7 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- `NODE_NPM_INSTALL_FLAGS` config key in `~/.updatesrc` to pass extra flags (e.g. `--legacy-peer-deps`) to the node module's `npm install -g` invocation, scoped to `updates` instead of requiring a global `~/.npmrc` override. Supported on both Bash and native Windows PowerShell.
+- `NODE_NPM_INSTALL_FLAGS` config key in `~/.updatesrc` to pass extra whitespace-separated flags (for example `--legacy-peer-deps`) to the node module's `npm install -g` invocation, scoped to `updates` instead of requiring a global `~/.npmrc` override. Supported on both Bash and native Windows PowerShell.
+
+## [2.0.2] - 2026-06-19
+
+### Fixed
+
+- Source NVM before resolving npm tooling for global Node updates, so NVM-managed npm/ncu binaries are preferred in non-interactive runs.
+- Suppress the expected first-pass npm `ERESOLVE` details when the `--legacy-peer-deps` retry succeeds.
+- Retry once with npm's suggested one-shot `--allow-scripts=...` list when npm reports skipped global install scripts.
 
 ## [2.0.1] - 2026-06-17
 

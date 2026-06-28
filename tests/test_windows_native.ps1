@@ -14,8 +14,8 @@ if (-not $IsWindows) {
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$currentReleaseVersion = '2.0.1'
-$previousReleaseVersion = '2.0.0'
+$currentReleaseVersion = '2.0.2'
+$previousReleaseVersion = '2.0.1'
 
 function Should-RunTest {
     param(
@@ -433,6 +433,37 @@ if (Should-RunTest 'native payload dry-run covers winget, node fallback, bun, py
     }
 }
 
+if (Should-RunTest 'NODE_NPM_INSTALL_FLAGS appears in node dry-run output') {
+    Invoke-TestCase 'NODE_NPM_INSTALL_FLAGS appears in node dry-run output' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'npx.cmd') -Lines @()
+            Write-CmdStub -Path (Join-Path $stubDir 'npm.cmd') -Lines @()
+            Write-Utf8NoBom -Path (Join-Path $installRoot '.updatesrc') -Content "NODE_NPM_INSTALL_FLAGS=--legacy-peer-deps`n"
+
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
+                '--no-self-update',
+                '--dry-run',
+                '--only', 'node',
+                '--no-color',
+                '--no-emoji'
+            ) -Environment @{
+                PATH        = $stubDir
+                HOME        = $installRoot
+                USERPROFILE = $installRoot
+            }
+
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'NODE_NPM_INSTALL_FLAGS dry-run should succeed'
+            Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*npm(\.cmd)? install -g --legacy-peer-deps -- <packages\.\.\.>' -Message 'node dry-run should include NODE_NPM_INSTALL_FLAGS'
+        }
+    }
+}
+
 if (Should-RunTest 'native payload node retries npm ERESOLVE with legacy peer deps') {
     Invoke-TestCase 'native payload node retries npm ERESOLVE with legacy peer deps' {
         Invoke-WithTempInstall {
@@ -447,9 +478,9 @@ if (Should-RunTest 'native payload node retries npm ERESOLVE with legacy peer de
             )
             Write-CmdStub -Path (Join-Path $stubDir 'npm.cmd') -Lines @(
                 'echo npm %*>>"%NODE_MARKER%"',
-                'echo %* | findstr /C:"--legacy-peer-deps" >nul',
+                'echo %* | "%SystemRoot%\System32\findstr.exe" /C:"--legacy-peer-deps" >nul',
                 'if not errorlevel 1 exit /b 0',
-                'echo %* | findstr /C:"@tarquinen/opencode-dcp@3.1.13" >nul',
+                'echo %* | "%SystemRoot%\System32\findstr.exe" /C:"@tarquinen/opencode-dcp@3.1.13" >nul',
                 'if not errorlevel 1 (',
                 '  echo npm error code ERESOLVE 1>&2',
                 '  exit /b 1',
@@ -471,9 +502,9 @@ if (Should-RunTest 'native payload node retries npm ERESOLVE with legacy peer de
 
             Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'node ERESOLVE retry should succeed'
             $marker = Get-Content -LiteralPath $markerPath -Raw
-            Assert-Match -Text $marker -Pattern '(?im)^npm install -g -- @tarquinen/opencode-dcp@3\.1\.13$' -Message 'node should first try strict npm install'
-            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --legacy-peer-deps -- @tarquinen/opencode-dcp@3\.1\.13$' -Message 'node should retry with legacy peer deps'
-            Assert-Match -Text $result.Output -Pattern 'npm error code ERESOLVE' -Message 'original npm ERESOLVE stderr should be visible'
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g -- @tarquinen/opencode-dcp@3\.1\.13\r?$' -Message 'node should first try strict npm install'
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --legacy-peer-deps -- @tarquinen/opencode-dcp@3\.1\.13\r?$' -Message 'node should retry with legacy peer deps'
+            Assert-NotMatch -Text $result.Output -Pattern 'npm error code ERESOLVE' -Message 'successful ERESOLVE retry should suppress first-pass npm error details'
             Assert-Match -Text $result.Output -Pattern 'retrying with --legacy-peer-deps' -Message 'retry warning should be visible'
         }
     }
@@ -493,9 +524,9 @@ if (Should-RunTest 'native payload node retry dedupes NODE_NPM_INSTALL_FLAGS leg
             )
             Write-CmdStub -Path (Join-Path $stubDir 'npm.cmd') -Lines @(
                 'echo npm %*>>"%NODE_MARKER%"',
-                'echo %* | findstr /C:"--legacy-peer-deps" >nul',
+                'echo %* | "%SystemRoot%\System32\findstr.exe" /C:"--strict-peer-deps --legacy-peer-deps -- @tarquinen/opencode-dcp@3.1.13" >nul',
                 'if not errorlevel 1 exit /b 0',
-                'echo %* | findstr /C:"@tarquinen/opencode-dcp@3.1.13" >nul',
+                'echo %* | "%SystemRoot%\System32\findstr.exe" /C:"@tarquinen/opencode-dcp@3.1.13" >nul',
                 'if not errorlevel 1 (',
                 '  echo npm error code ERESOLVE 1>&2',
                 '  exit /b 1',
@@ -518,10 +549,92 @@ if (Should-RunTest 'native payload node retry dedupes NODE_NPM_INSTALL_FLAGS leg
 
             Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'node ERESOLVE retry should succeed'
             $marker = Get-Content -LiteralPath $markerPath -Raw
-            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --legacy-peer-deps --strict-peer-deps -- @tarquinen/opencode-dcp@3\.1\.13$' -Message 'node should first include configured npm flags'
-            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --strict-peer-deps --legacy-peer-deps -- @tarquinen/opencode-dcp@3\.1\.13$' -Message 'node retry should dedupe and force legacy peer deps last'
-            $retryLine = ($marker -split "\r?\n" | Where-Object { $_ -match '--strict-peer-deps --legacy-peer-deps -- @tarquinen/opencode-dcp@3\.1\.13$' })[0]
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --legacy-peer-deps --strict-peer-deps -- @tarquinen/opencode-dcp@3\.1\.13\r?$' -Message 'node should first include configured npm flags'
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --strict-peer-deps --legacy-peer-deps -- @tarquinen/opencode-dcp@3\.1\.13\r?$' -Message 'node retry should dedupe and force legacy peer deps last'
+            $retryLine = [regex]::Match($marker, '(?im)^npm install -g --strict-peer-deps --legacy-peer-deps -- @tarquinen/opencode-dcp@3\.1\.13\r?$').Value
             Assert-Equal -Expected 1 -Actual ([regex]::Matches($retryLine, '--legacy-peer-deps').Count) -Message 'retry should include --legacy-peer-deps exactly once'
+        }
+    }
+}
+
+if (Should-RunTest 'native payload node reruns npm with allow-scripts when npm requests approval') {
+    Invoke-TestCase 'native payload node reruns npm with allow-scripts when npm requests approval' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'npx.cmd') -Lines @(
+                'echo {"opencode-ai":"1.17.8"}'
+            )
+            Write-CmdStub -Path (Join-Path $stubDir 'npm.cmd') -Lines @(
+                'echo npm %*>>"%NODE_MARKER%"',
+                'echo %* | "%SystemRoot%\System32\findstr.exe" /C:"--allow-scripts=opencode-ai,koffi" >nul',
+                'if not errorlevel 1 exit /b 0',
+                'echo npm warn allow-scripts approve with --allow-scripts=opencode-ai,koffi 1>&2'
+            )
+
+            $markerPath = Join-Path $installRoot 'node-marker.txt'
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
+                '--no-self-update',
+                '--only', 'node',
+                '--no-color',
+                '--no-emoji'
+            ) -Environment @{
+                PATH        = $stubDir
+                HOME        = $installRoot
+                USERPROFILE = $installRoot
+                NODE_MARKER = $markerPath
+            }
+
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'node allow-scripts retry should succeed'
+            $marker = Get-Content -LiteralPath $markerPath -Raw
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g -- opencode-ai@1\.17\.8\r?$' -Message 'node should first try strict npm install'
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --allow-scripts=opencode-ai,koffi -- opencode-ai@1\.17\.8\r?$' -Message 'node should retry with npm-provided allow-scripts list'
+            Assert-NotMatch -Text $result.Output -Pattern 'npm warn allow-scripts approve' -Message 'successful allow-scripts retry should suppress first-pass npm warning details'
+            Assert-Match -Text $result.Output -Pattern 'retrying once with npm-provided allow-scripts list' -Message 'allow-scripts retry warning should be visible'
+        }
+    }
+}
+
+if (Should-RunTest 'native payload node surfaces unparseable allow-scripts warnings without retrying') {
+    Invoke-TestCase 'native payload node surfaces unparseable allow-scripts warnings without retrying' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'npx.cmd') -Lines @(
+                'echo {"opencode-ai":"1.17.8"}'
+            )
+            Write-CmdStub -Path (Join-Path $stubDir 'npm.cmd') -Lines @(
+                'echo npm %*>>"%NODE_MARKER%"',
+                'echo npm warn allow-scripts install scripts need approval 1>&2'
+            )
+
+            $markerPath = Join-Path $installRoot 'node-marker.txt'
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
+                '--no-self-update',
+                '--only', 'node',
+                '--no-color',
+                '--no-emoji'
+            ) -Environment @{
+                PATH        = $stubDir
+                HOME        = $installRoot
+                USERPROFILE = $installRoot
+                NODE_MARKER = $markerPath
+            }
+
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'node should not fail on unparseable allow-scripts warning'
+            $marker = Get-Content -LiteralPath $markerPath -Raw
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g -- opencode-ai@1\.17\.8\r?$' -Message 'node should run the strict npm install'
+            Assert-NotMatch -Text $marker -Pattern '(?im)^npm install -g --allow-scripts=' -Message 'node should not guess an allow-scripts retry'
+            Assert-Match -Text $result.Output -Pattern 'no allow-scripts list could be parsed' -Message 'unparseable warning should produce a fallback warning'
+            Assert-Match -Text $result.Output -Pattern 'npm warn allow-scripts install scripts need approval' -Message 'unparseable npm warning should remain visible'
         }
     }
 }
@@ -815,7 +928,7 @@ if (Should-RunTest 'native payload self-update applies a verified Windows releas
             param($installRoot)
 
             Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
-            $fixture = New-SelfUpdateFixture -Root $installRoot -Version '2.0.1'
+            $fixture = New-SelfUpdateFixture -Root $installRoot -Version $currentReleaseVersion
             $logPath = Join-Path $installRoot 'self-update.log'
             $relaunchArgsPath = Join-Path $installRoot 'relaunch-args.txt'
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
@@ -839,7 +952,7 @@ if (Should-RunTest 'native payload self-update applies a verified Windows releas
                 function Test-SymlinkedInstall { return $false }
                 function Get-LatestReleaseMetadata {
                     return [pscustomobject]@{
-                        tag_name   = 'v2.0.1'
+                        tag_name   = "v$currentReleaseVersion"
                         draft      = $false
                         prerelease = $false
                         immutable  = $true
@@ -869,11 +982,11 @@ if (Should-RunTest 'native payload self-update applies a verified Windows releas
                 $script:SelfUpdateResult = Invoke-WindowsSelfUpdate -OriginalArgs @('--self-update', '--no-color')
             }
 
-            Assert-Equal -Expected '2.0.1' -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message 'current.txt should advance after a verified self-update'
-            Assert-Equal -Expected '2.0.0' -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'previous.txt') -Raw).Trim()) -Message 'previous.txt should preserve the prior version after self-update'
-            Assert-Match -Text (Get-Content -LiteralPath (Join-Path $installRoot 'install-source.json') -Raw) -Pattern '"installed_version"\s*:\s*"2\.0\.1"' -Message 'install receipt should be rewritten to the new version'
-            Assert-FileExists -Path (Join-Path $installRoot 'versions\2.0.1\updates-main.ps1') -Message 'new version payload should be staged into the install root'
-            Assert-Match -Text (Get-Content -LiteralPath $logPath -Raw) -Pattern 'updated to 2\.0\.1; restarting' -Message 'successful self-update should be logged'
+            Assert-Equal -Expected $currentReleaseVersion -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message 'current.txt should advance after a verified self-update'
+            Assert-Equal -Expected $previousReleaseVersion -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'previous.txt') -Raw).Trim()) -Message 'previous.txt should preserve the prior version after self-update'
+            Assert-Match -Text (Get-Content -LiteralPath (Join-Path $installRoot 'install-source.json') -Raw) -Pattern ('"installed_version"\s*:\s*"{0}"' -f [regex]::Escape($currentReleaseVersion)) -Message 'install receipt should be rewritten to the new version'
+            Assert-FileExists -Path (Join-Path $installRoot ("versions\{0}\updates-main.ps1" -f $currentReleaseVersion)) -Message 'new version payload should be staged into the install root'
+            Assert-Match -Text (Get-Content -LiteralPath $logPath -Raw) -Pattern ('updated to {0}; restarting' -f [regex]::Escape($currentReleaseVersion)) -Message 'successful self-update should be logged'
             Assert-Equal -Expected 17 -Actual $script:SelfUpdateResult.ExitCode -Message 'self-update should propagate the relaunch exit code'
             Assert-Match -Text (Get-Content -LiteralPath $relaunchArgsPath -Raw) -Pattern '(?m)^--self-update$' -Message 'self-update relaunch should preserve original args'
         }
@@ -886,13 +999,13 @@ if (Should-RunTest 'native payload self-update preserves rollback pointer during
             param($installRoot)
 
             Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
-            $fixture = New-SelfUpdateFixture -Root $installRoot -Version '2.0.1'
+            $fixture = New-SelfUpdateFixture -Root $installRoot -Version $currentReleaseVersion
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
             $localAppData = Join-Path $installRoot 'localappdata'
             $null = New-Item -ItemType Directory -Path $localAppData -Force
 
             Set-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Value 'broken-version' -NoNewline
-            Set-Content -LiteralPath (Join-Path $installRoot 'previous.txt') -Value '2.0.0' -NoNewline
+            Set-Content -LiteralPath (Join-Path $installRoot 'previous.txt') -Value $previousReleaseVersion -NoNewline
 
             & {
                 . $payloadSource
@@ -910,7 +1023,7 @@ if (Should-RunTest 'native payload self-update preserves rollback pointer during
                 function Test-SymlinkedInstall { return $false }
                 function Get-LatestReleaseMetadata {
                     return [pscustomobject]@{
-                        tag_name   = 'v2.0.1'
+                        tag_name   = "v$currentReleaseVersion"
                         draft      = $false
                         prerelease = $false
                         immutable  = $true
@@ -936,8 +1049,8 @@ if (Should-RunTest 'native payload self-update preserves rollback pointer during
                 Assert-True -Condition $result.Relaunched -Message 'verified recovery self-update should still relaunch'
             }
 
-            Assert-Equal -Expected '2.0.1' -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message 'current.txt should advance after a verified self-update'
-            Assert-Equal -Expected '2.0.0' -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'previous.txt') -Raw).Trim()) -Message 'previous.txt should keep the validated running payload version during recovery'
+            Assert-Equal -Expected $currentReleaseVersion -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message 'current.txt should advance after a verified self-update'
+            Assert-Equal -Expected $previousReleaseVersion -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'previous.txt') -Raw).Trim()) -Message 'previous.txt should keep the validated running payload version during recovery'
         }
     }
 }
@@ -984,7 +1097,7 @@ if (Should-RunTest 'native payload fresh newer-version cache reuses cached relea
             param($installRoot)
 
             Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
-            $fixture = New-SelfUpdateFixture -Root $installRoot -Version '2.0.1'
+            $fixture = New-SelfUpdateFixture -Root $installRoot -Version $currentReleaseVersion
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
             $localAppData = Join-Path $installRoot 'localappdata'
             $downloadLogPath = Join-Path $installRoot 'cached-downloads.log'
@@ -1021,7 +1134,7 @@ if (Should-RunTest 'native payload fresh newer-version cache reuses cached relea
                 $null = Write-SelfUpdateCache `
                     -Path $cachePath `
                     -CheckedAt (Get-SelfUpdateEpoch) `
-                    -LatestTag 'v2.0.1' `
+                    -LatestTag "v$currentReleaseVersion" `
                     -Draft '0' `
                     -Prerelease '0' `
                     -Immutable '1' `
@@ -1035,7 +1148,7 @@ if (Should-RunTest 'native payload fresh newer-version cache reuses cached relea
                 Assert-True -Condition ($null -eq $result) -Message 'cached newer-version release metadata should keep self-update non-fatal'
             }
 
-            Assert-Equal -Expected '2.0.0' -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message 'unsupported cached manifest digest should leave current.txt unchanged'
+            Assert-Equal -Expected $previousReleaseVersion -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message 'unsupported cached manifest digest should leave current.txt unchanged'
             Assert-Match -Text (Get-Content -LiteralPath $downloadLogPath -Raw) -Pattern 'updates-release\.json' -Message 'cached release metadata should still trigger asset downloads'
         }
     }
@@ -1079,7 +1192,7 @@ if (Should-RunTest 'native payload fresh newer-version tag-only cache fetches li
                 }
 
                 $cachePath = Get-SelfUpdateCachePath
-                $null = Write-SelfUpdateCache -Path $cachePath -CheckedAt (Get-SelfUpdateEpoch) -LatestTag 'v2.0.1'
+                $null = Write-SelfUpdateCache -Path $cachePath -CheckedAt (Get-SelfUpdateEpoch) -LatestTag "v$currentReleaseVersion"
                 $result = Invoke-WindowsSelfUpdate -OriginalArgs @()
                 Assert-True -Condition ($null -eq $result) -Message 'tag-only newer-version cache should still exit cleanly after live metadata fallback'
             }
@@ -1164,7 +1277,7 @@ if (Should-RunTest 'native payload self-update continues when asset download ret
                 function Test-SymlinkedInstall { return $false }
                 function Get-LatestReleaseMetadata {
                     return [pscustomobject]@{
-                        tag_name   = 'v2.0.1'
+                        tag_name   = "v$currentReleaseVersion"
                         draft      = $false
                         prerelease = $false
                         immutable  = $true
@@ -1182,7 +1295,7 @@ if (Should-RunTest 'native payload self-update continues when asset download ret
                 Assert-True -Condition ($null -eq $result) -Message 'download failure should stay non-fatal and skip relaunch'
             }
 
-            Assert-Equal -Expected '2.0.0' -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message 'download failure should leave current.txt unchanged'
+            Assert-Equal -Expected $previousReleaseVersion -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message 'download failure should leave current.txt unchanged'
             Assert-Match -Text (Get-Content -LiteralPath $logPath -Raw) -Pattern 'self-update asset download or staging failed; continuing' -Message 'download failure should emit the non-fatal warning'
         }
     }
@@ -1222,7 +1335,7 @@ if (Should-RunTest 'native payload self-update skips on release digest mismatch'
             param($installRoot)
 
             Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
-            $fixture = New-SelfUpdateFixture -Root $installRoot -Version '2.0.1'
+            $fixture = New-SelfUpdateFixture -Root $installRoot -Version $currentReleaseVersion
             $logPath = Join-Path $installRoot 'self-update.log'
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
             $localAppData = Join-Path $installRoot 'localappdata'
@@ -1245,7 +1358,7 @@ if (Should-RunTest 'native payload self-update skips on release digest mismatch'
                 function Test-SymlinkedInstall { return $false }
                 function Get-LatestReleaseMetadata {
                     return [pscustomobject]@{
-                        tag_name   = 'v2.0.1'
+                        tag_name   = "v$currentReleaseVersion"
                         draft      = $false
                         prerelease = $false
                         immutable  = $true
@@ -1270,7 +1383,7 @@ if (Should-RunTest 'native payload self-update skips on release digest mismatch'
                 $null = Invoke-WindowsSelfUpdate -OriginalArgs @('--self-update')
             }
 
-            Assert-Equal -Expected '2.0.0' -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message 'digest mismatch should leave current.txt unchanged'
+            Assert-Equal -Expected $previousReleaseVersion -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message 'digest mismatch should leave current.txt unchanged'
             Assert-Match -Text (Get-Content -LiteralPath $logPath -Raw) -Pattern 'zip digest mismatch' -Message 'digest mismatch should be logged'
         }
     }
@@ -1305,7 +1418,7 @@ if (Should-RunTest 'native payload self-update skips when extracted payload mani
             param($installRoot)
 
             Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
-            $fixture = New-SelfUpdateFixture -Root $installRoot -Version '2.0.1' -PayloadBootstrapMin 99
+            $fixture = New-SelfUpdateFixture -Root $installRoot -Version $currentReleaseVersion -PayloadBootstrapMin 99
             $logPath = Join-Path $installRoot 'self-update.log'
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
             $localAppData = Join-Path $installRoot 'localappdata'
@@ -1328,7 +1441,7 @@ if (Should-RunTest 'native payload self-update skips when extracted payload mani
                 function Test-SymlinkedInstall { return $false }
                 function Get-LatestReleaseMetadata {
                     return [pscustomobject]@{
-                        tag_name   = 'v2.0.1'
+                        tag_name   = "v$currentReleaseVersion"
                         draft      = $false
                         prerelease = $false
                         immutable  = $true
@@ -1353,7 +1466,7 @@ if (Should-RunTest 'native payload self-update skips when extracted payload mani
                 $null = Invoke-WindowsSelfUpdate -OriginalArgs @('--self-update')
             }
 
-            Assert-Equal -Expected '2.0.0' -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message 'invalid extracted manifest should leave current.txt unchanged'
+            Assert-Equal -Expected $previousReleaseVersion -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message 'invalid extracted manifest should leave current.txt unchanged'
             Assert-Match -Text (Get-Content -LiteralPath $logPath -Raw) -Pattern 'extracted manifest is invalid' -Message 'invalid extracted manifest should be logged'
         }
     }
@@ -1424,40 +1537,6 @@ exit $LASTEXITCODE
             Assert-Equal -Expected 'run:' -Actual $lines[0] -Message 'first launch should run before the guard is set'
             Assert-Equal -Expected 'run:1' -Actual $lines[1] -Message 'second launch should observe UPDATES_SELF_UPDATED=1'
             Assert-Match -Text $result.Output -Pattern 'relaunch-complete' -Message 'second launch should complete normally after the guard is set'
-        }
-    }
-}
-
-if (Should-RunTest 'NODE_NPM_INSTALL_FLAGS appears in node dry-run output') {
-    Invoke-TestCase 'NODE_NPM_INSTALL_FLAGS appears in node dry-run output' {
-        Invoke-WithTempInstall {
-            param($installRoot)
-
-            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
-
-            $stubDir = Join-Path $installRoot 'stub-bin'
-            $null = New-Item -ItemType Directory -Path $stubDir -Force
-            Write-CmdStub -Path (Join-Path $stubDir 'npx.cmd') -Lines @()
-            Write-CmdStub -Path (Join-Path $stubDir 'npm.cmd') -Lines @()
-
-            Write-Utf8NoBom -Path (Join-Path $installRoot '.updatesrc') -Content "NODE_NPM_INSTALL_FLAGS=--legacy-peer-deps`n"
-
-            $envMap = @{
-                PATH        = $stubDir
-                HOME        = $installRoot
-                USERPROFILE = $installRoot
-            }
-
-            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
-                '--no-self-update',
-                '--dry-run',
-                '--only', 'node',
-                '--no-color',
-                '--no-emoji'
-            ) -Environment $envMap
-
-            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'NODE_NPM_INSTALL_FLAGS dry-run should succeed'
-            Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*npm(\.cmd)? install -g --legacy-peer-deps -- <packages\.\.\.>' -Message 'node dry-run should include NODE_NPM_INSTALL_FLAGS'
         }
     }
 }
