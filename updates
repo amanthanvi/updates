@@ -677,7 +677,10 @@ run() {
 run_npm_global_install() {
 	init_nvm_node_tools
 
+	local -a packages=("$@")
 	local -a npm_extra_flags=()
+	local -a npm_install_options=(--)
+	local npm_extra_flags_count=0
 	if [ -n "$NODE_NPM_INSTALL_FLAGS" ]; then
 		local restore_glob=0
 		case "$-" in
@@ -687,41 +690,50 @@ run_npm_global_install() {
 			restore_glob=1
 			;;
 		esac
-		# shellcheck disable=SC2206
-		npm_extra_flags=($NODE_NPM_INSTALL_FLAGS)
+		# shellcheck disable=SC2086
+		set -- $NODE_NPM_INSTALL_FLAGS
 		[ "$restore_glob" -eq 0 ] || set +f
+		npm_extra_flags_count=$#
+		if [ "$npm_extra_flags_count" -gt 0 ]; then
+			npm_extra_flags=("$@")
+			npm_install_options=("$@" --)
+		fi
 	fi
+	set -- "${packages[@]}"
 
 	if [ "$DRY_RUN" -eq 1 ]; then
-		run npm install -g "${npm_extra_flags[@]}" -- "$@"
+		run npm install -g "${npm_install_options[@]}" "$@"
 		return $?
 	fi
 
 	local npm_err_log tmp_base
 	tmp_base="${TMPDIR:-/tmp}"
 	npm_err_log="$(mktemp "${tmp_base%/}/updates-npm.XXXXXX" 2>/dev/null || mktemp -t updates-npm.XXXXXX 2>/dev/null)" || {
-		run npm install -g "${npm_extra_flags[@]}" -- "$@"
+		run npm install -g "${npm_install_options[@]}" "$@"
 		return $?
 	}
 
-	run_npm_global_install_logged "$npm_err_log" "${npm_extra_flags[@]}" -- "$@"
+	run_npm_global_install_logged "$npm_err_log" "${npm_install_options[@]}" "$@"
 	local status=$?
 
 	if [ "$status" -eq 0 ]; then
-		handle_npm_global_install_success "$npm_err_log" "${npm_extra_flags[@]}" -- "$@"
+		handle_npm_global_install_success "$npm_err_log" "${npm_install_options[@]}" "$@"
 		return $?
 	fi
 
 	if grep -q 'ERESOLVE' "$npm_err_log"; then
 		warn "node: npm peer dependency resolution failed; retrying with --legacy-peer-deps"
 		rm -f "$npm_err_log"
-		local -a retry_flags=()
+		local -a retry_flags=(--legacy-peer-deps)
 		local flag
-		for flag in "${npm_extra_flags[@]}"; do
-			[ "$flag" = "--legacy-peer-deps" ] && continue
-			retry_flags+=("$flag")
-		done
-		retry_flags+=(--legacy-peer-deps)
+		if [ "$npm_extra_flags_count" -gt 0 ]; then
+			retry_flags=()
+			for flag in "${npm_extra_flags[@]}"; do
+				[ "$flag" = "--legacy-peer-deps" ] && continue
+				retry_flags+=("$flag")
+			done
+			retry_flags+=(--legacy-peer-deps)
+		fi
 		npm_err_log="$(mktemp "${tmp_base%/}/updates-npm.XXXXXX" 2>/dev/null || mktemp -t updates-npm.XXXXXX 2>/dev/null)" || {
 			run npm install -g "${retry_flags[@]}" -- "$@"
 			return $?

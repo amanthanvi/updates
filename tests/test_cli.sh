@@ -1126,6 +1126,10 @@ EOF
 out="$(HOME="$config_home_no_npm_flags" UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only node --no-emoji --no-color)"
 echo "$out" | grep -q 'DRY RUN: npm install -g -- <packages\.\.\.>'
 
+echo "Test: node dry-run without NODE_NPM_INSTALL_FLAGS works under nounset"
+out="$(HOME="$config_home_no_npm_flags" UPDATES_ALLOW_NON_DARWIN=1 bash -u "$SCRIPT" --dry-run --only node --no-emoji --no-color)"
+echo "$out" | grep -q 'DRY RUN: npm install -g -- <packages\.\.\.>'
+
 write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
 # shellcheck disable=SC2016
 write_stub npm 'echo "npm $*" >>"$CALL_LOG"'
