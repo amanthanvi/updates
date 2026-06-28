@@ -44,6 +44,12 @@ config_skip_modules=()
 successes=()
 skipped=()
 failures=()
+only_modules_count=0
+skip_modules_count=0
+config_skip_modules_count=0
+successes_count=0
+skipped_count=0
+failures_count=0
 
 CURRENT_MODULE="main"
 
@@ -276,7 +282,6 @@ json_emit_summary() {
 	local fail="$3"
 	local total_seconds="$4"
 	shift 4
-	local -a failures=("$@")
 
 	if ! json_enabled; then
 		return 0
@@ -284,13 +289,17 @@ json_emit_summary() {
 
 	local ts
 	ts="$(json_timestamp)"
+	local failures_json="[]"
+	if [ "$fail" -gt 0 ]; then
+		failures_json="$(json_array "$@")"
+	fi
 
 	printf '{"event":"summary","ok":%s,"skip":%s,"fail":%s,"total_seconds":%s,"failures":%s,"timestamp":"%s"}\n' \
 		"$ok" \
 		"$skip" \
 		"$fail" \
 		"$total_seconds" \
-		"$(json_array "${failures[@]}")" \
+		"$failures_json" \
 		"$ts"
 }
 
@@ -645,7 +654,7 @@ require_supported_platform() {
 }
 
 validate_only_modules_supported() {
-	if [ "${#only_modules[@]}" -eq 0 ]; then
+	if [ "$only_modules_count" -eq 0 ]; then
 		return 0
 	fi
 
@@ -2015,6 +2024,7 @@ config_parse_module_list() {
 			continue
 		fi
 		config_skip_modules+=("$m")
+		config_skip_modules_count=$((config_skip_modules_count + 1))
 	done
 }
 
@@ -2084,6 +2094,7 @@ read_config() {
 		case "$key" in
 		SKIP_MODULES)
 			config_skip_modules=()
+			config_skip_modules_count=0
 			config_parse_module_list "$val"
 			;;
 		BREW_MODE)
@@ -2230,6 +2241,7 @@ parse_args() {
 			for m in $list; do
 				is_module_known "$m" || die "Unknown module in --only: $m"
 				only_modules+=("$m")
+				only_modules_count=$((only_modules_count + 1))
 			done
 			;;
 		--skip)
@@ -2241,6 +2253,7 @@ parse_args() {
 			for m in $list; do
 				is_module_known "$m" || die "Unknown module in --skip: $m"
 				skip_modules+=("$m")
+				skip_modules_count=$((skip_modules_count + 1))
 			done
 			;;
 		--brew-mode)
@@ -2288,16 +2301,16 @@ parse_args() {
 module_selected() {
 	local name="$1"
 
-	if contains_word "$name" "${skip_modules[@]}"; then
+	if [ "$skip_modules_count" -gt 0 ] && contains_word "$name" "${skip_modules[@]}"; then
 		return 1
 	fi
 
-	if [ "${#only_modules[@]}" -gt 0 ]; then
+	if [ "$only_modules_count" -gt 0 ]; then
 		contains_word "$name" "${only_modules[@]}"
 		return $?
 	fi
 
-	if contains_word "$name" "${config_skip_modules[@]}"; then
+	if [ "$config_skip_modules_count" -gt 0 ] && contains_word "$name" "${config_skip_modules[@]}"; then
 		return 1
 	fi
 
@@ -2310,7 +2323,7 @@ module_selected() {
 
 missing_dependency_is_error() {
 	# In --only mode, missing deps should be treated as an error.
-	if [ "${#only_modules[@]}" -gt 0 ]; then
+	if [ "$only_modules_count" -gt 0 ]; then
 		return 0
 	fi
 	return 1
@@ -3182,6 +3195,9 @@ run_selected_modules() {
 	successes=()
 	skipped=()
 	failures=()
+	successes_count=0
+	skipped_count=0
+	failures_count=0
 
 	local m handler platform opt_in description
 	while IFS='|' read -r -u3 m handler platform opt_in description; do
@@ -3205,6 +3221,7 @@ run_selected_modules() {
 
 		if [ "$rc" -eq 0 ]; then
 			successes+=("$m")
+			successes_count=$((successes_count + 1))
 			json_emit_module_end "$m" ok "$dur"
 			progress "$(format_boundary_end "$m" OK "$dur")"
 			continue
@@ -3213,12 +3230,14 @@ run_selected_modules() {
 		# 2 means "skipped due to missing dependency"
 		if [ "$rc" -eq 2 ]; then
 			skipped+=("$m")
+			skipped_count=$((skipped_count + 1))
 			json_emit_module_end "$m" skip "$dur"
 			progress "$(format_boundary_end "$m" SKIP "$dur")"
 			continue
 		fi
 
 		failures+=("$m")
+		failures_count=$((failures_count + 1))
 		json_emit_module_end "$m" fail "$dur"
 		progress "$(format_boundary_end "$m" FAIL "$dur")"
 		if [ "$STRICT" -eq 1 ]; then
@@ -3226,7 +3245,7 @@ run_selected_modules() {
 		fi
 	done 3<<<"$MODULE_REGISTRY"
 
-	if [ "${#failures[@]}" -gt 0 ]; then
+	if [ "$failures_count" -gt 0 ]; then
 		return 1
 	fi
 	return 0
@@ -3279,20 +3298,22 @@ main() {
 	local rc=0
 	if run_selected_modules; then
 		local total="${SECONDS}"
-		json_emit_summary "${#successes[@]}" "${#skipped[@]}" "${#failures[@]}" "$total" "${failures[@]}"
-		progress "$(format_summary "${#successes[@]}" "${#skipped[@]}" "${#failures[@]}" "$total")"
+		json_emit_summary "$successes_count" "$skipped_count" "$failures_count" "$total"
+		progress "$(format_summary "$successes_count" "$skipped_count" "$failures_count" "$total")"
 		log "Done in ${total}s. $(emoji "🎉")"
 		return 0
 	fi
 
 	local total="${SECONDS}"
 	local failures_csv=""
-	if [ "${#failures[@]}" -gt 0 ]; then
+	if [ "$failures_count" -gt 0 ]; then
 		failures_csv="$(csv_join "${failures[@]}")"
+		json_emit_summary "$successes_count" "$skipped_count" "$failures_count" "$total" "${failures[@]}"
+	else
+		json_emit_summary "$successes_count" "$skipped_count" "$failures_count" "$total"
 	fi
-	json_emit_summary "${#successes[@]}" "${#skipped[@]}" "${#failures[@]}" "$total" "${failures[@]}"
-	progress "$(format_summary "${#successes[@]}" "${#skipped[@]}" "${#failures[@]}" "$total" "$failures_csv")"
-	err "Completed in ${total}s with failures: ${failures[*]}"
+	progress "$(format_summary "$successes_count" "$skipped_count" "$failures_count" "$total" "$failures_csv")"
+	err "Completed in ${total}s with failures: ${failures_csv}"
 	return 1
 }
 
