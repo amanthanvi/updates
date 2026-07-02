@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - `NODE_NPM_INSTALL_FLAGS` config key in `~/.updatesrc` to pass extra whitespace-separated flags (for example `--legacy-peer-deps`) to the node module's `npm install -g` invocation, scoped to `updates` instead of requiring a global `~/.npmrc` override. Supported on both Bash and native Windows PowerShell.
 
+### Fixed
+
+- Guard Bash Python upgrades in PEP 668 externally-managed environments by dry-running wheel-only user-site plans, pruning unsafe packages, installing only the safe subset, and running `pip check`.
+
 ## [2.0.2] - 2026-06-19
 
 ### Fixed

@@ -152,8 +152,8 @@ Module presets:
 
 Python:
 
-- `--pip-force`: pass `--break-system-packages` to `pip` (unsafe; for PEP 668 environments).
-- `--parallel <N>`: parallelism for Bash pip upgrades (default `4`, minimum `1`). Native Windows rejects the CLI flag and warns+ignores `PARALLEL` in config.
+- `--pip-force`: bypass the guarded user-site fallback in PEP 668 environments and pass `--break-system-packages` to `pip` system-scope installs (unsafe).
+- `--parallel <N>`: parallelism for non-guarded Bash pip upgrades (default `4`, minimum `1`). Native Windows rejects the CLI flag and warns+ignores `PARALLEL` in config.
 
 **Deprecated flags (accepted with WARN in 0.9.0; removed in 1.0.0):**
 
@@ -198,7 +198,7 @@ When `--json` is active, `--log-level` controls the verbosity of human output on
 
 ### 3.6 --pip-force details
 
-Replaces `--python-break-system-packages`. Passes `--break-system-packages` to `pip install` calls. This is dangerous on PEP 668 externally-managed environments and should only be used when the user explicitly wants to override system Python protections.
+Replaces `--python-break-system-packages`. In PEP 668 externally-managed environments, this bypasses the guarded user-site fallback and passes `--break-system-packages` to system-scope `pip install` calls. This is dangerous and should only be used when the user explicitly wants to override system Python protections.
 
 ### 3.7 Module lists (--only, --skip)
 
@@ -484,11 +484,12 @@ Purpose: upgrade Bun global packages and, when safe, the Bun CLI itself.
 Purpose: upgrade global Python packages with `pip`.
 
 - Requires: a resolved Python launcher with a working `pip` module. Resolution order is `py -3`, then `python`, then `python3`.
-- PEP 668 detection: if externally-managed, defaults to `--user` scope.
-- `--pip-force`: passes `--break-system-packages` to pip.
+- PEP 668 detection: if externally-managed, Bash defaults to guarded `--user` scope; native Windows defaults to `--user` scope.
+- `--pip-force`: skips the guarded user-site fallback and passes `--break-system-packages` to system-scope pip installs.
 - Non-dry-run:
-  - Bash implementation: `<launcher> -m pip list --outdated --format=json [--user]`, then `<launcher> -m pip install -U <pkg>` in parallel batches of `--parallel <N>`.
-  - Native Windows PowerShell implementation: same discovery/install flow, but upgrades run sequentially and `--parallel <N>` is rejected.
+  - Bash implementation, normal or `--pip-force`: `<launcher> -m pip list --outdated --format=json [--user]`, then `<launcher> -m pip install -U <pkg>` in parallel batches of `--parallel <N>`.
+  - Bash implementation, externally-managed default: `<launcher> -m pip list --outdated --format=json --user`, then per-package `pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report <report> <pkg>` guard checks. Packages are skipped if the report would install new packages, use source distributions, or violate installed/planned dependency requirements. The safe subset is installed in one wheel-only user-site transaction, then `pip check` runs.
+  - Native Windows PowerShell implementation: same discovery/install flow as the normal path, but upgrades run sequentially and `--parallel <N>` is rejected.
 - With `-n`: adds `--no-input` to pip calls.
 - Side effects: upgrades Python packages; does not upgrade the Python interpreter itself.
 

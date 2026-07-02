@@ -19,8 +19,10 @@ stub_bin="${tmp_dir}/bin"
 mkdir -p "$stub_bin"
 
 SYSTEM_NODE="$(command -v node 2>/dev/null || true)"
+SYSTEM_PYTHON3="$(command -v python3 2>/dev/null || true)"
 BASE_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH="${stub_bin}:${BASE_PATH}"
+export SYSTEM_PYTHON3
 
 # Self-update hits the network by default; disable for deterministic tests.
 export UPDATES_SELF_UPDATE=0
@@ -526,46 +528,37 @@ grep -q '^mas upgrade$' "$CALL_LOG"
 grep -q '^softwareupdate -l$' "$CALL_LOG"
 grep -q '^WARN: Homebrew cask upgrades may modify /Applications\.$' "$full_stderr"
 
-echo "Test: python uses --user in externally-managed env"
-# shellcheck disable=SC2016
-write_stub python3 '
-if [ "${1:-}" = "-c" ]; then
-	code="${2:-}"
-	if echo "$code" | grep -q "EXTERNALLY-MANAGED"; then
-		echo "1"
-		exit 0
-	fi
-	echo "pillow"
-	exit 0
+echo "Test: python guards externally-managed user-site upgrades"
+if [ -z "$SYSTEM_PYTHON3" ]; then
+	echo "python3 is required for guard helper tests" >&2
+	exit 1
 fi
+rm -f "${stub_bin}/py" "${stub_bin}/python3"
 
-	if [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
-		shift 2
-		if [ "${1:-}" = "--version" ]; then
-			echo "pip 25.0 from /dev/null (python 3.12)"
-			exit 0
-		fi
-		if [ "${1:-}" = "--disable-pip-version-check" ]; then
-			shift
-		fi
-		cmd="${1:-}"
-		shift || true
-		case "$cmd" in
-	list)
-		echo "python3 -m pip list $*" >>"$CALL_LOG"
-		echo "[{\"name\":\"pillow\"}]"
-		exit 0
-		;;
-	install)
-		echo "python3 -m pip install $*" >>"$CALL_LOG"
-		exit 0
-		;;
-	esac
-fi
+python_site="${tmp_dir}/python-site"
+mkdir -p "${python_site}/idna-3.1.dist-info" "${python_site}/pyelftools-0.31.dist-info" "${python_site}/unicorn-2.1.2.dist-info" "${python_site}/pwntools-4.15.0.dist-info"
+cat >"${python_site}/idna-3.1.dist-info/METADATA" <<'EOF'
+Metadata-Version: 2.1
+Name: idna
+Version: 3.1
+EOF
+cat >"${python_site}/pyelftools-0.31.dist-info/METADATA" <<'EOF'
+Metadata-Version: 2.1
+Name: pyelftools
+Version: 0.31
+EOF
+cat >"${python_site}/unicorn-2.1.2.dist-info/METADATA" <<'EOF'
+Metadata-Version: 2.1
+Name: unicorn
+Version: 2.1.2
+EOF
+cat >"${python_site}/pwntools-4.15.0.dist-info/METADATA" <<'EOF'
+Metadata-Version: 2.1
+Name: pwntools
+Version: 4.15.0
+Requires-Dist: unicorn!=2.1.3,!=2.1.4,>=2.0.1
+EOF
 
-echo "python3 stub: unexpected args: $*" >&2
-exit 1
-'
 # shellcheck disable=SC2016
 write_stub python '
 if [ "${1:-}" = "-c" ]; then
@@ -574,29 +567,94 @@ if [ "${1:-}" = "-c" ]; then
 		echo "1"
 		exit 0
 	fi
-	echo "pillow"
-	exit 0
+	exec "$SYSTEM_PYTHON3" "$@"
 fi
 
-	if [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
-		shift 2
-		if [ "${1:-}" = "--version" ]; then
-			echo "pip 25.0 from /dev/null (python 3.12)"
-			exit 0
-		fi
-		if [ "${1:-}" = "--disable-pip-version-check" ]; then
-			shift
-		fi
-		cmd="${1:-}"
-		shift || true
-		case "$cmd" in
+if [ "${1:-}" = "-" ]; then
+	exec "$SYSTEM_PYTHON3" "$@"
+fi
+
+if [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
+	shift 2
+	if [ "${1:-}" = "--version" ]; then
+		echo "pip 25.0 from /dev/null (python 3.12)"
+		exit 0
+	fi
+	if [ "${1:-}" = "--disable-pip-version-check" ]; then
+		shift
+	fi
+	cmd="${1:-}"
+	shift || true
+	case "$cmd" in
 	list)
 		echo "python -m pip list $*" >>"$CALL_LOG"
-		echo "[{\"name\":\"pillow\"}]"
+		echo "[{\"name\":\"idna\",\"version\":\"3.1\",\"latest_version\":\"3.11\"},{\"name\":\"pyelftools\",\"version\":\"0.31\",\"latest_version\":\"0.32\"},{\"name\":\"unicorn\",\"version\":\"2.1.2\",\"latest_version\":\"2.1.4\"}]"
 		exit 0
 		;;
 	install)
 		echo "python -m pip install $*" >>"$CALL_LOG"
+		dry_run=0
+		report=""
+		pkg=""
+		pkgs=""
+		while [ $# -gt 0 ]; do
+			case "$1" in
+			--dry-run)
+				dry_run=1
+				shift
+				;;
+			--report)
+				report="$2"
+				shift 2
+				;;
+			-*)
+				shift
+				;;
+			*)
+				pkg="$1"
+				pkgs="${pkgs}${pkgs:+ }$1"
+				shift
+				;;
+			esac
+		done
+		if [ "$dry_run" -eq 1 ]; then
+			case "$pkgs" in
+			idna)
+				cat >"$report" <<JSON
+{"install":[{"download_info":{"url":"https://example.invalid/idna-3.11-py3-none-any.whl"},"metadata":{"name":"idna","version":"3.11"}}]}
+JSON
+				exit 0
+				;;
+			pyelftools)
+				cat >"$report" <<JSON
+{"install":[{"download_info":{"url":"https://example.invalid/pyelftools-0.32-py3-none-any.whl"},"metadata":{"name":"pyelftools","version":"0.32"}}]}
+JSON
+				exit 0
+				;;
+			unicorn)
+				cat >"$report" <<JSON
+{"install":[{"download_info":{"url":"https://example.invalid/unicorn-2.1.4-py3-none-any.whl"},"metadata":{"name":"unicorn","version":"2.1.4"}}]}
+JSON
+				exit 0
+				;;
+			"idna pyelftools")
+				cat >"$report" <<JSON
+{"install":[{"download_info":{"url":"https://example.invalid/idna-3.11-py3-none-any.whl"},"metadata":{"name":"idna","version":"3.11"}},{"download_info":{"url":"https://example.invalid/pyelftools-0.32-py3-none-any.whl"},"metadata":{"name":"pyelftools","version":"0.32"}}]}
+JSON
+				exit 0
+				;;
+			esac
+			echo "unexpected dry-run package set: $pkgs" >&2
+			exit 1
+		fi
+		exit 0
+		;;
+	check)
+		if [ "$#" -eq 0 ]; then
+			echo "python -m pip check" >>"$CALL_LOG"
+		else
+			echo "python -m pip check $*" >>"$CALL_LOG"
+		fi
 		exit 0
 		;;
 	esac
@@ -607,15 +665,28 @@ exit 1
 '
 
 : >"$CALL_LOG"
-"$SCRIPT" --only python --no-emoji >/dev/null
-grep -Eq '^(python|python3) -m pip list --outdated --format=json --user$' "$CALL_LOG"
-grep -Eq '^(python|python3) -m pip install -U --user pillow$' "$CALL_LOG"
+python_guard_stderr="${tmp_dir}/python-guard-stderr.log"
+PYTHONPATH="$python_site" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_guard_stderr"
+grep -q '^python -m pip list --outdated --format=json --user$' "$CALL_LOG"
+grep -Eq '^python -m pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report .+ idna$' "$CALL_LOG"
+grep -Eq '^python -m pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report .+ pyelftools$' "$CALL_LOG"
+grep -Eq '^python -m pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report .+ unicorn$' "$CALL_LOG"
+grep -Eq '^python -m pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report .+ idna pyelftools$' "$CALL_LOG"
+grep -q '^python -m pip install -U --user --break-system-packages --only-binary=:all: idna pyelftools$' "$CALL_LOG"
+grep -q '^python -m pip check$' "$CALL_LOG"
+if grep -q '^python -m pip install -U --user --break-system-packages --only-binary=:all: unicorn$' "$CALL_LOG"; then
+	echo "Expected guarded Python path to skip unsafe unicorn upgrade" >&2
+	exit 1
+fi
+grep -q '^WARN: python: skipping unicorn: pwntools requires unicorn!=2\.1\.3,!=2\.1\.4,>=2\.0\.1, planned unicorn==2\.1\.4$' "$python_guard_stderr"
 
 echo "Test: python break-system-packages opt-in (pip-force)"
 : >"$CALL_LOG"
 "$SCRIPT" --only python --pip-force --no-emoji >/dev/null
-grep -Eq '^(python|python3) -m pip list --outdated --format=json$' "$CALL_LOG"
-grep -Eq '^(python|python3) -m pip install -U --break-system-packages pillow$' "$CALL_LOG"
+grep -q '^python -m pip list --outdated --format=json$' "$CALL_LOG"
+grep -q '^python -m pip install -U --break-system-packages idna$' "$CALL_LOG"
+grep -q '^python -m pip install -U --break-system-packages pyelftools$' "$CALL_LOG"
+grep -q '^python -m pip install -U --break-system-packages unicorn$' "$CALL_LOG"
 
 echo "Test: linux module (apt-get) runs in non-interactive mode"
 write_stub uname 'echo Linux'
