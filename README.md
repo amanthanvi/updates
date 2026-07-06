@@ -90,7 +90,7 @@ Modules are auto-detected: if the underlying command isn’t installed, the modu
 - `winget`: upgrade installed Windows packages/apps via `winget` (Windows only)
 - `node`: upgrade global npm packages via resolved npm-check-updates + `npm` (sources NVM first when available on macOS/Linux)
 - `bun`: upgrade Bun global packages everywhere; native Windows only self-updates the Bun CLI when it appears standalone-installed
-- `python`: upgrade global/user Python packages via a resolved launcher (`py -3`, `python`, then `python3`)
+- `python`: upgrade global/user Python packages via a resolved launcher (`py -3`, `python`, then `python3`); externally-managed Bash environments use a guarded user-site path
 - `uv`: update uv-managed tools everywhere; native Windows only self-updates uv when it appears standalone-installed
 - `mas`: upgrade Mac App Store apps via `mas` (disabled by default; enable with `--mas-upgrade` or `--full`)
 - `pipx`: upgrade pipx-managed apps via `pipx upgrade-all`
@@ -148,6 +148,8 @@ Install what you actually use:
 
 ## Development
 
+Tests require `python3` with either public `packaging` or pip's vendored packaging module available; lint additionally requires `shellcheck` and `shfmt`.
+
 ```bash
 ./scripts/lint.sh
 ./scripts/test.sh
@@ -166,7 +168,7 @@ Install what you actually use:
 - On macOS, Homebrew casks are disabled by default; enable with `--brew-mode casks` or `--brew-mode greedy` (or `--full`). On macOS 26+, cask upgrades may be blocked unless your terminal app is allowed under **Privacy & Security → App Management** (e.g. Ghostty). If you see a system notification like “\<Terminal App\> tried modifying your system…”, enable App Management or rerun with `--brew-mode formula`.
 - On WSL, updates apply to the Linux distro; native Windows updates require the native Windows entrypoints.
 - Output uses ANSI colors when run in a TTY; disable with `--no-color` or `NO_COLOR=1`. When `--log-file` is used, colors are disabled to keep logs clean.
-- If Python is externally-managed (PEP 668), `updates` upgrades user-site packages by default; use `--pip-force` to override (dangerous).
+- If Python is externally-managed (PEP 668), Bash runs a guarded user-site upgrade by default: it lists user packages, dry-runs wheel-only plans, skips packages that would add packages absent from the user site, use source distributions, or violate installed requirements, re-checks the safe subset in one combined dry-run, installs only that set, then runs `pip check`. Pip must support `--dry-run --report` for the guarded path; missing support is an error under `--only` and a safe skip otherwise. Remaining `pip check` failures that were already present before install are warned after install instead of failing the guarded run. Guarded pip calls include `--break-system-packages` only when pip supports it. `--pip-force` skips the guard and uses pip's system-protection override (dangerous).
 
 ## Contributing
 

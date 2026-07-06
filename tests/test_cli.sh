@@ -19,8 +19,23 @@ stub_bin="${tmp_dir}/bin"
 mkdir -p "$stub_bin"
 
 SYSTEM_NODE="$(command -v node 2>/dev/null || true)"
+SYSTEM_PYTHON3="$(command -v python3 2>/dev/null || true)"
+if [ -z "$SYSTEM_PYTHON3" ]; then
+	echo "python3 is required for tests/test_cli.sh" >&2
+	exit 1
+fi
+if ! "$SYSTEM_PYTHON3" - <<'PY' >/dev/null 2>&1; then
+try:
+    import packaging.requirements
+except Exception:
+    import pip._vendor.packaging.requirements
+PY
+	echo "python3 with packaging or pip vendored packaging is required for guard helper tests" >&2
+	exit 1
+fi
 BASE_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH="${stub_bin}:${BASE_PATH}"
+export SYSTEM_PYTHON3
 
 # Self-update hits the network by default; disable for deterministic tests.
 export UPDATES_SELF_UPDATE=0
@@ -526,46 +541,58 @@ grep -q '^mas upgrade$' "$CALL_LOG"
 grep -q '^softwareupdate -l$' "$CALL_LOG"
 grep -q '^WARN: Homebrew cask upgrades may modify /Applications\.$' "$full_stderr"
 
-echo "Test: python uses --user in externally-managed env"
-# shellcheck disable=SC2016
-write_stub python3 '
-if [ "${1:-}" = "-c" ]; then
-	code="${2:-}"
-	if echo "$code" | grep -q "EXTERNALLY-MANAGED"; then
-		echo "1"
-		exit 0
-	fi
-	echo "pillow"
-	exit 0
-fi
+echo "Test: python guards externally-managed user-site upgrades"
+rm -f "${stub_bin}/py" "${stub_bin}/python3"
 
-	if [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
-		shift 2
-		if [ "${1:-}" = "--version" ]; then
-			echo "pip 25.0 from /dev/null (python 3.12)"
-			exit 0
-		fi
-		if [ "${1:-}" = "--disable-pip-version-check" ]; then
-			shift
-		fi
-		cmd="${1:-}"
-		shift || true
-		case "$cmd" in
-	list)
-		echo "python3 -m pip list $*" >>"$CALL_LOG"
-		echo "[{\"name\":\"pillow\"}]"
-		exit 0
-		;;
-	install)
-		echo "python3 -m pip install $*" >>"$CALL_LOG"
-		exit 0
-		;;
-	esac
-fi
+python_user_base="${tmp_dir}/python-userbase"
+python_site="$(
+	PYTHONUSERBASE="$python_user_base" "$SYSTEM_PYTHON3" - <<'PY'
+import site
 
-echo "python3 stub: unexpected args: $*" >&2
-exit 1
-'
+print(site.getusersitepackages())
+PY
+)"
+python_system_site="${tmp_dir}/python-system-site"
+python_path="${python_site}:${python_system_site}"
+mkdir -p "${python_site}/idna-3.1.dist-info" "${python_site}/pyelftools-0.31.dist-info" "${python_site}/unicorn-2.1.2.dist-info" "${python_site}/pwntools-4.15.0.dist-info" "${python_site}/legacyowner-1.0.dist-info" "${python_site}/legacydep-1.0.dist-info" "${python_system_site}/chardet-5.2.0.dist-info"
+cat >"${python_site}/idna-3.1.dist-info/METADATA" <<'EOF'
+Metadata-Version: 2.1
+Name: idna
+Version: 3.1
+EOF
+cat >"${python_site}/pyelftools-0.31.dist-info/METADATA" <<'EOF'
+Metadata-Version: 2.1
+Name: pyelftools
+Version: 0.31
+EOF
+cat >"${python_site}/unicorn-2.1.2.dist-info/METADATA" <<'EOF'
+Metadata-Version: 2.1
+Name: unicorn
+Version: 2.1.2
+EOF
+cat >"${python_site}/pwntools-4.15.0.dist-info/METADATA" <<'EOF'
+Metadata-Version: 2.1
+Name: pwntools
+Version: 4.15.0
+Requires-Dist: unicorn!=2.1.3,!=2.1.4,>=2.0.1
+EOF
+cat >"${python_site}/legacyowner-1.0.dist-info/METADATA" <<'EOF'
+Metadata-Version: 2.1
+Name: legacyowner
+Version: 1.0
+Requires-Dist: legacydep<2
+EOF
+cat >"${python_site}/legacydep-1.0.dist-info/METADATA" <<'EOF'
+Metadata-Version: 2.1
+Name: legacydep
+Version: 1.0
+EOF
+cat >"${python_system_site}/chardet-5.2.0.dist-info/METADATA" <<'EOF'
+Metadata-Version: 2.1
+Name: chardet
+Version: 5.2.0
+EOF
+
 # shellcheck disable=SC2016
 write_stub python '
 if [ "${1:-}" = "-c" ]; then
@@ -574,31 +601,158 @@ if [ "${1:-}" = "-c" ]; then
 		echo "1"
 		exit 0
 	fi
-	echo "pillow"
-	exit 0
+	exec "$SYSTEM_PYTHON3" "$@"
 fi
 
-	if [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
-		shift 2
-		if [ "${1:-}" = "--version" ]; then
-			echo "pip 25.0 from /dev/null (python 3.12)"
-			exit 0
-		fi
-		if [ "${1:-}" = "--disable-pip-version-check" ]; then
-			shift
-		fi
-		cmd="${1:-}"
-		shift || true
-		case "$cmd" in
-	list)
-		echo "python -m pip list $*" >>"$CALL_LOG"
-		echo "[{\"name\":\"pillow\"}]"
+if [ "${1:-}" = "-" ]; then
+	exec "$SYSTEM_PYTHON3" "$@"
+fi
+
+if [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
+	shift 2
+	if [ "${1:-}" = "--version" ]; then
+		echo "pip 25.0 from /dev/null (python 3.12)"
 		exit 0
-		;;
+	fi
+	if [ "${1:-}" = "--disable-pip-version-check" ]; then
+		shift
+	fi
+	cmd="${1:-}"
+	shift || true
+		if [ "$cmd" = "install" ] && [ "${1:-}" = "--help" ]; then
+			echo "  --dry-run"
+			if [ "${PYTHON_GUARD_NO_REPORT_HELP:-0}" != "1" ]; then
+				echo "  --report <file>"
+			fi
+			if [ "${PYTHON_GUARD_NO_BREAK_HELP:-0}" != "1" ]; then
+				echo "  --break-system-packages"
+			fi
+			exit 0
+	fi
+		case "$cmd" in
+		list)
+			echo "python -m pip list $*" >>"$CALL_LOG"
+			if [ "${PYTHON_GUARD_PLANNED_OWNER_CONFLICT:-0}" = "1" ]; then
+				echo "[{\"name\":\"legacyowner\",\"version\":\"1.0\",\"latest_version\":\"2.0\"},{\"name\":\"legacydep\",\"version\":\"1.0\",\"latest_version\":\"2.0\"}]"
+				exit 0
+			fi
+			echo "[{\"name\":\"idna\",\"version\":\"3.1\",\"latest_version\":\"3.11\"},{\"name\":\"pyelftools\",\"version\":\"0.31\",\"latest_version\":\"0.32\"},{\"name\":\"unicorn\",\"version\":\"2.1.2\",\"latest_version\":\"2.1.4\"}]"
+			exit 0
+			;;
 	install)
 		echo "python -m pip install $*" >>"$CALL_LOG"
-		exit 0
-		;;
+		dry_run=0
+		report=""
+		pkg=""
+		pkgs=""
+		while [ $# -gt 0 ]; do
+			case "$1" in
+			--dry-run)
+				dry_run=1
+				shift
+				;;
+			--report)
+				report="$2"
+				shift 2
+				;;
+			-*)
+				shift
+				;;
+			*)
+				pkg="$1"
+				pkgs="${pkgs}${pkgs:+ }$1"
+				shift
+				;;
+			esac
+		done
+			if [ "$dry_run" -eq 1 ]; then
+				case "$pkgs" in
+				idna)
+					if [ "${PYTHON_GUARD_SYSTEM_ONLY_DEP:-0}" = "1" ]; then
+						cat >"$report" <<JSON
+{"install":[{"download_info":{"url":"https://example.invalid/idna-3.11-py3-none-any.whl"},"metadata":{"name":"idna","version":"3.11","requires_dist":["chardet>=5"]}},{"download_info":{"url":"https://example.invalid/chardet-5.2.0-py3-none-any.whl"},"metadata":{"name":"chardet","version":"5.2.0"}}]}
+JSON
+						exit 0
+					fi
+					cat >"$report" <<JSON
+{"install":[{"download_info":{"url":"https://example.invalid/idna-3.11-py3-none-any.whl"},"metadata":{"name":"idna","version":"3.11"}}]}
+JSON
+				exit 0
+				;;
+			pyelftools)
+				cat >"$report" <<JSON
+{"install":[{"download_info":{"url":"https://example.invalid/pyelftools-0.32-py3-none-any.whl"},"metadata":{"name":"pyelftools","version":"0.32"}}]}
+JSON
+				exit 0
+				;;
+				unicorn)
+					cat >"$report" <<JSON
+{"install":[{"download_info":{"url":"https://example.invalid/unicorn-2.1.4-py3-none-any.whl"},"metadata":{"name":"unicorn","version":"2.1.4"}}]}
+JSON
+					exit 0
+					;;
+				legacyowner)
+					cat >"$report" <<JSON
+{"install":[{"download_info":{"url":"https://example.invalid/legacyowner-2.0-py3-none-any.whl"},"metadata":{"name":"legacyowner","version":"2.0","requires_dist":["legacydep>=2"]}},{"download_info":{"url":"https://example.invalid/legacydep-2.0-py3-none-any.whl"},"metadata":{"name":"legacydep","version":"2.0"}}]}
+JSON
+					exit 0
+					;;
+				legacydep)
+					cat >"$report" <<JSON
+{"install":[{"download_info":{"url":"https://example.invalid/legacydep-2.0-py3-none-any.whl"},"metadata":{"name":"legacydep","version":"2.0"}}]}
+JSON
+					exit 0
+					;;
+				"idna pyelftools")
+					if [ "${PYTHON_GUARD_COMBINED_CONFLICT:-0}" = "1" ]; then
+						cat >"$report" <<JSON
+{"install":[{"download_info":{"url":"https://example.invalid/idna-3.11-py3-none-any.whl"},"metadata":{"name":"idna","version":"3.11"}},{"download_info":{"url":"https://example.invalid/pyelftools-0.32-py3-none-any.whl"},"metadata":{"name":"pyelftools","version":"0.32"}},{"download_info":{"url":"https://example.invalid/unicorn-2.1.4-py3-none-any.whl"},"metadata":{"name":"unicorn","version":"2.1.4"}}]}
+JSON
+					exit 0
+				fi
+				cat >"$report" <<JSON
+{"install":[{"download_info":{"url":"https://example.invalid/idna-3.11-py3-none-any.whl"},"metadata":{"name":"idna","version":"3.11"}},{"download_info":{"url":"https://example.invalid/pyelftools-0.32-py3-none-any.whl"},"metadata":{"name":"pyelftools","version":"0.32"}}]}
+JSON
+					exit 0
+					;;
+				esac
+				echo "unexpected dry-run package set: $pkgs" >&2
+				exit 1
+			fi
+			echo "pip install human stdout"
+			exit 0
+			;;
+		check)
+			if [ "$#" -eq 0 ]; then
+				echo "python -m pip check" >>"$CALL_LOG"
+			else
+				echo "python -m pip check $*" >>"$CALL_LOG"
+			fi
+			if [ "${PYTHON_GUARD_CHECK_FAIL:-0}" = "1" ]; then
+				echo "pre-existing system package conflict"
+				exit 1
+			fi
+			if [ "${PYTHON_GUARD_CHECK_PARTIAL_FIX:-0}" = "1" ]; then
+				check_count=0
+				if [ -n "${PYTHON_GUARD_CHECK_STATE:-}" ] && [ -f "$PYTHON_GUARD_CHECK_STATE" ]; then
+					check_count="$(cat "$PYTHON_GUARD_CHECK_STATE")"
+				fi
+				check_count=$((check_count + 1))
+				if [ -n "${PYTHON_GUARD_CHECK_STATE:-}" ]; then
+					echo "$check_count" >"$PYTHON_GUARD_CHECK_STATE"
+				fi
+				if [ "${PYTHON_GUARD_CHECK_VOLATILE_STDERR:-0}" = "1" ]; then
+					echo "pip check warning $check_count" >&2
+				fi
+				echo "pre-existing system package conflict"
+				if [ "$check_count" -eq 1 ]; then
+					echo "pre-existing package conflict resolved by upgrade"
+				fi
+				exit 1
+			fi
+			echo "pip check human stdout"
+			exit 0
+			;;
 	esac
 fi
 
@@ -607,15 +761,168 @@ exit 1
 '
 
 : >"$CALL_LOG"
-"$SCRIPT" --only python --no-emoji >/dev/null
-grep -Eq '^(python|python3) -m pip list --outdated --format=json --user$' "$CALL_LOG"
-grep -Eq '^(python|python3) -m pip install -U --user pillow$' "$CALL_LOG"
+python_guard_stderr="${tmp_dir}/python-guard-stderr.log"
+PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_guard_stderr"
+grep -q '^python -m pip list --outdated --format=json --user$' "$CALL_LOG"
+grep -Eq '^python -m pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report .+ idna$' "$CALL_LOG"
+grep -Eq '^python -m pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report .+ pyelftools$' "$CALL_LOG"
+grep -Eq '^python -m pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report .+ unicorn$' "$CALL_LOG"
+grep -Eq '^python -m pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report .+ idna pyelftools$' "$CALL_LOG"
+grep -q '^python -m pip install -U --user --break-system-packages --only-binary=:all: idna pyelftools$' "$CALL_LOG"
+grep -q '^python -m pip check$' "$CALL_LOG"
+if grep -q '^python -m pip install -U --user --break-system-packages --only-binary=:all: unicorn$' "$CALL_LOG"; then
+	echo "Expected guarded Python path to skip unsafe unicorn upgrade" >&2
+	exit 1
+fi
+grep -q '^WARN: python: skipping unicorn: pwntools requires unicorn!=2\.1\.3,!=2\.1\.4,>=2\.0\.1, planned unicorn==2\.1\.4$' "$python_guard_stderr"
+
+echo "Test: python guarded user-site ignores superseded planned-owner requirements"
+: >"$CALL_LOG"
+python_planned_owner_stderr="${tmp_dir}/python-planned-owner-stderr.log"
+PYTHON_GUARD_PLANNED_OWNER_CONFLICT=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_planned_owner_stderr"
+grep -Eq '^python -m pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report .+ legacyowner$' "$CALL_LOG"
+grep -Eq '^python -m pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report .+ legacydep$' "$CALL_LOG"
+grep -q '^python -m pip install -U --user --break-system-packages --only-binary=:all: legacyowner$' "$CALL_LOG"
+grep -q '^WARN: python: skipping legacydep: legacyowner requires legacydep<2, planned legacydep==2\.0$' "$python_planned_owner_stderr"
+if grep -q '^WARN: python: skipping legacyowner:' "$python_planned_owner_stderr"; then
+	echo "Expected guarded Python path to ignore old requirements for packages being upgraded" >&2
+	exit 1
+fi
+if grep -q '^python -m pip install -U --user --break-system-packages --only-binary=:all: legacydep$' "$CALL_LOG"; then
+	echo "Expected guarded Python path to install legacydep only through legacyowner plan" >&2
+	exit 1
+fi
+
+echo "Test: python guarded user-site keeps JSON stdout JSONL-only"
+: >"$CALL_LOG"
+python_guard_json_stdout="${tmp_dir}/python-guard-json-stdout.log"
+python_guard_json_stderr="${tmp_dir}/python-guard-json-stderr.log"
+PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --json --no-emoji >"$python_guard_json_stdout" 2>"$python_guard_json_stderr"
+"$SYSTEM_PYTHON3" - "$python_guard_json_stdout" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    lines = [line for line in fh.read().splitlines() if line]
+assert lines, "expected JSONL stdout"
+for line in lines:
+    json.loads(line)
+PY
+if grep -Eq 'pip (install|check) human stdout' "$python_guard_json_stdout"; then
+	echo "Expected guarded Python JSON stdout to contain only JSONL" >&2
+	exit 1
+fi
+grep -q '^pip install human stdout$' "$python_guard_json_stderr"
+grep -q '^pip check human stdout$' "$python_guard_json_stderr"
+
+echo "Test: python guarded user-site skips system-only dependency installs"
+: >"$CALL_LOG"
+python_system_dep_stderr="${tmp_dir}/python-system-dep-stderr.log"
+PYTHON_GUARD_SYSTEM_ONLY_DEP=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_system_dep_stderr"
+grep -q '^WARN: python: skipping idna: would install new package(s): chardet$' "$python_system_dep_stderr"
+grep -q '^python -m pip install -U --user --break-system-packages --only-binary=:all: pyelftools$' "$CALL_LOG"
+if grep -q '^python -m pip install -U --user --break-system-packages --only-binary=:all: idna$' "$CALL_LOG"; then
+	echo "Expected guarded Python path to skip idna when its dependency is system-only" >&2
+	exit 1
+fi
+
+echo "Test: python guarded user-site tolerates pre-existing pip check failures"
+: >"$CALL_LOG"
+python_check_stdout="${tmp_dir}/python-check-stdout.log"
+python_check_stderr="${tmp_dir}/python-check-stderr.log"
+PYTHON_GUARD_CHECK_FAIL=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >"$python_check_stdout" 2>"$python_check_stderr"
+grep -q '^WARN: python: pip check still reports pre-existing issues after guarded upgrade$' "$python_check_stderr"
+grep -q '^pre-existing system package conflict$' "$python_check_stdout"
+check_count="$(grep -c '^python -m pip check$' "$CALL_LOG")"
+if [ "$check_count" -ne 2 ]; then
+	echo "Expected guarded Python path to run pip check before and after install" >&2
+	exit 1
+fi
+
+echo "Test: python guarded user-site tolerates partially fixed pip check failures"
+: >"$CALL_LOG"
+python_partial_check_stdout="${tmp_dir}/python-partial-check-stdout.log"
+python_partial_check_stderr="${tmp_dir}/python-partial-check-stderr.log"
+python_partial_check_state="${tmp_dir}/python-partial-check-state"
+rm -f "$python_partial_check_state"
+PYTHON_GUARD_CHECK_PARTIAL_FIX=1 PYTHON_GUARD_CHECK_VOLATILE_STDERR=1 PYTHON_GUARD_CHECK_STATE="$python_partial_check_state" PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >"$python_partial_check_stdout" 2>"$python_partial_check_stderr"
+grep -q '^WARN: python: pip check still reports pre-existing issues after guarded upgrade$' "$python_partial_check_stderr"
+grep -q '^pre-existing system package conflict$' "$python_partial_check_stdout"
+grep -q '^pip check warning 2$' "$python_partial_check_stdout"
+if grep -q '^pre-existing package conflict resolved by upgrade$' "$python_partial_check_stdout"; then
+	echo "Expected guarded Python path to report only remaining pip check failures" >&2
+	exit 1
+fi
+check_count="$(grep -c '^python -m pip check$' "$CALL_LOG")"
+if [ "$check_count" -ne 2 ]; then
+	echo "Expected guarded Python path to run pip check before and after partial fix" >&2
+	exit 1
+fi
+
+echo "Test: python guarded user-site errors when pip lacks dry-run reports"
+: >"$CALL_LOG"
+python_no_report_stderr="${tmp_dir}/python-no-report-stderr.log"
+set +e
+PYTHON_GUARD_NO_REPORT_HELP=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_no_report_stderr"
+no_report_status=$?
+set -e
+if [ "$no_report_status" -eq 0 ]; then
+	echo "Expected guarded Python path to fail in --only mode when pip lacks --report" >&2
+	exit 1
+fi
+grep -q '^ERROR: python: pip is too old for guarded user-site upgrades (--dry-run --report required)$' "$python_no_report_stderr"
+if grep -q -- '--dry-run --report' "$CALL_LOG"; then
+	echo "Expected guarded Python path to stop before dry-run reports when pip lacks --report" >&2
+	exit 1
+fi
+
+echo "Test: python guarded user-site skips when pip lacks dry-run reports outside --only"
+: >"$CALL_LOG"
+python_no_report_skip_stderr="${tmp_dir}/python-no-report-skip-stderr.log"
+python_no_report_skip_out="$(
+	PYTHON_GUARD_NO_REPORT_HELP=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --skip brew,shell,linux,node,uv,mas,pipx,rustup,claude,mise,go,macos,repos,bun,pi --no-emoji --no-color 2>"$python_no_report_skip_stderr"
+)"
+echo "$python_no_report_skip_out" | grep -q '^==> python END (SKIP)'
+grep -q '^WARN: python: skipping guarded user-site upgrades: pip does not support --dry-run --report$' "$python_no_report_skip_stderr"
+if grep -q -- '--dry-run --report' "$CALL_LOG"; then
+	echo "Expected non-only guarded Python path to skip before dry-run reports when pip lacks --report" >&2
+	exit 1
+fi
+
+echo "Test: python guarded user-site omits break-system flag when pip lacks it"
+: >"$CALL_LOG"
+python_no_break_stderr="${tmp_dir}/python-no-break-stderr.log"
+PYTHON_GUARD_NO_BREAK_HELP=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_no_break_stderr"
+grep -Eq '^python -m pip install -U --user --only-binary=:all: --dry-run --report .+ idna$' "$CALL_LOG"
+grep -Eq '^python -m pip install -U --user --only-binary=:all: --dry-run --report .+ idna pyelftools$' "$CALL_LOG"
+grep -q '^python -m pip install -U --user --only-binary=:all: idna pyelftools$' "$CALL_LOG"
+if grep -q -- '--break-system-packages' "$CALL_LOG"; then
+	echo "Expected guarded Python path to omit unsupported --break-system-packages" >&2
+	exit 1
+fi
+
+echo "Test: python skips install when combined guard plan is unsafe"
+: >"$CALL_LOG"
+python_combined_stderr="${tmp_dir}/python-combined-stderr.log"
+PYTHON_GUARD_COMBINED_CONFLICT=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_combined_stderr"
+grep -Eq '^python -m pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report .+ idna pyelftools$' "$CALL_LOG"
+if grep -q '^python -m pip install -U --user --break-system-packages --only-binary=:all: idna pyelftools$' "$CALL_LOG"; then
+	echo "Expected guarded Python path to skip unsafe combined package set" >&2
+	exit 1
+fi
+if grep -q '^python -m pip check$' "$CALL_LOG"; then
+	echo "Expected guarded Python path to skip pip check when combined dry-run is unsafe" >&2
+	exit 1
+fi
+grep -q '^WARN: python: skipping guarded user-site install: pwntools requires unicorn!=2\.1\.3,!=2\.1\.4,>=2\.0\.1, planned unicorn==2\.1\.4$' "$python_combined_stderr"
 
 echo "Test: python break-system-packages opt-in (pip-force)"
 : >"$CALL_LOG"
 "$SCRIPT" --only python --pip-force --no-emoji >/dev/null
-grep -Eq '^(python|python3) -m pip list --outdated --format=json$' "$CALL_LOG"
-grep -Eq '^(python|python3) -m pip install -U --break-system-packages pillow$' "$CALL_LOG"
+grep -q '^python -m pip list --outdated --format=json$' "$CALL_LOG"
+grep -q '^python -m pip install -U --break-system-packages idna$' "$CALL_LOG"
+grep -q '^python -m pip install -U --break-system-packages pyelftools$' "$CALL_LOG"
+grep -q '^python -m pip install -U --break-system-packages unicorn$' "$CALL_LOG"
 
 echo "Test: linux module (apt-get) runs in non-interactive mode"
 write_stub uname 'echo Linux'

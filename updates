@@ -2377,6 +2377,224 @@ python_externally_managed() {
 	[ "$out" = "1" ]
 }
 
+python_pip_supports_break_system_packages() {
+	python_run_cmd -m pip install --help 2>/dev/null | grep -q -- '--break-system-packages'
+}
+
+python_pip_supports_guard_reports() {
+	local help
+	if ! help="$(python_run_cmd -m pip install --help 2>/dev/null)"; then
+		return 1
+	fi
+	printf '%s\n' "$help" | grep -q -- '--dry-run' || return 1
+	printf '%s\n' "$help" | grep -q -- '--report'
+}
+
+file_lines_subset_of() {
+	local subset_file="$1"
+	local superset_file="$2"
+
+	awk '
+		NR == FNR {
+			seen[$0]++
+			next
+		}
+		{
+			needed[$0]++
+		}
+		END {
+			for (line in needed) {
+				if (needed[line] > seen[line]) {
+					exit 1
+				}
+			}
+		}
+	' "$superset_file" "$subset_file"
+}
+
+python_guard_plan_decision() {
+	local report_path="$1"
+	shift
+
+	python_run_cmd - "$report_path" "$@" <<'PY'
+import json
+import os
+import site
+import sys
+from urllib.parse import urlparse
+
+report_path = sys.argv[1]
+requested_displays = sys.argv[2:]
+
+try:
+    from importlib import metadata as importlib_metadata
+except Exception as exc:
+    print("skip\tcannot inspect installed packages: %s" % exc)
+    raise SystemExit(0)
+
+try:
+    from packaging.markers import default_environment
+    from packaging.requirements import Requirement
+    from packaging.utils import canonicalize_name
+    from packaging.version import InvalidVersion, Version
+except Exception:
+    try:
+        from pip._vendor.packaging.markers import default_environment
+        from pip._vendor.packaging.requirements import Requirement
+        from pip._vendor.packaging.utils import canonicalize_name
+        from pip._vendor.packaging.version import InvalidVersion, Version
+    except Exception as exc:
+        print("skip\tcannot inspect dependency constraints: %s" % exc)
+        raise SystemExit(0)
+
+
+def version_satisfies(version, specifier):
+    if not specifier:
+        return True
+    try:
+        return Version(str(version)) in specifier
+    except InvalidVersion:
+        return False
+
+
+def normalize_path(path):
+    return os.path.normcase(os.path.realpath(os.path.abspath(str(path))))
+
+
+def user_site_roots():
+    try:
+        roots = site.getusersitepackages()
+    except Exception:
+        roots = []
+    if isinstance(roots, str):
+        roots = [roots]
+    return [normalize_path(root) for root in roots if root]
+
+
+def path_is_under(path, root):
+    path = normalize_path(path)
+    root = normalize_path(root)
+    return path == root or path.startswith(root + os.sep)
+
+
+def distribution_is_under(dist, roots):
+    try:
+        dist_root = dist.locate_file("")
+    except Exception:
+        return False
+    return any(path_is_under(dist_root, root) for root in roots)
+
+
+try:
+    with open(report_path, encoding="utf-8") as fh:
+        report = json.load(fh)
+except Exception as exc:
+    print("skip\tcannot parse pip dry-run report: %s" % exc)
+    raise SystemExit(0)
+
+user_roots = user_site_roots()
+if not user_roots:
+    print("skip\tcannot inspect user-site packages")
+    raise SystemExit(0)
+
+installed = {}
+user_installed = {}
+requirements = []
+for dist in importlib_metadata.distributions():
+    name = dist.metadata.get("Name")
+    if not name:
+        continue
+    key = canonicalize_name(name)
+    in_user_site = distribution_is_under(dist, user_roots)
+    if key not in installed or in_user_site:
+        installed[key] = str(dist.version)
+    if in_user_site:
+        user_installed.setdefault(key, str(dist.version))
+    for req_text in dist.requires or []:
+        requirements.append((key, name, req_text))
+
+planned = {}
+planned_requirements = []
+source_candidates = []
+for item in report.get("install", []):
+    meta = item.get("metadata") or {}
+    name = meta.get("name")
+    version = meta.get("version")
+    if not name or not version:
+        continue
+    key = canonicalize_name(name)
+    planned[key] = str(version)
+    for req_text in meta.get("requires_dist") or []:
+        planned_requirements.append((key, name, req_text))
+
+    url = ((item.get("download_info") or {}).get("url") or "")
+    path = urlparse(url).path.lower()
+    if path.endswith((".tar.gz", ".tar.bz2", ".tar.xz", ".tgz", ".zip")):
+        source_candidates.append(name)
+
+missing_requested = [
+    display for display in requested_displays if canonicalize_name(display) not in planned
+]
+if missing_requested:
+    print("skip\tno install candidate in pip dry-run report: %s" % ", ".join(missing_requested))
+    raise SystemExit(0)
+
+new_packages = sorted(key for key in planned if key not in user_installed)
+if new_packages:
+    print("skip\twould install new package(s): %s" % ", ".join(new_packages))
+    raise SystemExit(0)
+
+if source_candidates:
+    print("skip\twould install source distribution(s): %s" % ", ".join(sorted(source_candidates)))
+    raise SystemExit(0)
+
+versions = dict(installed)
+versions.update(planned)
+env = default_environment()
+
+
+def conflict_for_requirement(owner_key, owner_name, req_text):
+    try:
+        req = Requirement(req_text)
+    except Exception:
+        return None
+    try:
+        if req.marker is not None and not req.marker.evaluate(env):
+            return None
+    except Exception:
+        return None
+
+    target = canonicalize_name(req.name)
+    if target not in versions:
+        if owner_key in planned:
+            return "%s requires missing %s" % (owner_name, req.name)
+        return None
+    if target not in planned and owner_key not in planned:
+        return None
+    if not version_satisfies(versions[target], req.specifier):
+        return "%s requires %s%s, planned %s==%s" % (
+            owner_name,
+            req.name,
+            req.specifier,
+            req.name,
+            versions[target],
+        )
+    return None
+
+
+active_requirements = [
+    item for item in requirements if item[0] not in planned
+] + planned_requirements
+for owner_key, owner_name, req_text in active_requirements:
+    conflict = conflict_for_requirement(owner_key, owner_name, req_text)
+    if conflict:
+        print("skip\t%s" % conflict)
+        raise SystemExit(0)
+
+print("ok\t%s" % " ".join(requested_displays))
+PY
+}
+
 module_brew() {
 	log "Homebrew $(emoji "🍺")"
 	ensure_cmd_or_skip brew brew || return $?
@@ -2908,9 +3126,34 @@ module_python() {
 		pip_install_args+=(--break-system-packages)
 	fi
 
+	local -a pip_guard_install_args=()
+	local -a pip_check_args=()
+	if [ "$use_user" -eq 1 ]; then
+		if ! python_pip_supports_guard_reports; then
+			if missing_dependency_is_error; then
+				err "python: pip is too old for guarded user-site upgrades (--dry-run --report required)"
+				return 1
+			fi
+			warn "python: skipping guarded user-site upgrades: pip does not support --dry-run --report"
+			return 2
+		fi
+		pip_guard_install_args=("${pip_install_args[@]}")
+		if python_pip_supports_break_system_packages; then
+			pip_guard_install_args+=(--break-system-packages)
+		fi
+		pip_guard_install_args+=(--only-binary=:all:)
+		pip_check_args=("${python_args[@]}" -m pip --disable-pip-version-check check)
+	fi
+
 	if [ "$DRY_RUN" -eq 1 ]; then
 		log "DRY RUN: ${pip_list_args[*]}"
-		log "DRY RUN: ${pip_install_args[*]} <package>  (parallel: ${PARALLEL})"
+		if [ "$use_user" -eq 1 ]; then
+			log "DRY RUN: ${pip_guard_install_args[*]} --dry-run --report <report> <package>"
+			log "DRY RUN: ${pip_guard_install_args[*]} <safe packages>"
+			log "DRY RUN: ${pip_check_args[*]}"
+		else
+			log "DRY RUN: ${pip_install_args[*]} <package>  (parallel: ${PARALLEL})"
+		fi
 		return 0
 	fi
 
@@ -2939,6 +3182,148 @@ module_python() {
 		else
 			log "All Python packages are up-to-date. $(emoji "✅")"
 		fi
+		return 0
+	fi
+
+	if [ "$use_user" -eq 1 ]; then
+		log "python: guarded user-site mode; dry-running wheel-only plans before installing."
+
+		local guard_log_dir=""
+		guard_log_dir="$(mktemp -d 2>/dev/null || mktemp -d -t updates-pip-guard)" || {
+			err "python: failed to create temp dir for pip guard logs"
+			return 1
+		}
+
+		local -a safe_packages=()
+		local decision status detail old_ifs
+		local report_path plan_log install_log
+		local check_baseline_log check_baseline_err check_log check_err
+		local check_baseline_failed
+		for pkg in "${packages[@]}"; do
+			report_path="${guard_log_dir}/${pkg}.json"
+			plan_log="${guard_log_dir}/${pkg}.log"
+			debug "+ ${pip_guard_install_args[*]} --dry-run --report $report_path $pkg"
+			if ! "${pip_guard_install_args[@]}" --dry-run --report "$report_path" "$pkg" >"$plan_log" 2>&1; then
+				warn "python: skipping $pkg: pip dry-run failed"
+				if [ -s "$plan_log" ]; then
+					cat "$plan_log" >&"$HUMAN_FD"
+				fi
+				continue
+			fi
+
+			if ! decision="$(python_guard_plan_decision "$report_path" "$pkg")"; then
+				err "python: failed to inspect pip dry-run report for $pkg"
+				rm -rf "$guard_log_dir"
+				return 1
+			fi
+			old_ifs="$IFS"
+			IFS="$(printf '\t')"
+			read -r status detail <<<"$decision"
+			IFS="$old_ifs"
+
+			case "$status" in
+			ok)
+				safe_packages+=("$pkg")
+				;;
+			skip)
+				warn "python: skipping $pkg: $detail"
+				;;
+			*)
+				err "python: unexpected pip guard response for $pkg: $decision"
+				rm -rf "$guard_log_dir"
+				return 1
+				;;
+			esac
+		done
+
+		if [ "${#safe_packages[@]}" -eq 0 ]; then
+			log "python: no guarded user-site packages are safe to upgrade."
+			rm -rf "$guard_log_dir"
+			return 0
+		fi
+
+		report_path="${guard_log_dir}/safe-set.json"
+		plan_log="${guard_log_dir}/safe-set.log"
+		debug "+ ${pip_guard_install_args[*]} --dry-run --report $report_path ${safe_packages[*]}"
+		if ! "${pip_guard_install_args[@]}" --dry-run --report "$report_path" "${safe_packages[@]}" >"$plan_log" 2>&1; then
+			warn "python: skipping guarded user-site install: combined pip dry-run failed"
+			if [ -s "$plan_log" ]; then
+				cat "$plan_log" >&"$HUMAN_FD"
+			fi
+			rm -rf "$guard_log_dir"
+			return 0
+		fi
+		if ! decision="$(python_guard_plan_decision "$report_path" "${safe_packages[@]}")"; then
+			err "python: failed to inspect combined pip dry-run report"
+			rm -rf "$guard_log_dir"
+			return 1
+		fi
+		old_ifs="$IFS"
+		IFS="$(printf '\t')"
+		read -r status detail <<<"$decision"
+		IFS="$old_ifs"
+		if [ "$status" != "ok" ]; then
+			warn "python: skipping guarded user-site install: $detail"
+			rm -rf "$guard_log_dir"
+			return 0
+		fi
+
+		check_baseline_log="${guard_log_dir}/pip-check-before.log"
+		check_baseline_err="${guard_log_dir}/pip-check-before.err"
+		check_baseline_failed=0
+		debug "+ ${pip_check_args[*]}"
+		if ! "${pip_check_args[@]}" >"$check_baseline_log" 2>"$check_baseline_err"; then
+			check_baseline_failed=1
+		fi
+
+		log "Upgrading ${#safe_packages[@]} guarded Python packages..."
+		install_log="${guard_log_dir}/safe-set-install.log"
+		debug "+ ${pip_guard_install_args[*]} ${safe_packages[*]}"
+		if ! "${pip_guard_install_args[@]}" "${safe_packages[@]}" >"$install_log" 2>&1; then
+			err "python: pip upgrade failed: guarded user-site package set"
+			if [ -s "$install_log" ]; then
+				cat "$install_log" >&"$HUMAN_FD"
+			fi
+			rm -rf "$guard_log_dir"
+			return 1
+		fi
+		if [ -s "$install_log" ]; then
+			cat "$install_log" >&"$HUMAN_FD"
+		fi
+
+		check_log="${guard_log_dir}/pip-check.log"
+		check_err="${guard_log_dir}/pip-check.err"
+		debug "+ ${pip_check_args[*]}"
+		if ! "${pip_check_args[@]}" >"$check_log" 2>"$check_err"; then
+			if [ "$check_baseline_failed" -eq 1 ] && file_lines_subset_of "$check_log" "$check_baseline_log"; then
+				warn "python: pip check still reports pre-existing issues after guarded upgrade"
+				if [ -s "$check_log" ]; then
+					cat "$check_log" >&"$HUMAN_FD"
+				fi
+				if [ -s "$check_err" ]; then
+					cat "$check_err" >&"$HUMAN_FD"
+				fi
+				rm -rf "$guard_log_dir"
+				return 0
+			fi
+			err "python: pip check failed after guarded upgrade"
+			if [ -s "$check_log" ]; then
+				cat "$check_log" >&"$HUMAN_FD"
+			fi
+			if [ -s "$check_err" ]; then
+				cat "$check_err" >&"$HUMAN_FD"
+			fi
+			rm -rf "$guard_log_dir"
+			return 1
+		fi
+		if [ -s "$check_log" ]; then
+			cat "$check_log" >&"$HUMAN_FD"
+		fi
+		if [ -s "$check_err" ]; then
+			cat "$check_err" >&"$HUMAN_FD"
+		fi
+
+		rm -rf "$guard_log_dir"
 		return 0
 	fi
 

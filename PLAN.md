@@ -246,8 +246,12 @@ This is the execution plan for shipping `updates` **v0.4.0**. It is a living che
 ### 3) Python hardening (PEP 668)
 
 - [x] Detect externally-managed Python environments.
-- [x] Default to `pip install --user` upgrades when externally-managed.
-- [x] Add an explicit opt-in flag to use `--break-system-packages`.
+- [x] Default to guarded `pip install --user` upgrades when externally-managed.
+- [x] Prune guarded user-site upgrades that would add packages absent from the user site, use source distributions, or violate installed dependency constraints.
+- [x] Re-check the guarded safe subset with a combined dry-run before installing.
+- [x] Treat remaining pre-existing `pip check` failures as guarded-run warnings.
+- [x] Check pip `--dry-run --report` support before guarded user-site upgrades.
+- [x] Add an explicit opt-in flag for system-scope `--break-system-packages`.
 - [x] Add/adjust tests to cover the new behavior.
 
 ### 4) Linux system package upgrades (minimal)
@@ -270,7 +274,7 @@ This is the execution plan for shipping `updates` **v0.4.0**. It is a living che
 
 - Linux module should **upgrade packages** (not just list them).
 - Homebrew can exist on Linux; `brew` module remains cross-platform (command-based).
-- PEP 668 default is **safe** (user-site upgrades); “break system packages” requires explicit opt-in.
+- PEP 668 default is **guarded** (user-site upgrades with wheel-only dry-run reports, dependency pruning, a combined safe-set dry-run, and `pip check`); system-scope “break system packages” requires explicit opt-in.
 
 ---
 
