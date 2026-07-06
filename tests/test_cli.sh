@@ -20,6 +20,10 @@ mkdir -p "$stub_bin"
 
 SYSTEM_NODE="$(command -v node 2>/dev/null || true)"
 SYSTEM_PYTHON3="$(command -v python3 2>/dev/null || true)"
+if [ -z "$SYSTEM_PYTHON3" ]; then
+	echo "python3 is required for tests/test_cli.sh" >&2
+	exit 1
+fi
 BASE_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH="${stub_bin}:${BASE_PATH}"
 export SYSTEM_PYTHON3
@@ -529,10 +533,6 @@ grep -q '^softwareupdate -l$' "$CALL_LOG"
 grep -q '^WARN: Homebrew cask upgrades may modify /Applications\.$' "$full_stderr"
 
 echo "Test: python guards externally-managed user-site upgrades"
-if [ -z "$SYSTEM_PYTHON3" ]; then
-	echo "python3 is required for guard helper tests" >&2
-	exit 1
-fi
 rm -f "${stub_bin}/py" "${stub_bin}/python3"
 
 python_site="${tmp_dir}/python-site"
@@ -638,6 +638,12 @@ JSON
 				exit 0
 				;;
 			"idna pyelftools")
+				if [ "${PYTHON_GUARD_COMBINED_CONFLICT:-0}" = "1" ]; then
+					cat >"$report" <<JSON
+{"install":[{"download_info":{"url":"https://example.invalid/idna-3.11-py3-none-any.whl"},"metadata":{"name":"idna","version":"3.11"}},{"download_info":{"url":"https://example.invalid/pyelftools-0.32-py3-none-any.whl"},"metadata":{"name":"pyelftools","version":"0.32"}},{"download_info":{"url":"https://example.invalid/unicorn-2.1.4-py3-none-any.whl"},"metadata":{"name":"unicorn","version":"2.1.4"}}]}
+JSON
+					exit 0
+				fi
 				cat >"$report" <<JSON
 {"install":[{"download_info":{"url":"https://example.invalid/idna-3.11-py3-none-any.whl"},"metadata":{"name":"idna","version":"3.11"}},{"download_info":{"url":"https://example.invalid/pyelftools-0.32-py3-none-any.whl"},"metadata":{"name":"pyelftools","version":"0.32"}}]}
 JSON
@@ -679,6 +685,21 @@ if grep -q '^python -m pip install -U --user --break-system-packages --only-bina
 	exit 1
 fi
 grep -q '^WARN: python: skipping unicorn: pwntools requires unicorn!=2\.1\.3,!=2\.1\.4,>=2\.0\.1, planned unicorn==2\.1\.4$' "$python_guard_stderr"
+
+echo "Test: python skips install when combined guard plan is unsafe"
+: >"$CALL_LOG"
+python_combined_stderr="${tmp_dir}/python-combined-stderr.log"
+PYTHON_GUARD_COMBINED_CONFLICT=1 PYTHONPATH="$python_site" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_combined_stderr"
+grep -Eq '^python -m pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report .+ idna pyelftools$' "$CALL_LOG"
+if grep -q '^python -m pip install -U --user --break-system-packages --only-binary=:all: idna pyelftools$' "$CALL_LOG"; then
+	echo "Expected guarded Python path to skip unsafe combined package set" >&2
+	exit 1
+fi
+if grep -q '^python -m pip check$' "$CALL_LOG"; then
+	echo "Expected guarded Python path to skip pip check when combined dry-run is unsafe" >&2
+	exit 1
+fi
+grep -q '^WARN: python: skipping guarded user-site install: pwntools requires unicorn!=2\.1\.3,!=2\.1\.4,>=2\.0\.1, planned unicorn==2\.1\.4$' "$python_combined_stderr"
 
 echo "Test: python break-system-packages opt-in (pip-force)"
 : >"$CALL_LOG"

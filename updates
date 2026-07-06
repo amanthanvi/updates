@@ -2396,13 +2396,19 @@ except Exception as exc:
     raise SystemExit(0)
 
 try:
-    from pip._vendor.packaging.markers import default_environment
-    from pip._vendor.packaging.requirements import Requirement
-    from pip._vendor.packaging.utils import canonicalize_name
-    from pip._vendor.packaging.version import InvalidVersion, Version
-except Exception as exc:
-    print("skip\tcannot inspect dependency constraints: %s" % exc)
-    raise SystemExit(0)
+    from packaging.markers import default_environment
+    from packaging.requirements import Requirement
+    from packaging.utils import canonicalize_name
+    from packaging.version import InvalidVersion, Version
+except Exception:
+    try:
+        from pip._vendor.packaging.markers import default_environment
+        from pip._vendor.packaging.requirements import Requirement
+        from pip._vendor.packaging.utils import canonicalize_name
+        from pip._vendor.packaging.version import InvalidVersion, Version
+    except Exception as exc:
+        print("skip\tcannot inspect dependency constraints: %s" % exc)
+        raise SystemExit(0)
 
 
 def version_satisfies(version, specifier):

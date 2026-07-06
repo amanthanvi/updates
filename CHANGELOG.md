@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- Guard Bash Python upgrades in PEP 668 externally-managed environments by dry-running wheel-only user-site plans, pruning unsafe packages, installing only the safe subset, and running `pip check`.
+- Guard Bash Python upgrades in PEP 668 externally-managed environments by dry-running wheel-only user-site plans, pruning unsafe packages, re-checking the safe subset in one combined dry-run, installing only that set, and running `pip check`. The guard now prefers public `packaging` APIs and falls back to pip's vendored copy only when needed.
 
 ## [2.0.2] - 2026-06-19
 
