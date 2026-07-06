@@ -2387,6 +2387,8 @@ python_guard_plan_decision() {
 
 	python_run_cmd - "$report_path" "$@" <<'PY'
 import json
+import os
+import site
 import sys
 from urllib.parse import urlparse
 
@@ -2424,6 +2426,34 @@ def version_satisfies(version, specifier):
         return False
 
 
+def normalize_path(path):
+    return os.path.normcase(os.path.realpath(os.path.abspath(str(path))))
+
+
+def user_site_roots():
+    try:
+        roots = site.getusersitepackages()
+    except Exception:
+        roots = []
+    if isinstance(roots, str):
+        roots = [roots]
+    return [normalize_path(root) for root in roots if root]
+
+
+def path_is_under(path, root):
+    path = normalize_path(path)
+    root = normalize_path(root)
+    return path == root or path.startswith(root + os.sep)
+
+
+def distribution_is_under(dist, roots):
+    try:
+        dist_root = dist.locate_file("")
+    except Exception:
+        return False
+    return any(path_is_under(dist_root, root) for root in roots)
+
+
 try:
     with open(report_path, encoding="utf-8") as fh:
         report = json.load(fh)
@@ -2431,14 +2461,24 @@ except Exception as exc:
     print("skip\tcannot parse pip dry-run report: %s" % exc)
     raise SystemExit(0)
 
+user_roots = user_site_roots()
+if not user_roots:
+    print("skip\tcannot inspect user-site packages")
+    raise SystemExit(0)
+
 installed = {}
+user_installed = {}
 requirements = []
 for dist in importlib_metadata.distributions():
     name = dist.metadata.get("Name")
     if not name:
         continue
     key = canonicalize_name(name)
-    installed.setdefault(key, str(dist.version))
+    in_user_site = distribution_is_under(dist, user_roots)
+    if key not in installed or in_user_site:
+        installed[key] = str(dist.version)
+    if in_user_site:
+        user_installed.setdefault(key, str(dist.version))
     for req_text in dist.requires or []:
         requirements.append((key, name, req_text))
 
@@ -2468,7 +2508,7 @@ if missing_requested:
     print("skip\tno install candidate in pip dry-run report: %s" % ", ".join(missing_requested))
     raise SystemExit(0)
 
-new_packages = sorted(key for key in planned if key not in installed)
+new_packages = sorted(key for key in planned if key not in user_installed)
 if new_packages:
     print("skip\twould install new package(s): %s" % ", ".join(new_packages))
     raise SystemExit(0)
@@ -3114,7 +3154,7 @@ module_python() {
 
 		local -a safe_packages=()
 		local decision status detail old_ifs
-		local report_path plan_log
+		local report_path plan_log install_log check_log
 		for pkg in "${packages[@]}"; do
 			report_path="${guard_log_dir}/${pkg}.json"
 			plan_log="${guard_log_dir}/${pkg}.log"
@@ -3185,18 +3225,32 @@ module_python() {
 		fi
 
 		log "Upgrading ${#safe_packages[@]} guarded Python packages..."
+		install_log="${guard_log_dir}/safe-set-install.log"
 		debug "+ ${pip_guard_install_args[*]} ${safe_packages[*]}"
-		if ! "${pip_guard_install_args[@]}" "${safe_packages[@]}"; then
+		if ! "${pip_guard_install_args[@]}" "${safe_packages[@]}" >"$install_log" 2>&1; then
 			err "python: pip upgrade failed: guarded user-site package set"
+			if [ -s "$install_log" ]; then
+				cat "$install_log" >&"$HUMAN_FD"
+			fi
 			rm -rf "$guard_log_dir"
 			return 1
 		fi
+		if [ -s "$install_log" ]; then
+			cat "$install_log" >&"$HUMAN_FD"
+		fi
 
+		check_log="${guard_log_dir}/pip-check.log"
 		debug "+ ${pip_check_args[*]}"
-		if ! "${pip_check_args[@]}"; then
+		if ! "${pip_check_args[@]}" >"$check_log" 2>&1; then
 			err "python: pip check failed after guarded upgrade"
+			if [ -s "$check_log" ]; then
+				cat "$check_log" >&"$HUMAN_FD"
+			fi
 			rm -rf "$guard_log_dir"
 			return 1
+		fi
+		if [ -s "$check_log" ]; then
+			cat "$check_log" >&"$HUMAN_FD"
 		fi
 
 		rm -rf "$guard_log_dir"

@@ -247,7 +247,7 @@ This is the execution plan for shipping `updates` **v0.4.0**. It is a living che
 
 - [x] Detect externally-managed Python environments.
 - [x] Default to guarded `pip install --user` upgrades when externally-managed.
-- [x] Prune guarded user-site upgrades that would add packages, use source distributions, or violate installed dependency constraints.
+- [x] Prune guarded user-site upgrades that would add packages absent from the user site, use source distributions, or violate installed dependency constraints.
 - [x] Re-check the guarded safe subset with a combined dry-run before installing.
 - [x] Add an explicit opt-in flag for system-scope `--break-system-packages`.
 - [x] Add/adjust tests to cover the new behavior.

@@ -544,8 +544,17 @@ grep -q '^WARN: Homebrew cask upgrades may modify /Applications\.$' "$full_stder
 echo "Test: python guards externally-managed user-site upgrades"
 rm -f "${stub_bin}/py" "${stub_bin}/python3"
 
-python_site="${tmp_dir}/python-site"
-mkdir -p "${python_site}/idna-3.1.dist-info" "${python_site}/pyelftools-0.31.dist-info" "${python_site}/unicorn-2.1.2.dist-info" "${python_site}/pwntools-4.15.0.dist-info"
+python_user_base="${tmp_dir}/python-userbase"
+python_site="$(
+	PYTHONUSERBASE="$python_user_base" "$SYSTEM_PYTHON3" - <<'PY'
+import site
+
+print(site.getusersitepackages())
+PY
+)"
+python_system_site="${tmp_dir}/python-system-site"
+python_path="${python_site}:${python_system_site}"
+mkdir -p "${python_site}/idna-3.1.dist-info" "${python_site}/pyelftools-0.31.dist-info" "${python_site}/unicorn-2.1.2.dist-info" "${python_site}/pwntools-4.15.0.dist-info" "${python_system_site}/chardet-5.2.0.dist-info"
 cat >"${python_site}/idna-3.1.dist-info/METADATA" <<'EOF'
 Metadata-Version: 2.1
 Name: idna
@@ -566,6 +575,11 @@ Metadata-Version: 2.1
 Name: pwntools
 Version: 4.15.0
 Requires-Dist: unicorn!=2.1.3,!=2.1.4,>=2.0.1
+EOF
+cat >"${python_system_site}/chardet-5.2.0.dist-info/METADATA" <<'EOF'
+Metadata-Version: 2.1
+Name: chardet
+Version: 5.2.0
 EOF
 
 # shellcheck disable=SC2016
@@ -632,10 +646,16 @@ if [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
 				;;
 			esac
 		done
-		if [ "$dry_run" -eq 1 ]; then
-			case "$pkgs" in
-			idna)
-				cat >"$report" <<JSON
+			if [ "$dry_run" -eq 1 ]; then
+				case "$pkgs" in
+				idna)
+					if [ "${PYTHON_GUARD_SYSTEM_ONLY_DEP:-0}" = "1" ]; then
+						cat >"$report" <<JSON
+{"install":[{"download_info":{"url":"https://example.invalid/idna-3.11-py3-none-any.whl"},"metadata":{"name":"idna","version":"3.11","requires_dist":["chardet>=5"]}},{"download_info":{"url":"https://example.invalid/chardet-5.2.0-py3-none-any.whl"},"metadata":{"name":"chardet","version":"5.2.0"}}]}
+JSON
+						exit 0
+					fi
+					cat >"$report" <<JSON
 {"install":[{"download_info":{"url":"https://example.invalid/idna-3.11-py3-none-any.whl"},"metadata":{"name":"idna","version":"3.11"}}]}
 JSON
 				exit 0
@@ -665,19 +685,21 @@ JSON
 				exit 0
 				;;
 			esac
-			echo "unexpected dry-run package set: $pkgs" >&2
-			exit 1
-		fi
-		exit 0
-		;;
-	check)
-		if [ "$#" -eq 0 ]; then
-			echo "python -m pip check" >>"$CALL_LOG"
-		else
-			echo "python -m pip check $*" >>"$CALL_LOG"
-		fi
-		exit 0
-		;;
+				echo "unexpected dry-run package set: $pkgs" >&2
+				exit 1
+			fi
+			echo "pip install human stdout"
+			exit 0
+			;;
+		check)
+			if [ "$#" -eq 0 ]; then
+				echo "python -m pip check" >>"$CALL_LOG"
+			else
+				echo "python -m pip check $*" >>"$CALL_LOG"
+			fi
+			echo "pip check human stdout"
+			exit 0
+			;;
 	esac
 fi
 
@@ -687,7 +709,7 @@ exit 1
 
 : >"$CALL_LOG"
 python_guard_stderr="${tmp_dir}/python-guard-stderr.log"
-PYTHONPATH="$python_site" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_guard_stderr"
+PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_guard_stderr"
 grep -q '^python -m pip list --outdated --format=json --user$' "$CALL_LOG"
 grep -Eq '^python -m pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report .+ idna$' "$CALL_LOG"
 grep -Eq '^python -m pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report .+ pyelftools$' "$CALL_LOG"
@@ -701,10 +723,43 @@ if grep -q '^python -m pip install -U --user --break-system-packages --only-bina
 fi
 grep -q '^WARN: python: skipping unicorn: pwntools requires unicorn!=2\.1\.3,!=2\.1\.4,>=2\.0\.1, planned unicorn==2\.1\.4$' "$python_guard_stderr"
 
+echo "Test: python guarded user-site keeps JSON stdout JSONL-only"
+: >"$CALL_LOG"
+python_guard_json_stdout="${tmp_dir}/python-guard-json-stdout.log"
+python_guard_json_stderr="${tmp_dir}/python-guard-json-stderr.log"
+PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --json --no-emoji >"$python_guard_json_stdout" 2>"$python_guard_json_stderr"
+"$SYSTEM_PYTHON3" - "$python_guard_json_stdout" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    lines = [line for line in fh.read().splitlines() if line]
+assert lines, "expected JSONL stdout"
+for line in lines:
+    json.loads(line)
+PY
+if grep -Eq 'pip (install|check) human stdout' "$python_guard_json_stdout"; then
+	echo "Expected guarded Python JSON stdout to contain only JSONL" >&2
+	exit 1
+fi
+grep -q '^pip install human stdout$' "$python_guard_json_stderr"
+grep -q '^pip check human stdout$' "$python_guard_json_stderr"
+
+echo "Test: python guarded user-site skips system-only dependency installs"
+: >"$CALL_LOG"
+python_system_dep_stderr="${tmp_dir}/python-system-dep-stderr.log"
+PYTHON_GUARD_SYSTEM_ONLY_DEP=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_system_dep_stderr"
+grep -q '^WARN: python: skipping idna: would install new package(s): chardet$' "$python_system_dep_stderr"
+grep -q '^python -m pip install -U --user --break-system-packages --only-binary=:all: pyelftools$' "$CALL_LOG"
+if grep -q '^python -m pip install -U --user --break-system-packages --only-binary=:all: idna$' "$CALL_LOG"; then
+	echo "Expected guarded Python path to skip idna when its dependency is system-only" >&2
+	exit 1
+fi
+
 echo "Test: python guarded user-site omits break-system flag when pip lacks it"
 : >"$CALL_LOG"
 python_no_break_stderr="${tmp_dir}/python-no-break-stderr.log"
-PYTHON_GUARD_NO_BREAK_HELP=1 PYTHONPATH="$python_site" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_no_break_stderr"
+PYTHON_GUARD_NO_BREAK_HELP=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_no_break_stderr"
 grep -Eq '^python -m pip install -U --user --only-binary=:all: --dry-run --report .+ idna$' "$CALL_LOG"
 grep -Eq '^python -m pip install -U --user --only-binary=:all: --dry-run --report .+ idna pyelftools$' "$CALL_LOG"
 grep -q '^python -m pip install -U --user --only-binary=:all: idna pyelftools$' "$CALL_LOG"
@@ -716,7 +771,7 @@ fi
 echo "Test: python skips install when combined guard plan is unsafe"
 : >"$CALL_LOG"
 python_combined_stderr="${tmp_dir}/python-combined-stderr.log"
-PYTHON_GUARD_COMBINED_CONFLICT=1 PYTHONPATH="$python_site" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_combined_stderr"
+PYTHON_GUARD_COMBINED_CONFLICT=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_combined_stderr"
 grep -Eq '^python -m pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report .+ idna pyelftools$' "$CALL_LOG"
 if grep -q '^python -m pip install -U --user --break-system-packages --only-binary=:all: idna pyelftools$' "$CALL_LOG"; then
 	echo "Expected guarded Python path to skip unsafe combined package set" >&2
