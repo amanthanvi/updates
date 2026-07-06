@@ -554,7 +554,7 @@ PY
 )"
 python_system_site="${tmp_dir}/python-system-site"
 python_path="${python_site}:${python_system_site}"
-mkdir -p "${python_site}/idna-3.1.dist-info" "${python_site}/pyelftools-0.31.dist-info" "${python_site}/unicorn-2.1.2.dist-info" "${python_site}/pwntools-4.15.0.dist-info" "${python_system_site}/chardet-5.2.0.dist-info"
+mkdir -p "${python_site}/idna-3.1.dist-info" "${python_site}/pyelftools-0.31.dist-info" "${python_site}/unicorn-2.1.2.dist-info" "${python_site}/pwntools-4.15.0.dist-info" "${python_site}/legacyowner-1.0.dist-info" "${python_site}/legacydep-1.0.dist-info" "${python_system_site}/chardet-5.2.0.dist-info"
 cat >"${python_site}/idna-3.1.dist-info/METADATA" <<'EOF'
 Metadata-Version: 2.1
 Name: idna
@@ -575,6 +575,17 @@ Metadata-Version: 2.1
 Name: pwntools
 Version: 4.15.0
 Requires-Dist: unicorn!=2.1.3,!=2.1.4,>=2.0.1
+EOF
+cat >"${python_site}/legacyowner-1.0.dist-info/METADATA" <<'EOF'
+Metadata-Version: 2.1
+Name: legacyowner
+Version: 1.0
+Requires-Dist: legacydep<2
+EOF
+cat >"${python_site}/legacydep-1.0.dist-info/METADATA" <<'EOF'
+Metadata-Version: 2.1
+Name: legacydep
+Version: 1.0
 EOF
 cat >"${python_system_site}/chardet-5.2.0.dist-info/METADATA" <<'EOF'
 Metadata-Version: 2.1
@@ -618,12 +629,16 @@ if [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
 			fi
 			exit 0
 	fi
-	case "$cmd" in
-	list)
-		echo "python -m pip list $*" >>"$CALL_LOG"
-		echo "[{\"name\":\"idna\",\"version\":\"3.1\",\"latest_version\":\"3.11\"},{\"name\":\"pyelftools\",\"version\":\"0.31\",\"latest_version\":\"0.32\"},{\"name\":\"unicorn\",\"version\":\"2.1.2\",\"latest_version\":\"2.1.4\"}]"
-		exit 0
-		;;
+		case "$cmd" in
+		list)
+			echo "python -m pip list $*" >>"$CALL_LOG"
+			if [ "${PYTHON_GUARD_PLANNED_OWNER_CONFLICT:-0}" = "1" ]; then
+				echo "[{\"name\":\"legacyowner\",\"version\":\"1.0\",\"latest_version\":\"2.0\"},{\"name\":\"legacydep\",\"version\":\"1.0\",\"latest_version\":\"2.0\"}]"
+				exit 0
+			fi
+			echo "[{\"name\":\"idna\",\"version\":\"3.1\",\"latest_version\":\"3.11\"},{\"name\":\"pyelftools\",\"version\":\"0.31\",\"latest_version\":\"0.32\"},{\"name\":\"unicorn\",\"version\":\"2.1.2\",\"latest_version\":\"2.1.4\"}]"
+			exit 0
+			;;
 	install)
 		echo "python -m pip install $*" >>"$CALL_LOG"
 		dry_run=0
@@ -670,15 +685,27 @@ JSON
 JSON
 				exit 0
 				;;
-			unicorn)
-				cat >"$report" <<JSON
+				unicorn)
+					cat >"$report" <<JSON
 {"install":[{"download_info":{"url":"https://example.invalid/unicorn-2.1.4-py3-none-any.whl"},"metadata":{"name":"unicorn","version":"2.1.4"}}]}
 JSON
-				exit 0
-				;;
-			"idna pyelftools")
-				if [ "${PYTHON_GUARD_COMBINED_CONFLICT:-0}" = "1" ]; then
+					exit 0
+					;;
+				legacyowner)
 					cat >"$report" <<JSON
+{"install":[{"download_info":{"url":"https://example.invalid/legacyowner-2.0-py3-none-any.whl"},"metadata":{"name":"legacyowner","version":"2.0","requires_dist":["legacydep>=2"]}},{"download_info":{"url":"https://example.invalid/legacydep-2.0-py3-none-any.whl"},"metadata":{"name":"legacydep","version":"2.0"}}]}
+JSON
+					exit 0
+					;;
+				legacydep)
+					cat >"$report" <<JSON
+{"install":[{"download_info":{"url":"https://example.invalid/legacydep-2.0-py3-none-any.whl"},"metadata":{"name":"legacydep","version":"2.0"}}]}
+JSON
+					exit 0
+					;;
+				"idna pyelftools")
+					if [ "${PYTHON_GUARD_COMBINED_CONFLICT:-0}" = "1" ]; then
+						cat >"$report" <<JSON
 {"install":[{"download_info":{"url":"https://example.invalid/idna-3.11-py3-none-any.whl"},"metadata":{"name":"idna","version":"3.11"}},{"download_info":{"url":"https://example.invalid/pyelftools-0.32-py3-none-any.whl"},"metadata":{"name":"pyelftools","version":"0.32"}},{"download_info":{"url":"https://example.invalid/unicorn-2.1.4-py3-none-any.whl"},"metadata":{"name":"unicorn","version":"2.1.4"}}]}
 JSON
 					exit 0
@@ -686,9 +713,9 @@ JSON
 				cat >"$report" <<JSON
 {"install":[{"download_info":{"url":"https://example.invalid/idna-3.11-py3-none-any.whl"},"metadata":{"name":"idna","version":"3.11"}},{"download_info":{"url":"https://example.invalid/pyelftools-0.32-py3-none-any.whl"},"metadata":{"name":"pyelftools","version":"0.32"}}]}
 JSON
-				exit 0
-				;;
-			esac
+					exit 0
+					;;
+				esac
 				echo "unexpected dry-run package set: $pkgs" >&2
 				exit 1
 			fi
@@ -730,6 +757,23 @@ if grep -q '^python -m pip install -U --user --break-system-packages --only-bina
 	exit 1
 fi
 grep -q '^WARN: python: skipping unicorn: pwntools requires unicorn!=2\.1\.3,!=2\.1\.4,>=2\.0\.1, planned unicorn==2\.1\.4$' "$python_guard_stderr"
+
+echo "Test: python guarded user-site ignores superseded planned-owner requirements"
+: >"$CALL_LOG"
+python_planned_owner_stderr="${tmp_dir}/python-planned-owner-stderr.log"
+PYTHON_GUARD_PLANNED_OWNER_CONFLICT=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_planned_owner_stderr"
+grep -Eq '^python -m pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report .+ legacyowner$' "$CALL_LOG"
+grep -Eq '^python -m pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report .+ legacydep$' "$CALL_LOG"
+grep -q '^python -m pip install -U --user --break-system-packages --only-binary=:all: legacyowner$' "$CALL_LOG"
+grep -q '^WARN: python: skipping legacydep: legacyowner requires legacydep<2, planned legacydep==2\.0$' "$python_planned_owner_stderr"
+if grep -q '^WARN: python: skipping legacyowner:' "$python_planned_owner_stderr"; then
+	echo "Expected guarded Python path to ignore old requirements for packages being upgraded" >&2
+	exit 1
+fi
+if grep -q '^python -m pip install -U --user --break-system-packages --only-binary=:all: legacydep$' "$CALL_LOG"; then
+	echo "Expected guarded Python path to install legacydep only through legacyowner plan" >&2
+	exit 1
+fi
 
 echo "Test: python guarded user-site keeps JSON stdout JSONL-only"
 : >"$CALL_LOG"

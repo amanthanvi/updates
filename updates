@@ -2560,7 +2560,10 @@ def conflict_for_requirement(owner_key, owner_name, req_text):
     return None
 
 
-for owner_key, owner_name, req_text in requirements + planned_requirements:
+active_requirements = [
+    item for item in requirements if item[0] not in planned
+] + planned_requirements
+for owner_key, owner_name, req_text in active_requirements:
     conflict = conflict_for_requirement(owner_key, owner_name, req_text)
     if conflict:
         print("skip\t%s" % conflict)
