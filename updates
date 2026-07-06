@@ -3110,7 +3110,7 @@ module_python() {
 				return 1
 			fi
 			warn "python: skipping guarded user-site upgrades: pip does not support --dry-run --report"
-			return 0
+			return 2
 		fi
 		pip_guard_install_args=("${pip_install_args[@]}")
 		if python_pip_supports_break_system_packages; then

@@ -794,6 +794,19 @@ if grep -q -- '--dry-run --report' "$CALL_LOG"; then
 	exit 1
 fi
 
+echo "Test: python guarded user-site skips when pip lacks dry-run reports outside --only"
+: >"$CALL_LOG"
+python_no_report_skip_stderr="${tmp_dir}/python-no-report-skip-stderr.log"
+python_no_report_skip_out="$(
+	PYTHON_GUARD_NO_REPORT_HELP=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --skip brew,shell,linux,node,uv,mas,pipx,rustup,claude,mise,go,macos,repos,bun,pi --no-emoji --no-color 2>"$python_no_report_skip_stderr"
+)"
+echo "$python_no_report_skip_out" | grep -q '^==> python END (SKIP)'
+grep -q '^WARN: python: skipping guarded user-site upgrades: pip does not support --dry-run --report$' "$python_no_report_skip_stderr"
+if grep -q -- '--dry-run --report' "$CALL_LOG"; then
+	echo "Expected non-only guarded Python path to skip before dry-run reports when pip lacks --report" >&2
+	exit 1
+fi
+
 echo "Test: python guarded user-site omits break-system flag when pip lacks it"
 : >"$CALL_LOG"
 python_no_break_stderr="${tmp_dir}/python-no-break-stderr.log"
