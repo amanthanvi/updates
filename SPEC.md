@@ -488,7 +488,7 @@ Purpose: upgrade global Python packages with `pip`.
 - `--pip-force`: skips the guarded user-site fallback and passes `--break-system-packages` to system-scope pip installs.
 - Non-dry-run:
   - Bash implementation, normal or `--pip-force`: `<launcher> -m pip list --outdated --format=json [--user]`, then `<launcher> -m pip install -U <pkg>` in parallel batches of `--parallel <N>`.
-  - Bash implementation, externally-managed default: `<launcher> -m pip list --outdated --format=json --user`, then per-package `pip install -U --user --break-system-packages --only-binary=:all: --dry-run --report <report> <pkg>` guard checks. Packages are skipped if the report would install new packages, use source distributions, or violate installed/planned dependency requirements. The safe subset is checked again in one combined dry-run, installed in one wheel-only user-site transaction only if that combined plan is safe, then `pip check` runs.
+  - Bash implementation, externally-managed default: `<launcher> -m pip list --outdated --format=json --user`, then per-package `pip install -U --user [--break-system-packages if supported] --only-binary=:all: --dry-run --report <report> <pkg>` guard checks. Packages are skipped if the report would install new packages, use source distributions, or violate installed/planned dependency requirements. The safe subset is checked again in one combined dry-run, installed in one wheel-only user-site transaction only if that combined plan is safe, then `pip check` runs.
   - Native Windows PowerShell implementation: same discovery/install flow as the normal path, but upgrades run sequentially and `--parallel <N>` is rejected.
 - With `-n`: adds `--no-input` to pip calls.
 - Side effects: upgrades Python packages; does not upgrade the Python interpreter itself.
@@ -733,7 +733,7 @@ Ship all v1.0 features (config file, `--json`, new modules, `--brew-mode`, `--lo
 ### 14.1 Lint / test commands
 
 - Lint: `./scripts/lint.sh` (runs `bash -n`, `shellcheck`, `shfmt -d`).
-- Tests: `./scripts/test.sh` (runs `./tests/test_cli.sh`; requires `python3`).
+- Tests: `./scripts/test.sh` (runs `./tests/test_cli.sh`; requires `python3` with public `packaging` or pip's vendored packaging module available).
 - Tests use temporary `PATH` stubs to avoid modifying the developer's machine.
 
 ### 14.2 Test plan

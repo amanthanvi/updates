@@ -148,7 +148,7 @@ Install what you actually use:
 
 ## Development
 
-Tests require `python3`; lint additionally requires `shellcheck` and `shfmt`.
+Tests require `python3` with either public `packaging` or pip's vendored packaging module available; lint additionally requires `shellcheck` and `shfmt`.
 
 ```bash
 ./scripts/lint.sh
@@ -168,7 +168,7 @@ Tests require `python3`; lint additionally requires `shellcheck` and `shfmt`.
 - On macOS, Homebrew casks are disabled by default; enable with `--brew-mode casks` or `--brew-mode greedy` (or `--full`). On macOS 26+, cask upgrades may be blocked unless your terminal app is allowed under **Privacy & Security → App Management** (e.g. Ghostty). If you see a system notification like “\<Terminal App\> tried modifying your system…”, enable App Management or rerun with `--brew-mode formula`.
 - On WSL, updates apply to the Linux distro; native Windows updates require the native Windows entrypoints.
 - Output uses ANSI colors when run in a TTY; disable with `--no-color` or `NO_COLOR=1`. When `--log-file` is used, colors are disabled to keep logs clean.
-- If Python is externally-managed (PEP 668), Bash runs a guarded user-site upgrade by default: it lists user packages, dry-runs wheel-only plans, skips packages that would add new packages, use source distributions, or violate installed requirements, re-checks the safe subset in one combined dry-run, installs only that set, then runs `pip check`. `--pip-force` skips that guard and uses pip's system-protection override (dangerous).
+- If Python is externally-managed (PEP 668), Bash runs a guarded user-site upgrade by default: it lists user packages, dry-runs wheel-only plans, skips packages that would add new packages, use source distributions, or violate installed requirements, re-checks the safe subset in one combined dry-run, installs only that set, then runs `pip check`. Guarded pip calls include `--break-system-packages` only when pip supports it. `--pip-force` skips the guard and uses pip's system-protection override (dangerous).
 
 ## Contributing
 

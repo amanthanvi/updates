@@ -2377,6 +2377,10 @@ python_externally_managed() {
 	[ "$out" = "1" ]
 }
 
+python_pip_supports_break_system_packages() {
+	python_run_cmd -m pip install --help 2>/dev/null | grep -q -- '--break-system-packages'
+}
+
 python_guard_plan_decision() {
 	local report_path="$1"
 	shift
@@ -3051,7 +3055,11 @@ module_python() {
 	local -a pip_guard_install_args=()
 	local -a pip_check_args=()
 	if [ "$use_user" -eq 1 ]; then
-		pip_guard_install_args=("${pip_install_args[@]}" --break-system-packages --only-binary=:all:)
+		pip_guard_install_args=("${pip_install_args[@]}")
+		if python_pip_supports_break_system_packages; then
+			pip_guard_install_args+=(--break-system-packages)
+		fi
+		pip_guard_install_args+=(--only-binary=:all:)
 		pip_check_args=("${python_args[@]}" -m pip --disable-pip-version-check check)
 	fi
 

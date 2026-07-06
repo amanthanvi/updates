@@ -24,6 +24,15 @@ if [ -z "$SYSTEM_PYTHON3" ]; then
 	echo "python3 is required for tests/test_cli.sh" >&2
 	exit 1
 fi
+if ! "$SYSTEM_PYTHON3" - <<'PY' >/dev/null 2>&1; then
+try:
+    import packaging.requirements
+except Exception:
+    import pip._vendor.packaging.requirements
+PY
+	echo "python3 with packaging or pip vendored packaging is required for guard helper tests" >&2
+	exit 1
+fi
 BASE_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH="${stub_bin}:${BASE_PATH}"
 export SYSTEM_PYTHON3
@@ -585,6 +594,12 @@ if [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
 	fi
 	cmd="${1:-}"
 	shift || true
+	if [ "$cmd" = "install" ] && [ "${1:-}" = "--help" ]; then
+		if [ "${PYTHON_GUARD_NO_BREAK_HELP:-0}" != "1" ]; then
+			echo "  --break-system-packages"
+		fi
+		exit 0
+	fi
 	case "$cmd" in
 	list)
 		echo "python -m pip list $*" >>"$CALL_LOG"
@@ -685,6 +700,18 @@ if grep -q '^python -m pip install -U --user --break-system-packages --only-bina
 	exit 1
 fi
 grep -q '^WARN: python: skipping unicorn: pwntools requires unicorn!=2\.1\.3,!=2\.1\.4,>=2\.0\.1, planned unicorn==2\.1\.4$' "$python_guard_stderr"
+
+echo "Test: python guarded user-site omits break-system flag when pip lacks it"
+: >"$CALL_LOG"
+python_no_break_stderr="${tmp_dir}/python-no-break-stderr.log"
+PYTHON_GUARD_NO_BREAK_HELP=1 PYTHONPATH="$python_site" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_no_break_stderr"
+grep -Eq '^python -m pip install -U --user --only-binary=:all: --dry-run --report .+ idna$' "$CALL_LOG"
+grep -Eq '^python -m pip install -U --user --only-binary=:all: --dry-run --report .+ idna pyelftools$' "$CALL_LOG"
+grep -q '^python -m pip install -U --user --only-binary=:all: idna pyelftools$' "$CALL_LOG"
+if grep -q -- '--break-system-packages' "$CALL_LOG"; then
+	echo "Expected guarded Python path to omit unsupported --break-system-packages" >&2
+	exit 1
+fi
 
 echo "Test: python skips install when combined guard plan is unsafe"
 : >"$CALL_LOG"
