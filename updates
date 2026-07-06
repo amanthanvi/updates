@@ -3154,7 +3154,8 @@ module_python() {
 
 		local -a safe_packages=()
 		local decision status detail old_ifs
-		local report_path plan_log install_log check_log
+		local report_path plan_log install_log check_baseline_log check_log
+		local check_baseline_failed
 		for pkg in "${packages[@]}"; do
 			report_path="${guard_log_dir}/${pkg}.json"
 			plan_log="${guard_log_dir}/${pkg}.log"
@@ -3224,6 +3225,13 @@ module_python() {
 			return 0
 		fi
 
+		check_baseline_log="${guard_log_dir}/pip-check-before.log"
+		check_baseline_failed=0
+		debug "+ ${pip_check_args[*]}"
+		if ! "${pip_check_args[@]}" >"$check_baseline_log" 2>&1; then
+			check_baseline_failed=1
+		fi
+
 		log "Upgrading ${#safe_packages[@]} guarded Python packages..."
 		install_log="${guard_log_dir}/safe-set-install.log"
 		debug "+ ${pip_guard_install_args[*]} ${safe_packages[*]}"
@@ -3242,6 +3250,14 @@ module_python() {
 		check_log="${guard_log_dir}/pip-check.log"
 		debug "+ ${pip_check_args[*]}"
 		if ! "${pip_check_args[@]}" >"$check_log" 2>&1; then
+			if [ "$check_baseline_failed" -eq 1 ] && cmp -s "$check_baseline_log" "$check_log"; then
+				warn "python: pip check still reports pre-existing issues after guarded upgrade"
+				if [ -s "$check_log" ]; then
+					cat "$check_log" >&"$HUMAN_FD"
+				fi
+				rm -rf "$guard_log_dir"
+				return 0
+			fi
 			err "python: pip check failed after guarded upgrade"
 			if [ -s "$check_log" ]; then
 				cat "$check_log" >&"$HUMAN_FD"

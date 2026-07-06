@@ -697,6 +697,10 @@ JSON
 			else
 				echo "python -m pip check $*" >>"$CALL_LOG"
 			fi
+			if [ "${PYTHON_GUARD_CHECK_FAIL:-0}" = "1" ]; then
+				echo "pre-existing system package conflict"
+				exit 1
+			fi
 			echo "pip check human stdout"
 			exit 0
 			;;
@@ -753,6 +757,19 @@ grep -q '^WARN: python: skipping idna: would install new package(s): chardet$' "
 grep -q '^python -m pip install -U --user --break-system-packages --only-binary=:all: pyelftools$' "$CALL_LOG"
 if grep -q '^python -m pip install -U --user --break-system-packages --only-binary=:all: idna$' "$CALL_LOG"; then
 	echo "Expected guarded Python path to skip idna when its dependency is system-only" >&2
+	exit 1
+fi
+
+echo "Test: python guarded user-site tolerates pre-existing pip check failures"
+: >"$CALL_LOG"
+python_check_stdout="${tmp_dir}/python-check-stdout.log"
+python_check_stderr="${tmp_dir}/python-check-stderr.log"
+PYTHON_GUARD_CHECK_FAIL=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >"$python_check_stdout" 2>"$python_check_stderr"
+grep -q '^WARN: python: pip check still reports pre-existing issues after guarded upgrade$' "$python_check_stderr"
+grep -q '^pre-existing system package conflict$' "$python_check_stdout"
+check_count="$(grep -c '^python -m pip check$' "$CALL_LOG")"
+if [ "$check_count" -ne 2 ]; then
+	echo "Expected guarded Python path to run pip check before and after install" >&2
 	exit 1
 fi
 
