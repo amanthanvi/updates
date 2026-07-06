@@ -732,6 +732,21 @@ JSON
 				echo "pre-existing system package conflict"
 				exit 1
 			fi
+			if [ "${PYTHON_GUARD_CHECK_PARTIAL_FIX:-0}" = "1" ]; then
+				check_count=0
+				if [ -n "${PYTHON_GUARD_CHECK_STATE:-}" ] && [ -f "$PYTHON_GUARD_CHECK_STATE" ]; then
+					check_count="$(cat "$PYTHON_GUARD_CHECK_STATE")"
+				fi
+				check_count=$((check_count + 1))
+				if [ -n "${PYTHON_GUARD_CHECK_STATE:-}" ]; then
+					echo "$check_count" >"$PYTHON_GUARD_CHECK_STATE"
+				fi
+				echo "pre-existing system package conflict"
+				if [ "$check_count" -eq 1 ]; then
+					echo "pre-existing package conflict resolved by upgrade"
+				fi
+				exit 1
+			fi
 			echo "pip check human stdout"
 			exit 0
 			;;
@@ -818,6 +833,25 @@ grep -q '^pre-existing system package conflict$' "$python_check_stdout"
 check_count="$(grep -c '^python -m pip check$' "$CALL_LOG")"
 if [ "$check_count" -ne 2 ]; then
 	echo "Expected guarded Python path to run pip check before and after install" >&2
+	exit 1
+fi
+
+echo "Test: python guarded user-site tolerates partially fixed pip check failures"
+: >"$CALL_LOG"
+python_partial_check_stdout="${tmp_dir}/python-partial-check-stdout.log"
+python_partial_check_stderr="${tmp_dir}/python-partial-check-stderr.log"
+python_partial_check_state="${tmp_dir}/python-partial-check-state"
+rm -f "$python_partial_check_state"
+PYTHON_GUARD_CHECK_PARTIAL_FIX=1 PYTHON_GUARD_CHECK_STATE="$python_partial_check_state" PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >"$python_partial_check_stdout" 2>"$python_partial_check_stderr"
+grep -q '^WARN: python: pip check still reports pre-existing issues after guarded upgrade$' "$python_partial_check_stderr"
+grep -q '^pre-existing system package conflict$' "$python_partial_check_stdout"
+if grep -q '^pre-existing package conflict resolved by upgrade$' "$python_partial_check_stdout"; then
+	echo "Expected guarded Python path to report only remaining pip check failures" >&2
+	exit 1
+fi
+check_count="$(grep -c '^python -m pip check$' "$CALL_LOG")"
+if [ "$check_count" -ne 2 ]; then
+	echo "Expected guarded Python path to run pip check before and after partial fix" >&2
 	exit 1
 fi
 

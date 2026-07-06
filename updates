@@ -2390,6 +2390,28 @@ python_pip_supports_guard_reports() {
 	printf '%s\n' "$help" | grep -q -- '--report'
 }
 
+file_lines_subset_of() {
+	local subset_file="$1"
+	local superset_file="$2"
+
+	awk '
+		NR == FNR {
+			seen[$0]++
+			next
+		}
+		{
+			needed[$0]++
+		}
+		END {
+			for (line in needed) {
+				if (needed[line] > seen[line]) {
+					exit 1
+				}
+			}
+		}
+	' "$superset_file" "$subset_file"
+}
+
 python_guard_plan_decision() {
 	local report_path="$1"
 	shift
@@ -3270,7 +3292,7 @@ module_python() {
 		check_log="${guard_log_dir}/pip-check.log"
 		debug "+ ${pip_check_args[*]}"
 		if ! "${pip_check_args[@]}" >"$check_log" 2>&1; then
-			if [ "$check_baseline_failed" -eq 1 ] && cmp -s "$check_baseline_log" "$check_log"; then
+			if [ "$check_baseline_failed" -eq 1 ] && file_lines_subset_of "$check_log" "$check_baseline_log"; then
 				warn "python: pip check still reports pre-existing issues after guarded upgrade"
 				if [ -s "$check_log" ]; then
 					cat "$check_log" >&"$HUMAN_FD"
