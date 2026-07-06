@@ -608,11 +608,15 @@ if [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
 	fi
 	cmd="${1:-}"
 	shift || true
-	if [ "$cmd" = "install" ] && [ "${1:-}" = "--help" ]; then
-		if [ "${PYTHON_GUARD_NO_BREAK_HELP:-0}" != "1" ]; then
-			echo "  --break-system-packages"
-		fi
-		exit 0
+		if [ "$cmd" = "install" ] && [ "${1:-}" = "--help" ]; then
+			echo "  --dry-run"
+			if [ "${PYTHON_GUARD_NO_REPORT_HELP:-0}" != "1" ]; then
+				echo "  --report <file>"
+			fi
+			if [ "${PYTHON_GUARD_NO_BREAK_HELP:-0}" != "1" ]; then
+				echo "  --break-system-packages"
+			fi
+			exit 0
 	fi
 	case "$cmd" in
 	list)
@@ -770,6 +774,23 @@ grep -q '^pre-existing system package conflict$' "$python_check_stdout"
 check_count="$(grep -c '^python -m pip check$' "$CALL_LOG")"
 if [ "$check_count" -ne 2 ]; then
 	echo "Expected guarded Python path to run pip check before and after install" >&2
+	exit 1
+fi
+
+echo "Test: python guarded user-site errors when pip lacks dry-run reports"
+: >"$CALL_LOG"
+python_no_report_stderr="${tmp_dir}/python-no-report-stderr.log"
+set +e
+PYTHON_GUARD_NO_REPORT_HELP=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_no_report_stderr"
+no_report_status=$?
+set -e
+if [ "$no_report_status" -eq 0 ]; then
+	echo "Expected guarded Python path to fail in --only mode when pip lacks --report" >&2
+	exit 1
+fi
+grep -q '^ERROR: python: pip is too old for guarded user-site upgrades (--dry-run --report required)$' "$python_no_report_stderr"
+if grep -q -- '--dry-run --report' "$CALL_LOG"; then
+	echo "Expected guarded Python path to stop before dry-run reports when pip lacks --report" >&2
 	exit 1
 fi
 

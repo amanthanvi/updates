@@ -2381,6 +2381,15 @@ python_pip_supports_break_system_packages() {
 	python_run_cmd -m pip install --help 2>/dev/null | grep -q -- '--break-system-packages'
 }
 
+python_pip_supports_guard_reports() {
+	local help
+	if ! help="$(python_run_cmd -m pip install --help 2>/dev/null)"; then
+		return 1
+	fi
+	printf '%s\n' "$help" | grep -q -- '--dry-run' || return 1
+	printf '%s\n' "$help" | grep -q -- '--report'
+}
+
 python_guard_plan_decision() {
 	local report_path="$1"
 	shift
@@ -3095,6 +3104,14 @@ module_python() {
 	local -a pip_guard_install_args=()
 	local -a pip_check_args=()
 	if [ "$use_user" -eq 1 ]; then
+		if ! python_pip_supports_guard_reports; then
+			if missing_dependency_is_error; then
+				err "python: pip is too old for guarded user-site upgrades (--dry-run --report required)"
+				return 1
+			fi
+			warn "python: skipping guarded user-site upgrades: pip does not support --dry-run --report"
+			return 0
+		fi
 		pip_guard_install_args=("${pip_install_args[@]}")
 		if python_pip_supports_break_system_packages; then
 			pip_guard_install_args+=(--break-system-packages)

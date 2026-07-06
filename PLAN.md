@@ -250,6 +250,7 @@ This is the execution plan for shipping `updates` **v0.4.0**. It is a living che
 - [x] Prune guarded user-site upgrades that would add packages absent from the user site, use source distributions, or violate installed dependency constraints.
 - [x] Re-check the guarded safe subset with a combined dry-run before installing.
 - [x] Treat unchanged pre-existing `pip check` failures as guarded-run warnings.
+- [x] Check pip `--dry-run --report` support before guarded user-site upgrades.
 - [x] Add an explicit opt-in flag for system-scope `--break-system-packages`.
 - [x] Add/adjust tests to cover the new behavior.
 
