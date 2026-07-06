@@ -741,6 +741,9 @@ JSON
 				if [ -n "${PYTHON_GUARD_CHECK_STATE:-}" ]; then
 					echo "$check_count" >"$PYTHON_GUARD_CHECK_STATE"
 				fi
+				if [ "${PYTHON_GUARD_CHECK_VOLATILE_STDERR:-0}" = "1" ]; then
+					echo "pip check warning $check_count" >&2
+				fi
 				echo "pre-existing system package conflict"
 				if [ "$check_count" -eq 1 ]; then
 					echo "pre-existing package conflict resolved by upgrade"
@@ -842,9 +845,10 @@ python_partial_check_stdout="${tmp_dir}/python-partial-check-stdout.log"
 python_partial_check_stderr="${tmp_dir}/python-partial-check-stderr.log"
 python_partial_check_state="${tmp_dir}/python-partial-check-state"
 rm -f "$python_partial_check_state"
-PYTHON_GUARD_CHECK_PARTIAL_FIX=1 PYTHON_GUARD_CHECK_STATE="$python_partial_check_state" PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >"$python_partial_check_stdout" 2>"$python_partial_check_stderr"
+PYTHON_GUARD_CHECK_PARTIAL_FIX=1 PYTHON_GUARD_CHECK_VOLATILE_STDERR=1 PYTHON_GUARD_CHECK_STATE="$python_partial_check_state" PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >"$python_partial_check_stdout" 2>"$python_partial_check_stderr"
 grep -q '^WARN: python: pip check still reports pre-existing issues after guarded upgrade$' "$python_partial_check_stderr"
 grep -q '^pre-existing system package conflict$' "$python_partial_check_stdout"
+grep -q '^pip check warning 2$' "$python_partial_check_stdout"
 if grep -q '^pre-existing package conflict resolved by upgrade$' "$python_partial_check_stdout"; then
 	echo "Expected guarded Python path to report only remaining pip check failures" >&2
 	exit 1

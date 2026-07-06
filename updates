@@ -3196,7 +3196,8 @@ module_python() {
 
 		local -a safe_packages=()
 		local decision status detail old_ifs
-		local report_path plan_log install_log check_baseline_log check_log
+		local report_path plan_log install_log
+		local check_baseline_log check_baseline_err check_log check_err
 		local check_baseline_failed
 		for pkg in "${packages[@]}"; do
 			report_path="${guard_log_dir}/${pkg}.json"
@@ -3268,9 +3269,10 @@ module_python() {
 		fi
 
 		check_baseline_log="${guard_log_dir}/pip-check-before.log"
+		check_baseline_err="${guard_log_dir}/pip-check-before.err"
 		check_baseline_failed=0
 		debug "+ ${pip_check_args[*]}"
-		if ! "${pip_check_args[@]}" >"$check_baseline_log" 2>&1; then
+		if ! "${pip_check_args[@]}" >"$check_baseline_log" 2>"$check_baseline_err"; then
 			check_baseline_failed=1
 		fi
 
@@ -3290,12 +3292,16 @@ module_python() {
 		fi
 
 		check_log="${guard_log_dir}/pip-check.log"
+		check_err="${guard_log_dir}/pip-check.err"
 		debug "+ ${pip_check_args[*]}"
-		if ! "${pip_check_args[@]}" >"$check_log" 2>&1; then
+		if ! "${pip_check_args[@]}" >"$check_log" 2>"$check_err"; then
 			if [ "$check_baseline_failed" -eq 1 ] && file_lines_subset_of "$check_log" "$check_baseline_log"; then
 				warn "python: pip check still reports pre-existing issues after guarded upgrade"
 				if [ -s "$check_log" ]; then
 					cat "$check_log" >&"$HUMAN_FD"
+				fi
+				if [ -s "$check_err" ]; then
+					cat "$check_err" >&"$HUMAN_FD"
 				fi
 				rm -rf "$guard_log_dir"
 				return 0
@@ -3304,11 +3310,17 @@ module_python() {
 			if [ -s "$check_log" ]; then
 				cat "$check_log" >&"$HUMAN_FD"
 			fi
+			if [ -s "$check_err" ]; then
+				cat "$check_err" >&"$HUMAN_FD"
+			fi
 			rm -rf "$guard_log_dir"
 			return 1
 		fi
 		if [ -s "$check_log" ]; then
 			cat "$check_log" >&"$HUMAN_FD"
+		fi
+		if [ -s "$check_err" ]; then
+			cat "$check_err" >&"$HUMAN_FD"
 		fi
 
 		rm -rf "$guard_log_dir"
