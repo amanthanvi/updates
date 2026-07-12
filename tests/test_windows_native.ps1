@@ -267,6 +267,22 @@ if (Should-RunTest 'install-windows.ps1 replaces a corrupt existing payload') {
     }
 }
 
+if (Should-RunTest 'install-windows.ps1 replaces a file at the version path') {
+    Invoke-TestCase 'install-windows.ps1 replaces a file at the version path' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+            $installerPath = Join-Path $repoRoot 'install-windows.ps1'
+            $versionRoot = Join-Path $installRoot (Join-Path 'versions' $currentReleaseVersion)
+            $null = New-Item -ItemType Directory -Path (Split-Path -Parent $versionRoot) -Force
+            Set-Content -LiteralPath $versionRoot -Value 'corrupt'
+
+            $install = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', $installerPath, '-InstallRoot', $installRoot, '-SourceRoot', $repoRoot, '-Version', $currentReleaseVersion) -WorkingDirectory $repoRoot
+            Assert-Equal -Expected 0 -Actual $install.ExitCode -Message "install should replace a file at the version path`n$($install.Output)"
+            Assert-FileExists -Path (Join-Path $versionRoot 'updates-main.ps1') -Message 'replacement should install the version payload'
+        }
+    }
+}
+
 if (Should-RunTest 'install-windows.ps1 rejects target reparse roots before mutation') {
     Invoke-TestCase 'install-windows.ps1 rejects target reparse roots before mutation' {
         Invoke-WithTempInstall {

@@ -434,7 +434,7 @@ function Copy-LayoutToInstallRoot {
             Fail-Install 'updates: staged payload failed validation.'
         }
         Invoke-InstallCommitHook -Step 'payload-validated'
-        if (-not (Test-Path -LiteralPath $targetVersionRoot -PathType Container)) {
+        if (-not (Test-Path -LiteralPath $targetVersionRoot)) {
             Move-Item -LiteralPath $stagingRoot -Destination $targetVersionRoot
         } elseif (Test-InstalledVersionRoot -VersionRoot $targetVersionRoot -ExpectedVersion $Layout.CurrentVersion) {
             Remove-Item -LiteralPath $stagingRoot -Recurse -Force
