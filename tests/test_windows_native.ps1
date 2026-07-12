@@ -197,7 +197,7 @@ if (Should-RunTest 'install-windows.ps1 commit failures preserve prior runnable 
             $oldPayload = [regex]::Replace($oldPayload, '(?m)^\$script:UpdatesVersion\s*=\s*''[^'']+''', ("`$script:UpdatesVersion = '{0}'" -f $previousReleaseVersion), 1)
             Write-Utf8NoBom -Path (Join-Path $oldSource 'updates-main.ps1') -Content $oldPayload
 
-            foreach ($step in @('payload-staged', 'payload-validated', 'updates.cmd', 'updates.ps1', 'receipt', 'previous', 'current')) {
+            foreach ($step in @('payload-staged', 'payload-validated', 'updates.cmd-temp', 'updates.cmd', 'updates.ps1-temp', 'updates.ps1', 'receipt-temp', 'receipt', 'previous-temp', 'previous', 'current-temp', 'current')) {
                 $installRoot = Join-Path $testRoot ("install-{0}" -f ($step -replace '\.', '-'))
                 $initial = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', $installerPath, '-InstallRoot', $installRoot, '-SourceRoot', $oldSource, '-Version', $previousReleaseVersion) -WorkingDirectory $repoRoot
                 Assert-Equal -Expected 0 -Actual $initial.ExitCode -Message ("prior install setup failed for {0}`n{1}" -f $step, $initial.Output)
@@ -207,6 +207,8 @@ if (Should-RunTest 'install-windows.ps1 commit failures preserve prior runnable 
                 Assert-Match -Text $upgrade.Output -Pattern ('injected installer failure after {0}' -f [regex]::Escape($step)) -Message ("failure hook should identify {0}" -f $step)
                 $stagingLeftovers = @(Get-ChildItem -LiteralPath (Join-Path $installRoot 'versions') -Directory -Filter '.install-*.staging' -ErrorAction SilentlyContinue)
                 Assert-Equal -Expected 0 -Actual $stagingLeftovers.Count -Message ("installer must clean GUID staging roots after {0} failure" -f $step)
+                $tempLeftovers = @(Get-ChildItem -LiteralPath $installRoot -File -Filter '.*.tmp' -ErrorAction SilentlyContinue)
+                Assert-Equal -Expected 0 -Actual $tempLeftovers.Count -Message ("installer must clean GUID temp files after {0} failure" -f $step)
 
                 $launch = Invoke-Launcher -InstallRoot $installRoot -ArgumentList @('--version')
                 Assert-Equal -Expected 0 -Actual $launch.ExitCode -Message ("install must remain runnable after {0} failure`n{1}" -f $step, $launch.Output)
@@ -2144,7 +2146,7 @@ if (Should-RunTest 'native doctor accepts receipt for newest valid staged payloa
 
 if (Should-RunTest 'native self-update metadata commit failures preserve runnable payload') {
     Invoke-TestCase 'native self-update metadata commit failures preserve runnable payload' {
-        foreach ($failureStep in @('previous', 'receipt', 'current')) {
+        foreach ($failureStep in @('previous-temp', 'previous', 'receipt-temp', 'receipt', 'current-temp', 'current')) {
             Invoke-WithTempInstall {
                 param($installRoot)
                 Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
@@ -2161,6 +2163,8 @@ if (Should-RunTest 'native self-update metadata commit failures preserve runnabl
                 $receipt = Get-Content -LiteralPath (Join-Path $installRoot 'install-source.json') -Raw | ConvertFrom-Json -AsHashtable
                 $receiptRoot = Join-Path $installRoot (Join-Path 'versions' ([string]$receipt.installed_version))
                 Assert-True -Condition (Test-Path -LiteralPath (Join-Path $receiptRoot 'updates-main.ps1') -PathType Leaf) -Message ("receipt payload must remain valid after {0} failure" -f $failureStep)
+                $tempLeftovers = @(Get-ChildItem -LiteralPath $installRoot -File -Filter '.*.tmp' -ErrorAction SilentlyContinue)
+                Assert-Equal -Expected 0 -Actual $tempLeftovers.Count -Message ("self-update must clean GUID temp files after {0} failure" -f $failureStep)
             }
         }
     }

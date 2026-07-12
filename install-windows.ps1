@@ -92,16 +92,18 @@ function Write-JsonFile {
 }
 
 function Write-AtomicText {
-    param([string]$Path, [string]$Content)
+    param([string]$Path, [string]$Content, [string]$Step)
     $dir = Split-Path -Parent $Path
     $null = New-Item -ItemType Directory -Path $dir -Force
     $temp = Join-Path $dir ('.{0}.{1}.tmp' -f ([System.IO.Path]::GetFileName($Path)), [guid]::NewGuid().ToString('N'))
-    [System.IO.File]::WriteAllText($temp, $Content, [System.Text.UTF8Encoding]::new($false))
     try {
+        [System.IO.File]::WriteAllText($temp, $Content, [System.Text.UTF8Encoding]::new($false))
+        Invoke-InstallCommitHook -Step ($Step + '-temp')
         Move-Item -LiteralPath $temp -Destination $Path -Force
-    } catch {
-        Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
-        throw
+    } finally {
+        if (Test-Path -LiteralPath $temp) {
+            Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -434,12 +436,14 @@ function Copy-LayoutToInstallRoot {
         foreach ($fileName in @('updates.cmd', 'updates.ps1')) {
             $source = Join-Path $Layout.LayoutRoot $fileName
             $temp = Join-Path $targetRootFull ('.{0}.{1}.tmp' -f $fileName, [guid]::NewGuid().ToString('N'))
-            Copy-Item -LiteralPath $source -Destination $temp -Force
             try {
+                Copy-Item -LiteralPath $source -Destination $temp -Force
+                Invoke-InstallCommitHook -Step ($fileName + '-temp')
                 Move-Item -LiteralPath $temp -Destination (Join-Path $targetRootFull $fileName) -Force
-            } catch {
-                Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
-                throw
+            } finally {
+                if (Test-Path -LiteralPath $temp) {
+                    Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+                }
             }
             Invoke-InstallCommitHook -Step $fileName
         }
@@ -451,11 +455,11 @@ function Copy-LayoutToInstallRoot {
         if (-not $oldPreviousRoot -or -not (Test-InstalledVersionRoot -VersionRoot $oldPreviousRoot -ExpectedVersion $oldPrevious)) { $oldPrevious = '' }
         $rollbackVersion = if ($oldCurrent -and $oldCurrent -ne $Layout.CurrentVersion) { $oldCurrent } elseif ($oldPrevious -and $oldPrevious -ne $Layout.CurrentVersion) { $oldPrevious } else { '' }
         $receipt = Get-JsonFile -Path (Join-Path $Layout.LayoutRoot 'install-source.json')
-        Write-AtomicText -Path (Join-Path $targetRootFull 'install-source.json') -Content (($receipt | ConvertTo-Json -Depth 10) + "`n")
+        Write-AtomicText -Path (Join-Path $targetRootFull 'install-source.json') -Content (($receipt | ConvertTo-Json -Depth 10) + "`n") -Step 'receipt'
         Invoke-InstallCommitHook -Step 'receipt'
-        Write-AtomicText -Path (Join-Path $targetRootFull 'previous.txt') -Content $(if ($rollbackVersion) { $rollbackVersion + "`n" } else { '' })
+        Write-AtomicText -Path (Join-Path $targetRootFull 'previous.txt') -Content $(if ($rollbackVersion) { $rollbackVersion + "`n" } else { '' }) -Step 'previous'
         Invoke-InstallCommitHook -Step 'previous'
-        Write-AtomicText -Path (Join-Path $targetRootFull 'current.txt') -Content ($Layout.CurrentVersion + "`n")
+        Write-AtomicText -Path (Join-Path $targetRootFull 'current.txt') -Content ($Layout.CurrentVersion + "`n") -Step 'current'
         Invoke-InstallCommitHook -Step 'current'
     } finally {
         try {

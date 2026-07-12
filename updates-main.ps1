@@ -1502,8 +1502,15 @@ function Update-InstallReceiptVersion {
     $receipt = (Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -AsHashtable)
     $receipt.installed_version = $Version
     $temp = Join-Path $script:InstallRoot ('.install-source.{0}.tmp' -f [guid]::NewGuid().ToString('N'))
-    [System.IO.File]::WriteAllText($temp, (($receipt | ConvertTo-Json -Depth 5) + "`n"), [System.Text.UTF8Encoding]::new($false))
-    Move-Item -LiteralPath $temp -Destination $receiptPath -Force
+    try {
+        [System.IO.File]::WriteAllText($temp, (($receipt | ConvertTo-Json -Depth 5) + "`n"), [System.Text.UTF8Encoding]::new($false))
+        Invoke-SelfUpdateCommitHook -Step 'receipt-temp'
+        Move-Item -LiteralPath $temp -Destination $receiptPath -Force
+    } finally {
+        if (Test-Path -LiteralPath $temp) {
+            Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Invoke-SelfUpdateCommitHook {
@@ -1534,8 +1541,15 @@ function Write-VersionPointer {
 
     $target = Join-Path $script:InstallRoot $Name
     $temp = Join-Path $script:InstallRoot ('.{0}.{1}.tmp' -f $Name, [guid]::NewGuid().ToString('N'))
-    [System.IO.File]::WriteAllText($temp, ($Value + "`n"), [System.Text.UTF8Encoding]::new($false))
-    Move-Item -LiteralPath $temp -Destination $target -Force
+    try {
+        [System.IO.File]::WriteAllText($temp, ($Value + "`n"), [System.Text.UTF8Encoding]::new($false))
+        Invoke-SelfUpdateCommitHook -Step (($Name -replace '\.txt$', '') + '-temp')
+        Move-Item -LiteralPath $temp -Destination $target -Force
+    } finally {
+        if (Test-Path -LiteralPath $temp) {
+            Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Get-SelfUpdateEpoch {
