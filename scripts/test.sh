@@ -5,6 +5,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 ./tests/test_cli.sh
+bash ./tests/test_release.sh
 
 if command -v pwsh >/dev/null 2>&1; then
 	# shellcheck disable=SC2016

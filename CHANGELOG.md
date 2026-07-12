@@ -7,12 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-07-12
+
 ### Added
 
+- Local-only, read-only `--doctor` diagnostics on Bash and native Windows, with stable human output, `doctor_check`/`doctor_summary` JSONL events, and integrity-sensitive exit codes.
+- Native Windows support for the default-on `claude` and `pi` modules.
+- Optional `-SourceZipSha256` verification for local Windows installer ZIPs; unhashed local ZIPs remain accepted in v2.1 with a trust warning.
+- Shared release invariant validation and isolated release guard tests covering unsafe paths, dirty trees, version mismatches, existing tags, verification failure, and annotated tags.
 - `NODE_NPM_INSTALL_FLAGS` config key in `~/.updatesrc` to pass extra whitespace-separated flags (for example `--legacy-peer-deps`) to the node module's `npm install -g` invocation, scoped to `updates` instead of requiring a global `~/.npmrc` override. Supported on both Bash and native Windows PowerShell.
+
+### Changed
+
+- Windows install/self-update stages and validates complete payloads before atomically committing bootstrap metadata and activating the new current pointer.
+- Native Windows module selection and invocation use one handler-owning registry.
 
 ### Fixed
 
+- Treat self-update cache metadata as untrusted scheduling hints, so cached tags cannot bypass live release trust and artifact verification before applying an update.
 - Guard Bash Python upgrades in PEP 668 externally-managed environments by dry-running wheel-only user-site plans, pruning unsafe packages, re-checking the safe subset in one combined dry-run, installing only that set, and running `pip check`. The guard treats system-only packages as new user-site installs, requires pip `--dry-run --report` support before entering the guarded path, prefers public `packaging` APIs, falls back to pip's vendored copy only when needed, routes guarded pip output away from JSON stdout, warns instead of failing for remaining pre-existing `pip check` issues, and only passes `--break-system-packages` when pip supports it.
 
 ## [2.0.2] - 2026-06-19

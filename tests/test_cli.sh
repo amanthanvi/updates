@@ -4,6 +4,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="${ROOT}/updates"
+TEST_FILTER="${1:-}"
+TEST_MATCHED=0
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -18,6 +20,8 @@ unset NVM_DIR
 stub_bin="${tmp_dir}/bin"
 mkdir -p "$stub_bin"
 
+# Referenced by heredoc-backed test bodies evaluated through run_test.
+# shellcheck disable=SC2034
 SYSTEM_NODE="$(command -v node 2>/dev/null || true)"
 SYSTEM_PYTHON3="$(command -v python3 2>/dev/null || true)"
 if [ -z "$SYSTEM_PYTHON3" ]; then
@@ -39,8 +43,11 @@ export SYSTEM_PYTHON3
 
 # Self-update hits the network by default; disable for deterministic tests.
 export UPDATES_SELF_UPDATE=0
-SELF_UPDATE_CURRENT_TEST_VERSION="2.0.2"
-SELF_UPDATE_NEXT_TEST_VERSION="2.0.3"
+# Referenced by heredoc-backed test bodies evaluated through run_test.
+# shellcheck disable=SC2034
+SELF_UPDATE_CURRENT_TEST_VERSION="2.1.0"
+# shellcheck disable=SC2034
+SELF_UPDATE_NEXT_TEST_VERSION="2.1.1"
 
 write_stub_to_dir() {
 	local dir="$1"
@@ -306,10 +313,191 @@ write_stub pi 'echo "pi $*" >>"$CALL_LOG"'
 # shellcheck disable=SC2016
 write_stub softwareupdate 'echo "softwareupdate $*" >>"$CALL_LOG"'
 
-echo "Test: help works"
+test_selected() {
+	local name="$1"
+	[ -z "$TEST_FILTER" ] || case "$name" in *"$TEST_FILTER"*) return 0 ;; *) return 1 ;; esac
+}
+
+run_doctor_tests() {
+	local doctor_home="${tmp_dir}/doctor-home"
+	local doctor_before="${tmp_dir}/doctor-before"
+	local doctor_after="${tmp_dir}/doctor-after"
+	local doctor_log="${doctor_home}/nested/doctor.log"
+	local json_file="${tmp_dir}/doctor.jsonl"
+	local json_stderr="${tmp_dir}/doctor.stderr"
+	local bad_cache_home="${tmp_dir}/doctor-bad-cache"
+	local out=""
+	local rc=0
+	mkdir -p "$doctor_home"
+
+	if test_selected "doctor human output is local and read-only"; then
+		TEST_MATCHED=1
+		echo "Test: doctor human output is local and read-only"
+		find "$doctor_home" -print | sort >"$doctor_before"
+		out="$(HOME="$doctor_home" UPDATES_SELF_UPDATE=1 "$SCRIPT" --doctor --no-color --no-emoji)"
+		find "$doctor_home" -print | sort >"$doctor_after"
+		cmp "$doctor_before" "$doctor_after"
+		printf '%s\n' "$out" | grep -q '^OK    executable'
+		printf '%s\n' "$out" | grep -q '^OK    version'
+		printf '%s\n' "$out" | grep -q '^SUMMARY ok='
+	fi
+
+	if test_selected "doctor ignores log-file without mutation"; then
+		TEST_MATCHED=1
+		echo "Test: doctor ignores log-file without mutation"
+		HOME="$doctor_home" "$SCRIPT" --doctor --log-file "$doctor_log" --no-color --no-emoji >/dev/null
+		[ ! -e "$doctor_log" ]
+		[ ! -e "$(dirname "$doctor_log")" ]
+	fi
+
+	if test_selected "doctor JSONL is pure and order independent"; then
+		TEST_MATCHED=1
+		echo "Test: doctor JSONL is pure and order independent"
+		HOME="$doctor_home" "$SCRIPT" --doctor --json >"$json_file" 2>"$json_stderr"
+		[ ! -s "$json_stderr" ]
+		"$SYSTEM_PYTHON3" - "$json_file" <<'PY'
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]
+assert rows[-1]["event"] == "doctor_summary"
+assert rows[-1]["fail"] == 0
+assert all(row["event"] in {"doctor_check", "doctor_summary"} for row in rows)
+assert {"executable", "version", "platform", "self_update_path", "checksum", "self_update_cache"} <= {
+    row.get("check") for row in rows
+}
+PY
+	fi
+
+	if test_selected "invalid doctor cache exits 1"; then
+		TEST_MATCHED=1
+		echo "Test: invalid doctor cache exits 1"
+		mkdir -p "${bad_cache_home}/updates"
+		printf 'checked_at=invalid\nlatest_tag=not-semver\n' >"${bad_cache_home}/updates/self-update-amanthanvi_updates.cache"
+		set +e
+		HOME="$doctor_home" XDG_CACHE_HOME="$bad_cache_home" "$SCRIPT" --json --doctor >"$json_file" 2>"$json_stderr"
+		rc=$?
+		set -e
+		[ "$rc" -eq 1 ]
+		"$SYSTEM_PYTHON3" - "$json_file" <<'PY'
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]
+assert rows[-1]["event"] == "doctor_summary"
+assert rows[-1]["fail"] == 1
+assert any(row.get("check") == "self_update_cache" and row["status"] == "fail" for row in rows)
+PY
+	fi
+}
+
+run_signal_tests() {
+	local signal expected signal_bin pid_file ready_file output rc child_pid
+	for signal in INT TERM; do
+		case "$signal" in INT) expected=130 ;; TERM) expected=143 ;; esac
+		if ! test_selected "${signal} exits ${expected} and terminates active child"; then
+			continue
+		fi
+		TEST_MATCHED=1
+		echo "Test: ${signal} exits ${expected} and terminates active child"
+		pid_file="${tmp_dir}/signal-${signal}.pid"
+		ready_file="${tmp_dir}/signal-${signal}.ready"
+		output="${tmp_dir}/signal-${signal}.out"
+		signal_bin="${tmp_dir}/signal-${signal}-bin"
+		mkdir -p "$signal_bin"
+		cat >"${signal_bin}/python" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "-c" ]; then
+	if printf '%s' "\${2:-}" | grep -q 'EXTERNALLY-MANAGED'; then
+		echo 0
+		exit 0
+	fi
+	exec "$SYSTEM_PYTHON3" "\$@"
+fi
+if [ "\${1:-}" = "-m" ] && [ "\${2:-}" = "pip" ]; then
+	shift 2
+	if [ "\${1:-}" = "--disable-pip-version-check" ]; then
+		shift
+	fi
+	case "\${1:-}" in
+	--version)
+		echo 'pip 25.0 from /dev/null (python 3.12)'
+		;;
+	list)
+		echo '[{"name":"interrupt-probe","version":"1.0","latest_version":"2.0"}]'
+		;;
+	install)
+		printf '%s\n' "\$\$" >"$pid_file"
+		: >"$ready_file"
+		exec sleep 30
+		;;
+	*) exit 1 ;;
+	esac
+	exit 0
+fi
+exit 1
+EOF
+		chmod +x "${signal_bin}/python"
+		cp "${signal_bin}/python" "${signal_bin}/python3"
+		set +e
+		"$SYSTEM_PYTHON3" - "$SCRIPT" "$signal_bin" "$ready_file" "$output" "$signal" <<'PY'
+import os, signal, subprocess, sys, time
+script, signal_bin, ready, output, signal_name = sys.argv[1:]
+env = os.environ.copy()
+env["PATH"] = signal_bin + os.pathsep + env["PATH"]
+with open(output, "wb") as stream:
+    process = subprocess.Popen(
+        ["bash", script, "--only", "python", "--parallel", "1", "--no-emoji"],
+        env=env,
+        start_new_session=True,
+        stdout=stream,
+        stderr=subprocess.STDOUT,
+    )
+    for _ in range(200):
+        if os.path.exists(ready):
+            break
+        if process.poll() is not None:
+            raise SystemExit(f"helper exited before ready: {process.returncode}")
+        time.sleep(0.01)
+    else:
+        process.kill()
+        raise SystemExit("updates did not start the module child")
+    # Signal only the updates parent. The active pip child must be terminated
+    # by the real updates trap, not by terminal process-group delivery.
+    os.kill(process.pid, getattr(signal, "SIG" + signal_name))
+    raise SystemExit(process.wait(timeout=5))
+PY
+		rc=$?
+		set -e
+		child_pid="$(cat "$pid_file")"
+		[ "$rc" -eq "$expected" ]
+		if kill -0 "$child_pid" 2>/dev/null; then
+			echo "Expected ${signal} handler to terminate child ${child_pid}" >&2
+			kill "$child_pid" 2>/dev/null || true
+			exit 1
+		fi
+		grep -q "Interrupted (SIG${signal})" "$output"
+	done
+}
+
+run_doctor_tests
+run_signal_tests
+
+run_test() {
+	local name="$1"
+	local body=""
+	body="$(cat)"
+	if ! test_selected "$name"; then
+		return 0
+	fi
+	TEST_MATCHED=1
+	echo "Test: $name"
+	eval "$body"
+}
+
+run_test "help works" <<'UPDATES_TEST_CASE'
 "$SCRIPT" --help >/dev/null
 
-echo "Test: list-modules works"
+UPDATES_TEST_CASE
+
+run_test "list-modules works" <<'UPDATES_TEST_CASE'
 out="$("$SCRIPT" --list-modules)"
 echo "$out" | grep -q '^brew'
 echo "$out" | grep -q '^shell'
@@ -322,7 +510,9 @@ if [ "$actual_modules" != "$expected_modules" ]; then
 	exit 1
 fi
 
-echo "Test: --log-level filters output"
+UPDATES_TEST_CASE
+
+run_test "--log-level filters output" <<'UPDATES_TEST_CASE'
 warn_stderr="${tmp_dir}/warn-stderr.log"
 : >"$warn_stderr"
 out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only brew --log-level warn --no-emoji --no-color 2>"$warn_stderr")"
@@ -354,7 +544,9 @@ if [ -s "$error_stderr" ]; then
 	exit 1
 fi
 
-echo "Test: config defaults + --no-config"
+UPDATES_TEST_CASE
+
+run_test "config defaults + --no-config" <<'UPDATES_TEST_CASE'
 config_home="${tmp_dir}/home-config"
 mkdir -p "$config_home"
 cat >"${config_home}/.updatesrc" <<EOF
@@ -375,7 +567,9 @@ echo "$out" | grep -q '^DRY RUN: brew cleanup$'
 out="$(HOME="$config_home" "$SCRIPT" --dry-run --only brew --brew-mode formula --no-emoji --no-color)"
 echo "$out" | grep -q '^DRY RUN: brew upgrade --formula$'
 
-echo "Test: config SKIP_MODULES does not override --only"
+UPDATES_TEST_CASE
+
+run_test "config SKIP_MODULES does not override --only" <<'UPDATES_TEST_CASE'
 config_home_skip="${tmp_dir}/home-config-skip"
 mkdir -p "$config_home_skip"
 cat >"${config_home_skip}/.updatesrc" <<EOF
@@ -384,7 +578,9 @@ EOF
 out="$(HOME="$config_home_skip" "$SCRIPT" --dry-run --only node --no-emoji --no-color)"
 echo "$out" | grep -q '^==> node START$'
 
-echo "Test: --brew-mode validates input"
+UPDATES_TEST_CASE
+
+run_test "--brew-mode validates input" <<'UPDATES_TEST_CASE'
 set +e
 UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only brew --brew-mode nope >/dev/null 2>&1
 rc=$?
@@ -394,7 +590,9 @@ if [ "$rc" -ne 2 ]; then
 	exit 1
 fi
 
-echo "Test: deprecated flags error (exit 2)"
+UPDATES_TEST_CASE
+
+run_test "deprecated flags error (exit 2)" <<'UPDATES_TEST_CASE'
 for flag in \
 	-q \
 	--quiet \
@@ -416,7 +614,9 @@ for flag in \
 	echo "$out" | grep -q 'Unknown option'
 done
 
-echo "Test: --json emits JSONL to stdout only"
+UPDATES_TEST_CASE
+
+run_test "--json emits JSONL to stdout only" <<'UPDATES_TEST_CASE'
 json_stderr="${tmp_dir}/json-stderr.log"
 : >"$json_stderr"
 json_out="$("$SCRIPT" --json --dry-run --only brew --no-emoji --no-color 2>"$json_stderr")"
@@ -454,7 +654,9 @@ assert "summary" in events
 assert "brew" in modules
 PY
 
-echo "Test: --skip overrides --only"
+UPDATES_TEST_CASE
+
+run_test "--skip overrides --only" <<'UPDATES_TEST_CASE'
 out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only brew,node --skip node --log-level debug)"
 echo "$out" | grep -q 'Homebrew'
 if echo "$out" | grep -q 'npm globals'; then
@@ -467,7 +669,9 @@ if echo "$out" | grep -q '^==> node START$'; then
 	exit 1
 fi
 
-echo "Test: selected modules run in non-dry-run mode"
+UPDATES_TEST_CASE
+
+run_test "selected modules run in non-dry-run mode" <<'UPDATES_TEST_CASE'
 out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --only brew,node --no-emoji)"
 echo "$out" | grep -q '^==> brew START$'
 echo "$out" | grep -q '^==> brew END (OK)'
@@ -478,7 +682,9 @@ grep -q '^brew update$' "$CALL_LOG"
 grep -q '^brew upgrade --formula$' "$CALL_LOG"
 grep -q '^npm install -g -- npm@11.7.0$' "$CALL_LOG"
 
-echo "Test: default macOS run is safe (no mas/macos; brew formula only)"
+UPDATES_TEST_CASE
+
+run_test "default macOS run is safe (no mas/macos; brew formula only)" <<'UPDATES_TEST_CASE'
 out="$("$SCRIPT" --dry-run --skip node,python,pipx,rustup,claude,pi,linux --no-emoji)"
 echo "$out" | grep -q '^==> brew START$'
 echo "$out" | grep -q '^==> shell START$'
@@ -493,7 +699,9 @@ if echo "$out" | grep -q '^==> macos START$'; then
 	exit 1
 fi
 
-echo "Test: missing dependency errors in --only mode"
+UPDATES_TEST_CASE
+
+run_test "missing dependency errors in --only mode" <<'UPDATES_TEST_CASE'
 set +e
 UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only mas >/dev/null 2>&1
 rc=$?
@@ -503,7 +711,9 @@ if [ "$rc" -eq 0 ]; then
 	exit 1
 fi
 
-echo "Test: --brew-mode greedy enables brew upgrade (greedy) on macOS"
+UPDATES_TEST_CASE
+
+run_test "--brew-mode greedy enables brew upgrade (greedy) on macOS" <<'UPDATES_TEST_CASE'
 : >"$CALL_LOG"
 greedy_stderr="${tmp_dir}/greedy-stderr.log"
 : >"$greedy_stderr"
@@ -515,19 +725,27 @@ if grep -q '^brew upgrade --formula$' "$CALL_LOG"; then
 fi
 grep -q '^WARN: Homebrew cask upgrades may modify /Applications\.$' "$greedy_stderr"
 
-echo "Test: --only mas runs even when opt-in by default"
+UPDATES_TEST_CASE
+
+run_test "--only mas runs even when opt-in by default" <<'UPDATES_TEST_CASE'
 # shellcheck disable=SC2016
 write_stub mas 'echo "mas $*" >>"$CALL_LOG"'
 : >"$CALL_LOG"
 "$SCRIPT" --only mas --no-emoji >/dev/null
 grep -q '^mas upgrade$' "$CALL_LOG"
 
-echo "Test: --only macos runs even when opt-in by default"
+UPDATES_TEST_CASE
+
+run_test "--only macos runs even when opt-in by default" <<'UPDATES_TEST_CASE'
 : >"$CALL_LOG"
 "$SCRIPT" --only macos --no-emoji >/dev/null
 grep -q '^softwareupdate -l$' "$CALL_LOG"
 
-echo "Test: --full enables brew casks + mas + macos"
+UPDATES_TEST_CASE
+
+run_test "--full enables brew casks + mas + macos" <<'UPDATES_TEST_CASE'
+# shellcheck disable=SC2016
+write_stub mas 'echo "mas $*" >>"$CALL_LOG"'
 : >"$CALL_LOG"
 full_stderr="${tmp_dir}/full-stderr.log"
 : >"$full_stderr"
@@ -541,60 +759,64 @@ grep -q '^mas upgrade$' "$CALL_LOG"
 grep -q '^softwareupdate -l$' "$CALL_LOG"
 grep -q '^WARN: Homebrew cask upgrades may modify /Applications\.$' "$full_stderr"
 
-echo "Test: python guards externally-managed user-site upgrades"
-rm -f "${stub_bin}/py" "${stub_bin}/python3"
+UPDATES_TEST_CASE
 
-python_user_base="${tmp_dir}/python-userbase"
-python_site="$(
-	PYTHONUSERBASE="$python_user_base" "$SYSTEM_PYTHON3" - <<'PY'
+setup_python_guard_fixture() {
+	rm -f "${stub_bin}/py" "${stub_bin}/python3"
+
+	python_user_base="${tmp_dir}/python-userbase"
+	python_site="$(
+		PYTHONUSERBASE="$python_user_base" "$SYSTEM_PYTHON3" - <<'PY'
 import site
 
 print(site.getusersitepackages())
 PY
-)"
-python_system_site="${tmp_dir}/python-system-site"
-python_path="${python_site}:${python_system_site}"
-mkdir -p "${python_site}/idna-3.1.dist-info" "${python_site}/pyelftools-0.31.dist-info" "${python_site}/unicorn-2.1.2.dist-info" "${python_site}/pwntools-4.15.0.dist-info" "${python_site}/legacyowner-1.0.dist-info" "${python_site}/legacydep-1.0.dist-info" "${python_system_site}/chardet-5.2.0.dist-info"
-cat >"${python_site}/idna-3.1.dist-info/METADATA" <<'EOF'
+	)"
+	python_system_site="${tmp_dir}/python-system-site"
+	# Referenced by heredoc-backed test bodies evaluated through run_test.
+	# shellcheck disable=SC2034
+	python_path="${python_site}:${python_system_site}"
+	mkdir -p "${python_site}/idna-3.1.dist-info" "${python_site}/pyelftools-0.31.dist-info" "${python_site}/unicorn-2.1.2.dist-info" "${python_site}/pwntools-4.15.0.dist-info" "${python_site}/legacyowner-1.0.dist-info" "${python_site}/legacydep-1.0.dist-info" "${python_system_site}/chardet-5.2.0.dist-info"
+	cat >"${python_site}/idna-3.1.dist-info/METADATA" <<'EOF'
 Metadata-Version: 2.1
 Name: idna
 Version: 3.1
 EOF
-cat >"${python_site}/pyelftools-0.31.dist-info/METADATA" <<'EOF'
+	cat >"${python_site}/pyelftools-0.31.dist-info/METADATA" <<'EOF'
 Metadata-Version: 2.1
 Name: pyelftools
 Version: 0.31
 EOF
-cat >"${python_site}/unicorn-2.1.2.dist-info/METADATA" <<'EOF'
+	cat >"${python_site}/unicorn-2.1.2.dist-info/METADATA" <<'EOF'
 Metadata-Version: 2.1
 Name: unicorn
 Version: 2.1.2
 EOF
-cat >"${python_site}/pwntools-4.15.0.dist-info/METADATA" <<'EOF'
+	cat >"${python_site}/pwntools-4.15.0.dist-info/METADATA" <<'EOF'
 Metadata-Version: 2.1
 Name: pwntools
 Version: 4.15.0
 Requires-Dist: unicorn!=2.1.3,!=2.1.4,>=2.0.1
 EOF
-cat >"${python_site}/legacyowner-1.0.dist-info/METADATA" <<'EOF'
+	cat >"${python_site}/legacyowner-1.0.dist-info/METADATA" <<'EOF'
 Metadata-Version: 2.1
 Name: legacyowner
 Version: 1.0
 Requires-Dist: legacydep<2
 EOF
-cat >"${python_site}/legacydep-1.0.dist-info/METADATA" <<'EOF'
+	cat >"${python_site}/legacydep-1.0.dist-info/METADATA" <<'EOF'
 Metadata-Version: 2.1
 Name: legacydep
 Version: 1.0
 EOF
-cat >"${python_system_site}/chardet-5.2.0.dist-info/METADATA" <<'EOF'
+	cat >"${python_system_site}/chardet-5.2.0.dist-info/METADATA" <<'EOF'
 Metadata-Version: 2.1
 Name: chardet
 Version: 5.2.0
 EOF
 
-# shellcheck disable=SC2016
-write_stub python '
+	# shellcheck disable=SC2016
+	write_stub python '
 if [ "${1:-}" = "-c" ]; then
 	code="${2:-}"
 	if echo "$code" | grep -q "EXTERNALLY-MANAGED"; then
@@ -759,6 +981,10 @@ fi
 echo "python stub: unexpected args: $*" >&2
 exit 1
 '
+}
+
+run_test "python guards externally-managed user-site upgrades" <<'UPDATES_TEST_CASE'
+setup_python_guard_fixture
 
 : >"$CALL_LOG"
 python_guard_stderr="${tmp_dir}/python-guard-stderr.log"
@@ -776,7 +1002,10 @@ if grep -q '^python -m pip install -U --user --break-system-packages --only-bina
 fi
 grep -q '^WARN: python: skipping unicorn: pwntools requires unicorn!=2\.1\.3,!=2\.1\.4,>=2\.0\.1, planned unicorn==2\.1\.4$' "$python_guard_stderr"
 
-echo "Test: python guarded user-site ignores superseded planned-owner requirements"
+UPDATES_TEST_CASE
+
+run_test "python guarded user-site ignores superseded planned-owner requirements" <<'UPDATES_TEST_CASE'
+setup_python_guard_fixture
 : >"$CALL_LOG"
 python_planned_owner_stderr="${tmp_dir}/python-planned-owner-stderr.log"
 PYTHON_GUARD_PLANNED_OWNER_CONFLICT=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_planned_owner_stderr"
@@ -793,7 +1022,10 @@ if grep -q '^python -m pip install -U --user --break-system-packages --only-bina
 	exit 1
 fi
 
-echo "Test: python guarded user-site keeps JSON stdout JSONL-only"
+UPDATES_TEST_CASE
+
+run_test "python guarded user-site keeps JSON stdout JSONL-only" <<'UPDATES_TEST_CASE'
+setup_python_guard_fixture
 : >"$CALL_LOG"
 python_guard_json_stdout="${tmp_dir}/python-guard-json-stdout.log"
 python_guard_json_stderr="${tmp_dir}/python-guard-json-stderr.log"
@@ -815,7 +1047,10 @@ fi
 grep -q '^pip install human stdout$' "$python_guard_json_stderr"
 grep -q '^pip check human stdout$' "$python_guard_json_stderr"
 
-echo "Test: python guarded user-site skips system-only dependency installs"
+UPDATES_TEST_CASE
+
+run_test "python guarded user-site skips system-only dependency installs" <<'UPDATES_TEST_CASE'
+setup_python_guard_fixture
 : >"$CALL_LOG"
 python_system_dep_stderr="${tmp_dir}/python-system-dep-stderr.log"
 PYTHON_GUARD_SYSTEM_ONLY_DEP=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_system_dep_stderr"
@@ -826,7 +1061,10 @@ if grep -q '^python -m pip install -U --user --break-system-packages --only-bina
 	exit 1
 fi
 
-echo "Test: python guarded user-site tolerates pre-existing pip check failures"
+UPDATES_TEST_CASE
+
+run_test "python guarded user-site tolerates pre-existing pip check failures" <<'UPDATES_TEST_CASE'
+setup_python_guard_fixture
 : >"$CALL_LOG"
 python_check_stdout="${tmp_dir}/python-check-stdout.log"
 python_check_stderr="${tmp_dir}/python-check-stderr.log"
@@ -839,7 +1077,10 @@ if [ "$check_count" -ne 2 ]; then
 	exit 1
 fi
 
-echo "Test: python guarded user-site tolerates partially fixed pip check failures"
+UPDATES_TEST_CASE
+
+run_test "python guarded user-site tolerates partially fixed pip check failures" <<'UPDATES_TEST_CASE'
+setup_python_guard_fixture
 : >"$CALL_LOG"
 python_partial_check_stdout="${tmp_dir}/python-partial-check-stdout.log"
 python_partial_check_stderr="${tmp_dir}/python-partial-check-stderr.log"
@@ -859,7 +1100,10 @@ if [ "$check_count" -ne 2 ]; then
 	exit 1
 fi
 
-echo "Test: python guarded user-site errors when pip lacks dry-run reports"
+UPDATES_TEST_CASE
+
+run_test "python guarded user-site errors when pip lacks dry-run reports" <<'UPDATES_TEST_CASE'
+setup_python_guard_fixture
 : >"$CALL_LOG"
 python_no_report_stderr="${tmp_dir}/python-no-report-stderr.log"
 set +e
@@ -876,7 +1120,10 @@ if grep -q -- '--dry-run --report' "$CALL_LOG"; then
 	exit 1
 fi
 
-echo "Test: python guarded user-site skips when pip lacks dry-run reports outside --only"
+UPDATES_TEST_CASE
+
+run_test "python guarded user-site skips when pip lacks dry-run reports outside --only" <<'UPDATES_TEST_CASE'
+setup_python_guard_fixture
 : >"$CALL_LOG"
 python_no_report_skip_stderr="${tmp_dir}/python-no-report-skip-stderr.log"
 python_no_report_skip_out="$(
@@ -889,7 +1136,10 @@ if grep -q -- '--dry-run --report' "$CALL_LOG"; then
 	exit 1
 fi
 
-echo "Test: python guarded user-site omits break-system flag when pip lacks it"
+UPDATES_TEST_CASE
+
+run_test "python guarded user-site omits break-system flag when pip lacks it" <<'UPDATES_TEST_CASE'
+setup_python_guard_fixture
 : >"$CALL_LOG"
 python_no_break_stderr="${tmp_dir}/python-no-break-stderr.log"
 PYTHON_GUARD_NO_BREAK_HELP=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_no_break_stderr"
@@ -901,7 +1151,10 @@ if grep -q -- '--break-system-packages' "$CALL_LOG"; then
 	exit 1
 fi
 
-echo "Test: python skips install when combined guard plan is unsafe"
+UPDATES_TEST_CASE
+
+run_test "python skips install when combined guard plan is unsafe" <<'UPDATES_TEST_CASE'
+setup_python_guard_fixture
 : >"$CALL_LOG"
 python_combined_stderr="${tmp_dir}/python-combined-stderr.log"
 PYTHON_GUARD_COMBINED_CONFLICT=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --only python --no-emoji >/dev/null 2>"$python_combined_stderr"
@@ -916,7 +1169,10 @@ if grep -q '^python -m pip check$' "$CALL_LOG"; then
 fi
 grep -q '^WARN: python: skipping guarded user-site install: pwntools requires unicorn!=2\.1\.3,!=2\.1\.4,>=2\.0\.1, planned unicorn==2\.1\.4$' "$python_combined_stderr"
 
-echo "Test: python break-system-packages opt-in (pip-force)"
+UPDATES_TEST_CASE
+
+run_test "python break-system-packages opt-in (pip-force)" <<'UPDATES_TEST_CASE'
+setup_python_guard_fixture
 : >"$CALL_LOG"
 "$SCRIPT" --only python --pip-force --no-emoji >/dev/null
 grep -q '^python -m pip list --outdated --format=json$' "$CALL_LOG"
@@ -924,7 +1180,9 @@ grep -q '^python -m pip install -U --break-system-packages idna$' "$CALL_LOG"
 grep -q '^python -m pip install -U --break-system-packages pyelftools$' "$CALL_LOG"
 grep -q '^python -m pip install -U --break-system-packages unicorn$' "$CALL_LOG"
 
-echo "Test: linux module (apt-get) runs in non-interactive mode"
+UPDATES_TEST_CASE
+
+run_test "linux module (apt-get) runs in non-interactive mode" <<'UPDATES_TEST_CASE'
 write_stub uname 'echo Linux'
 # shellcheck disable=SC2016
 write_stub sudo 'echo "sudo $*" >>"$CALL_LOG"; if [ "${1:-}" = "-n" ]; then shift; fi; "$@"'
@@ -938,7 +1196,9 @@ grep -q '^sudo -n env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y$' "$CALL
 grep -q '^apt-get update$' "$CALL_LOG"
 grep -q '^apt-get upgrade -y$' "$CALL_LOG"
 
-echo "Test: shell module updates Oh My Zsh repos"
+UPDATES_TEST_CASE
+
+run_test "shell module updates Oh My Zsh repos" <<'UPDATES_TEST_CASE'
 shell_home="${tmp_dir}/home-shell"
 omz_dir="${shell_home}/.oh-my-zsh"
 mkdir -p "${omz_dir}/custom/plugins/zsh-autosuggestions"
@@ -953,24 +1213,32 @@ grep -q "^GIT_TERMINAL_PROMPT=0 git -C ${omz_dir} pull --ff-only$" "$CALL_LOG"
 grep -q "^GIT_TERMINAL_PROMPT=0 git -C ${omz_dir}/custom/plugins/zsh-autosuggestions pull --ff-only$" "$CALL_LOG"
 grep -q "^GIT_TERMINAL_PROMPT=0 git -C ${omz_dir}/custom/themes/powerlevel10k pull --ff-only$" "$CALL_LOG"
 
-echo "Test: uv module runs"
+UPDATES_TEST_CASE
+
+run_test "uv module runs" <<'UPDATES_TEST_CASE'
 : >"$CALL_LOG"
 "$SCRIPT" --only uv --no-emoji >/dev/null
 grep -q '^uv self update$' "$CALL_LOG"
 grep -q '^uv tool upgrade --all$' "$CALL_LOG"
 
-echo "Test: bun module runs global upgrades"
+UPDATES_TEST_CASE
+
+run_test "bun module runs global upgrades" <<'UPDATES_TEST_CASE'
 : >"$CALL_LOG"
 "$SCRIPT" --only bun --no-emoji >/dev/null
 grep -q '^bun update -g$' "$CALL_LOG"
 
-echo "Test: mise module runs"
+UPDATES_TEST_CASE
+
+run_test "mise module runs" <<'UPDATES_TEST_CASE'
 : >"$CALL_LOG"
 "$SCRIPT" --only mise --no-emoji >/dev/null
 grep -q '^mise self-update$' "$CALL_LOG"
 grep -q '^mise upgrade$' "$CALL_LOG"
 
-echo "Test: go module requires GO_BINARIES in --only mode"
+UPDATES_TEST_CASE
+
+run_test "go module requires GO_BINARIES in --only mode" <<'UPDATES_TEST_CASE'
 go_home_empty="${tmp_dir}/home-go-empty"
 mkdir -p "$go_home_empty"
 set +e
@@ -983,7 +1251,9 @@ if [ "$rc" -ne 1 ]; then
 fi
 echo "$out" | grep -q 'GO_BINARIES is not configured'
 
-echo "Test: go module installs configured binaries (defaults to @latest)"
+UPDATES_TEST_CASE
+
+run_test "go module installs configured binaries (defaults to @latest)" <<'UPDATES_TEST_CASE'
 go_home="${tmp_dir}/home-go"
 mkdir -p "$go_home"
 cat >"${go_home}/.updatesrc" <<EOF
@@ -994,7 +1264,9 @@ HOME="$go_home" "$SCRIPT" --only go --no-emoji --no-color >/dev/null
 grep -q '^go install golang.org/x/tools/gopls@latest$' "$CALL_LOG"
 grep -q '^go install github.com/go-delve/delve/cmd/dlv@v1.2.3$' "$CALL_LOG"
 
-echo "Test: repos module updates git repos"
+UPDATES_TEST_CASE
+
+run_test "repos module updates git repos" <<'UPDATES_TEST_CASE'
 repos_home="${tmp_dir}/home-repos"
 repos_dir="${repos_home}/GitRepos"
 mkdir -p "${repos_dir}/aman-claude-code-setup"
@@ -1008,7 +1280,9 @@ HOME="$repos_home" "$SCRIPT" --only repos --non-interactive --no-emoji --no-colo
 grep -q "git -C ${repos_dir}/aman-claude-code-setup pull --ff-only" "$CALL_LOG"
 grep -q "git -C ${repos_dir}/aman-codex-setup pull --ff-only" "$CALL_LOG"
 
-echo "Test: repos module respects REPOS_DIR config"
+UPDATES_TEST_CASE
+
+run_test "repos module respects REPOS_DIR config" <<'UPDATES_TEST_CASE'
 repos_config_home="${tmp_dir}/home-repos-config"
 repos_config_dir="${repos_config_home}/custom-repos"
 mkdir -p "${repos_config_dir}/aman-test-setup"
@@ -1022,13 +1296,17 @@ write_stub git 'echo "git $*" >>"$CALL_LOG"'
 HOME="$repos_config_home" "$SCRIPT" --only repos --non-interactive --no-emoji --no-color >/dev/null 2>&1
 grep -q "git -C ${repos_config_dir}/aman-test-setup pull --ff-only" "$CALL_LOG"
 
-echo "Test: repos module skips when no repos exist"
+UPDATES_TEST_CASE
+
+run_test "repos module skips when no repos exist" <<'UPDATES_TEST_CASE'
 repos_empty_home="${tmp_dir}/home-repos-empty"
 mkdir -p "${repos_empty_home}/GitRepos"
 out="$(HOME="$repos_empty_home" "$SCRIPT" --only repos --non-interactive --no-emoji --no-color 2>&1)" || true
 echo "$out" | grep -q 'repos END (SKIP)'
 
-echo "Test: repos module dry-run shows post-pull script"
+UPDATES_TEST_CASE
+
+run_test "repos module dry-run shows post-pull script" <<'UPDATES_TEST_CASE'
 repos_dry_home="${tmp_dir}/home-repos-dry"
 repos_dry_dir="${repos_dry_home}/GitRepos"
 mkdir -p "${repos_dry_dir}/aman-dry-setup/.git"
@@ -1039,11 +1317,15 @@ out="$(HOME="$repos_dry_home" "$SCRIPT" --dry-run --only repos --no-emoji --no-c
 echo "$out" | grep -q "DRY RUN: git -C ${repos_dry_dir}/aman-dry-setup pull --ff-only"
 echo "$out" | grep -q "DRY RUN: (cd ${repos_dry_dir}/aman-dry-setup && ./scripts/update.sh)"
 
-echo "Test: removed self-update repo override errors"
+UPDATES_TEST_CASE
+
+run_test "removed self-update repo override errors" <<'UPDATES_TEST_CASE'
 assert_self_update_override_rejected 'fake/repo' 'non-empty'
 assert_self_update_override_rejected '' 'empty'
 
-echo "Test: Unix self-update fresh newer-version cache reuses cached metadata"
+UPDATES_TEST_CASE
+
+run_test "Unix self-update never trusts forged newer-version cache metadata" <<'UPDATES_TEST_CASE'
 self_update_cache_install="${tmp_dir}/self-update-install-cache"
 self_update_cache_script="$(make_installed_copy "$self_update_cache_install")"
 self_update_cache_bin="${tmp_dir}/self-update-bin-cache"
@@ -1055,25 +1337,33 @@ write_stub_to_dir "$self_update_cache_bin" uname 'echo Darwin'
 # shellcheck disable=SC2016
 write_stub_to_dir "$self_update_cache_bin" brew 'echo "brew $*" >>"$CALL_LOG"'
 write_self_update_curl_stub "$self_update_cache_bin"
-create_self_update_fixture "$self_update_cache_fixture" "$SELF_UPDATE_NEXT_TEST_VERSION" 'unsupported-digest'
-write_self_update_cache_with_metadata "${self_update_cache_xdg}/updates/self-update-amanthanvi_updates.cache" "$(date +%s)" "v${SELF_UPDATE_NEXT_TEST_VERSION}" "$self_update_cache_fixture" 'md5:deadbeef'
+create_self_update_fixture "$self_update_cache_fixture" "$SELF_UPDATE_NEXT_TEST_VERSION"
+write_self_update_cache_with_metadata "${self_update_cache_xdg}/updates/self-update-amanthanvi_updates.cache" "$(date +%s)" "v${SELF_UPDATE_NEXT_TEST_VERSION}" "$self_update_cache_fixture"
+sed -i.bak 's#https://example.invalid/#https://forged.invalid/#g' "${self_update_cache_xdg}/updates/self-update-amanthanvi_updates.cache"
+rm -f "${self_update_cache_xdg}/updates/self-update-amanthanvi_updates.cache.bak"
 : >"$self_update_cache_http_log"
 : >"$CALL_LOG"
 out="$(CI='' UPDATES_SELF_UPDATE=1 XDG_CACHE_HOME="$self_update_cache_xdg" SELF_UPDATE_FIXTURE_DIR="$self_update_cache_fixture" SELF_UPDATE_CALL_LOG="$self_update_cache_http_log" PATH="${self_update_cache_bin}:${BASE_PATH}" "$self_update_cache_script" --only brew --no-emoji --no-color 2>&1)"
-if grep -q '^curl https://api.github.com/repos/amanthanvi/updates/releases/latest$' "$self_update_cache_http_log"; then
-	echo "Expected cached release metadata to suppress live GitHub metadata fetches" >&2
+grep -q '^curl https://api.github.com/repos/amanthanvi/updates/releases/latest$' "$self_update_cache_http_log"
+if grep -q 'https://forged.invalid/' "$self_update_cache_http_log"; then
+	echo "Expected forged cached URLs to be ignored" >&2
 	cat "$self_update_cache_http_log" >&2
 	exit 1
 fi
 grep -q '^curl https://example.invalid/updates-release.json$' "$self_update_cache_http_log"
-echo "$out" | grep -q 'self-update manifest digest missing or unsupported; continuing'
-if [ "$("$self_update_cache_script" --version)" != "$SELF_UPDATE_CURRENT_TEST_VERSION" ]; then
-	echo "Expected cached unsupported digest metadata to leave installed version unchanged" >&2
+cache_file="${self_update_cache_xdg}/updates/self-update-amanthanvi_updates.cache"
+[ "$(wc -l <"$cache_file" | tr -d ' ')" -eq 2 ]
+grep -q '^checked_at=[0-9][0-9]*$' "$cache_file"
+grep -q "^latest_tag=v${SELF_UPDATE_NEXT_TEST_VERSION}$" "$cache_file"
+if [ "$("$self_update_cache_script" --version)" != "$SELF_UPDATE_NEXT_TEST_VERSION" ]; then
+	echo "Expected live canonical metadata to authorize the newer version" >&2
 	exit 1
 fi
 grep -q '^brew update$' "$CALL_LOG"
 
-echo "Test: Unix self-update fresh newer-version tag-only cache fetches live metadata"
+UPDATES_TEST_CASE
+
+run_test "Unix self-update fresh newer-version tag-only cache fetches live metadata" <<'UPDATES_TEST_CASE'
 self_update_digest_install="${tmp_dir}/self-update-install-digest"
 self_update_digest_script="$(make_installed_copy "$self_update_digest_install")"
 self_update_digest_bin="${tmp_dir}/self-update-bin-digest"
@@ -1098,7 +1388,9 @@ if [ "$("$self_update_digest_script" --version)" != "$SELF_UPDATE_CURRENT_TEST_V
 	exit 1
 fi
 
-echo "Test: Unix self-update skips when release manifest is invalid"
+UPDATES_TEST_CASE
+
+run_test "Unix self-update skips when release manifest is invalid" <<'UPDATES_TEST_CASE'
 self_update_manifest_install="${tmp_dir}/self-update-install-manifest"
 self_update_manifest_script="$(make_installed_copy "$self_update_manifest_install")"
 self_update_manifest_bin="${tmp_dir}/self-update-bin-manifest"
@@ -1121,7 +1413,9 @@ if [ "$("$self_update_manifest_script" --version)" != "$SELF_UPDATE_CURRENT_TEST
 	exit 1
 fi
 
-echo "Test: Unix self-update works without Python or Node parsers"
+UPDATES_TEST_CASE
+
+run_test "Unix self-update works without Python or Node parsers" <<'UPDATES_TEST_CASE'
 self_update_fallback_install="${tmp_dir}/self-update-install-fallback"
 self_update_fallback_script="$(make_installed_copy "$self_update_fallback_install")"
 self_update_fallback_bin="${tmp_dir}/self-update-bin-fallback"
@@ -1197,14 +1491,18 @@ EOF
 	fi
 fi
 
-echo "Test: config BOM is tolerated"
+UPDATES_TEST_CASE
+
+run_test "config BOM is tolerated" <<'UPDATES_TEST_CASE'
 config_home_bom="${tmp_dir}/home-config-bom"
 mkdir -p "$config_home_bom"
 printf '\357\273\277BREW_MODE=greedy\n' >"${config_home_bom}/.updatesrc"
 out="$(HOME="$config_home_bom" "$SCRIPT" --dry-run --only brew --no-emoji --no-color)"
 echo "$out" | grep -q '^DRY RUN: brew upgrade --greedy$'
 
-echo "Test: USERPROFILE fallback finds config when HOME is empty"
+UPDATES_TEST_CASE
+
+run_test "USERPROFILE fallback finds config when HOME is empty" <<'UPDATES_TEST_CASE'
 config_home_userprofile="${tmp_dir}/home-config-userprofile"
 mkdir -p "$config_home_userprofile"
 cat >"${config_home_userprofile}/.updatesrc" <<EOF
@@ -1213,7 +1511,9 @@ EOF
 out="$(HOME="" USERPROFILE="$config_home_userprofile" "$SCRIPT" --dry-run --only brew --no-emoji --no-color)"
 echo "$out" | grep -q '^DRY RUN: brew upgrade --greedy$'
 
-echo "Test: pipx module logs correct commands"
+UPDATES_TEST_CASE
+
+run_test "pipx module logs correct commands" <<'UPDATES_TEST_CASE'
 write_stub uname 'echo Darwin'
 # shellcheck disable=SC2016
 write_stub git 'echo "GIT_TERMINAL_PROMPT=${GIT_TERMINAL_PROMPT:-} git $*" >>"$CALL_LOG"'
@@ -1221,29 +1521,39 @@ write_stub git 'echo "GIT_TERMINAL_PROMPT=${GIT_TERMINAL_PROMPT:-} git $*" >>"$C
 "$SCRIPT" --only pipx --no-emoji >/dev/null
 grep -q '^pipx upgrade-all$' "$CALL_LOG"
 
-echo "Test: rustup module logs correct commands"
+UPDATES_TEST_CASE
+
+run_test "rustup module logs correct commands" <<'UPDATES_TEST_CASE'
 : >"$CALL_LOG"
 "$SCRIPT" --only rustup --no-emoji >/dev/null
 grep -q '^rustup update$' "$CALL_LOG"
 
-echo "Test: claude module logs correct commands"
+UPDATES_TEST_CASE
+
+run_test "claude module logs correct commands" <<'UPDATES_TEST_CASE'
 : >"$CALL_LOG"
 "$SCRIPT" --only claude --no-emoji >/dev/null
 grep -q '^claude update$' "$CALL_LOG"
 
-echo "Test: pi module logs correct commands"
+UPDATES_TEST_CASE
+
+run_test "pi module logs correct commands" <<'UPDATES_TEST_CASE'
 : >"$CALL_LOG"
 "$SCRIPT" --only pi --no-emoji >/dev/null
 grep -q '^pi update$' "$CALL_LOG"
 
-echo "Test: empty ncu output means node module reports up-to-date"
+UPDATES_TEST_CASE
+
+run_test "empty ncu output means node module reports up-to-date" <<'UPDATES_TEST_CASE'
 rm -f "${stub_bin}/python" "${stub_bin}/python3"
 write_stub ncu 'echo "{}"'
 out="$("$SCRIPT" --only node --no-emoji --no-color)"
 echo "$out" | grep -q 'All global npm packages are up-to-date'
 write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
 
-echo "Test: node retries npm ERESOLVE with legacy peer deps"
+UPDATES_TEST_CASE
+
+run_test "node retries npm ERESOLVE with legacy peer deps" <<'UPDATES_TEST_CASE'
 write_stub ncu 'echo "{\"@tarquinen/opencode-dcp\":\"3.1.13\"}"'
 # shellcheck disable=SC2016
 write_stub npm '
@@ -1278,7 +1588,9 @@ fi
 grep -q 'retrying with --legacy-peer-deps' "$npm_eresolve_stderr"
 grep -q 'retrying once with npm-provided allow-scripts list' "$npm_eresolve_stderr"
 
-echo "Test: node fails when npm ERESOLVE retry fails"
+UPDATES_TEST_CASE
+
+run_test "node fails when npm ERESOLVE retry fails" <<'UPDATES_TEST_CASE'
 write_stub ncu 'echo "{\"@tarquinen/opencode-dcp\":\"3.1.13\"}"'
 # shellcheck disable=SC2016
 write_stub npm '
@@ -1302,7 +1614,11 @@ grep -q '^npm install -g --legacy-peer-deps -- @tarquinen/opencode-dcp@3.1.13$' 
 grep -q 'npm error code ERESOLVE' "$npm_eresolve_retry_stderr"
 grep -q 'retrying with --legacy-peer-deps' "$npm_eresolve_retry_stderr"
 
-echo "Test: node retry keeps configured npm flags literal and dedupes legacy peer deps"
+UPDATES_TEST_CASE
+
+run_test "node retry keeps configured npm flags literal and dedupes legacy peer deps" <<'UPDATES_TEST_CASE'
+write_stub ncu 'echo "{\"@tarquinen/opencode-dcp\":\"3.1.13\"}"'
+npm_eresolve_stderr="${tmp_dir}/npm-eresolve-stderr.log"
 touch "${tmp_dir}/--flag=literal-glob-target"
 config_home_npm_retry_flags="${tmp_dir}/home-npm-retry-flags"
 mkdir -p "$config_home_npm_retry_flags"
@@ -1344,7 +1660,9 @@ if [ "$retry_legacy_count" -ne 1 ]; then
 	exit 1
 fi
 
-echo "Test: node reruns npm with allow-scripts when npm requests approval"
+UPDATES_TEST_CASE
+
+run_test "node reruns npm with allow-scripts when npm requests approval" <<'UPDATES_TEST_CASE'
 write_stub ncu 'echo "{\"opencode-ai\":\"1.17.8\"}"'
 # shellcheck disable=SC2016
 write_stub npm '
@@ -1369,7 +1687,9 @@ if grep -q 'npm warn allow-scripts' "$npm_allow_scripts_stderr"; then
 fi
 grep -q 'retrying once with npm-provided allow-scripts list' "$npm_allow_scripts_stderr"
 
-echo "Test: node extracts allow-scripts flag without npm command wording"
+UPDATES_TEST_CASE
+
+run_test "node extracts allow-scripts flag without npm command wording" <<'UPDATES_TEST_CASE'
 write_stub ncu 'echo "{\"opencode-ai\":\"1.17.8\"}"'
 # shellcheck disable=SC2016
 write_stub npm '
@@ -1394,7 +1714,9 @@ if grep -q 'npm warn allow-scripts' "$npm_allow_scripts_flag_only_stderr"; then
 fi
 grep -q 'retrying once with npm-provided allow-scripts list' "$npm_allow_scripts_flag_only_stderr"
 
-echo "Test: node surfaces unparseable allow-scripts warnings without retrying"
+UPDATES_TEST_CASE
+
+run_test "node surfaces unparseable allow-scripts warnings without retrying" <<'UPDATES_TEST_CASE'
 write_stub ncu 'echo "{\"opencode-ai\":\"1.17.8\"}"'
 # shellcheck disable=SC2016
 write_stub npm '
@@ -1413,7 +1735,9 @@ fi
 grep -q 'no allow-scripts list could be parsed' "$npm_allow_scripts_unparseable_stderr"
 grep -q 'npm warn allow-scripts install scripts need approval' "$npm_allow_scripts_unparseable_stderr"
 
-echo "Test: NODE_NPM_INSTALL_FLAGS appears in node dry-run output"
+UPDATES_TEST_CASE
+
+run_test "NODE_NPM_INSTALL_FLAGS appears in node dry-run output" <<'UPDATES_TEST_CASE'
 write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
 # shellcheck disable=SC2016
 write_stub npm 'echo "npm $*" >>"$CALL_LOG"'
@@ -1425,7 +1749,9 @@ EOF
 out="$(HOME="$config_home_npm_flags" UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only node --no-emoji --no-color)"
 echo "$out" | grep -q 'DRY RUN: npm install -g --legacy-peer-deps -- <packages\.\.\.>'
 
-echo "Test: node dry-run without NODE_NPM_INSTALL_FLAGS omits extra flags"
+UPDATES_TEST_CASE
+
+run_test "node dry-run without NODE_NPM_INSTALL_FLAGS omits extra flags" <<'UPDATES_TEST_CASE'
 config_home_no_npm_flags="${tmp_dir}/home-no-npm-flags"
 mkdir -p "$config_home_no_npm_flags"
 cat >"${config_home_no_npm_flags}/.updatesrc" <<EOF
@@ -1433,7 +1759,11 @@ EOF
 out="$(HOME="$config_home_no_npm_flags" UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only node --no-emoji --no-color)"
 echo "$out" | grep -q 'DRY RUN: npm install -g -- <packages\.\.\.>'
 
-echo "Test: node dry-run without NODE_NPM_INSTALL_FLAGS works under nounset"
+UPDATES_TEST_CASE
+
+run_test "node dry-run without NODE_NPM_INSTALL_FLAGS works under nounset" <<'UPDATES_TEST_CASE'
+config_home_no_npm_flags="${tmp_dir}/home-no-npm-flags-nounset"
+mkdir -p "$config_home_no_npm_flags"
 out="$(HOME="$config_home_no_npm_flags" UPDATES_ALLOW_NON_DARWIN=1 bash -u "$SCRIPT" --dry-run --only node --no-emoji --no-color)"
 echo "$out" | grep -q 'DRY RUN: npm install -g -- <packages\.\.\.>'
 
@@ -1441,7 +1771,9 @@ write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
 # shellcheck disable=SC2016
 write_stub npm 'echo "npm $*" >>"$CALL_LOG"'
 
-echo "Test: node sources nvm before resolving npm tools"
+UPDATES_TEST_CASE
+
+run_test "node sources nvm before resolving npm tools" <<'UPDATES_TEST_CASE'
 nvm_home="${tmp_dir}/home-nvm"
 nvm_root="${nvm_home}/.nvm"
 nvm_bin="${nvm_root}/versions/node/v99.0.0/bin"
@@ -1459,7 +1791,9 @@ out="$(HOME="$nvm_home" NVM_DIR="$nvm_root" PATH="$BASE_PATH" "$SCRIPT" --only n
 echo "$out" | grep -q '^==> node END (OK)'
 grep -q '^nvm npm install -g -- npm@11.7.0$' "$CALL_LOG"
 
-echo "Test: node tolerates failing nvm.sh"
+UPDATES_TEST_CASE
+
+run_test "node tolerates failing nvm.sh" <<'UPDATES_TEST_CASE'
 failing_nvm_home="${tmp_dir}/home-nvm-failing"
 failing_nvm_root="${failing_nvm_home}/.nvm"
 mkdir -p "$failing_nvm_root"
@@ -1475,7 +1809,9 @@ out="$(HOME="$failing_nvm_home" NVM_DIR="$failing_nvm_root" "$SCRIPT" --only nod
 echo "$out" | grep -q '^==> node END (OK)'
 grep -q '^fallback npm install -g -- npm@11.7.0$' "$CALL_LOG"
 
-echo "Test: node falls back to npx npm-check-updates"
+UPDATES_TEST_CASE
+
+run_test "node falls back to npx npm-check-updates" <<'UPDATES_TEST_CASE'
 rm -f "${stub_bin}/ncu"
 # shellcheck disable=SC2016
 write_stub npm 'echo "npm $*" >>"$CALL_LOG"'
@@ -1515,7 +1851,9 @@ for dir in /usr/bin /bin /usr/sbin /sbin; do
 done
 LINUX_PM_PATH="${stub_bin}:${linux_sys_bin}"
 
-echo "Test: Linux dnf module (non-interactive dry-run)"
+UPDATES_TEST_CASE
+
+run_test "Linux dnf module (non-interactive dry-run)" <<'UPDATES_TEST_CASE'
 write_stub uname 'echo Linux'
 # shellcheck disable=SC2016
 write_stub dnf 'echo "dnf $*" >>"$CALL_LOG"'
@@ -1526,7 +1864,9 @@ write_stub sudo 'echo "sudo $*" >>"$CALL_LOG"; if [ "${1:-}" = "-n" ]; then shif
 out="$(PATH="$LINUX_PM_PATH" "$SCRIPT" --only linux --non-interactive --dry-run --no-emoji --no-color)"
 echo "$out" | grep -q 'DRY RUN:.*dnf upgrade'
 
-echo "Test: Linux pacman module (non-interactive dry-run)"
+UPDATES_TEST_CASE
+
+run_test "Linux pacman module (non-interactive dry-run)" <<'UPDATES_TEST_CASE'
 write_stub uname 'echo Linux'
 # shellcheck disable=SC2016
 write_stub pacman 'echo "pacman $*" >>"$CALL_LOG"'
@@ -1537,7 +1877,9 @@ write_stub sudo 'echo "sudo $*" >>"$CALL_LOG"; if [ "${1:-}" = "-n" ]; then shif
 out="$(PATH="$LINUX_PM_PATH" "$SCRIPT" --only linux --non-interactive --dry-run --no-emoji --no-color)"
 echo "$out" | grep -q 'DRY RUN:.*pacman -Syu'
 
-echo "Test: Linux zypper module (non-interactive dry-run)"
+UPDATES_TEST_CASE
+
+run_test "Linux zypper module (non-interactive dry-run)" <<'UPDATES_TEST_CASE'
 write_stub uname 'echo Linux'
 # shellcheck disable=SC2016
 write_stub zypper 'echo "zypper $*" >>"$CALL_LOG"'
@@ -1549,7 +1891,9 @@ out="$(PATH="$LINUX_PM_PATH" "$SCRIPT" --only linux --non-interactive --dry-run 
 echo "$out" | grep -q 'DRY RUN:.*zypper refresh'
 echo "$out" | grep -q 'DRY RUN:.*zypper update'
 
-echo "Test: Linux apk module (non-interactive dry-run)"
+UPDATES_TEST_CASE
+
+run_test "Linux apk module (non-interactive dry-run)" <<'UPDATES_TEST_CASE'
 write_stub uname 'echo Linux'
 # shellcheck disable=SC2016
 write_stub apk 'echo "apk $*" >>"$CALL_LOG"'
@@ -1567,7 +1911,9 @@ rm -f "${stub_bin}/dnf" "${stub_bin}/pacman" "${stub_bin}/zypper" "${stub_bin}/a
 # shellcheck disable=SC2016
 write_stub apt-get 'echo "apt-get $*" >>"$CALL_LOG"'
 
-echo "Test: config quoted values parse correctly"
+UPDATES_TEST_CASE
+
+run_test "config quoted values parse correctly" <<'UPDATES_TEST_CASE'
 config_home_quoted="${tmp_dir}/home-config-quoted"
 mkdir -p "$config_home_quoted"
 cat >"${config_home_quoted}/.updatesrc" <<EOF
@@ -1584,7 +1930,9 @@ EOF
 out="$(HOME="$config_home_squoted" "$SCRIPT" --dry-run --only brew --no-emoji --no-color)"
 echo "$out" | grep -q '^DRY RUN: brew upgrade --greedy$'
 
-echo "Test: config boolean keys work from config file"
+UPDATES_TEST_CASE
+
+run_test "config boolean keys work from config file" <<'UPDATES_TEST_CASE'
 config_home_bools="${tmp_dir}/home-config-bools"
 mkdir -p "$config_home_bools"
 cat >"${config_home_bools}/.updatesrc" <<EOF
@@ -1597,7 +1945,9 @@ out="$(HOME="$config_home_bools" "$SCRIPT" --dry-run --skip node,python,pipx,rus
 echo "$out" | grep -q '^==> mas START$'
 echo "$out" | grep -q '^==> macos START$'
 
-echo "Test: --strict stops on first module failure"
+UPDATES_TEST_CASE
+
+run_test "--strict stops on first module failure" <<'UPDATES_TEST_CASE'
 write_stub uname 'echo Darwin'
 write_stub brew 'exit 1'
 set +e
@@ -1617,7 +1967,9 @@ fi
 # shellcheck disable=SC2016
 write_stub brew 'echo "brew $*" >>"$CALL_LOG"'
 
-echo "Test: --log-file writes output to file"
+UPDATES_TEST_CASE
+
+run_test "--log-file writes output to file" <<'UPDATES_TEST_CASE'
 write_stub uname 'echo Darwin'
 log_file="${tmp_dir}/test-log-file.log"
 logfile_out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only brew --log-file "$log_file" --no-emoji --no-color 2>&1)"
@@ -1628,7 +1980,9 @@ fi
 grep -q 'brew START' "$log_file"
 echo "$logfile_out" | grep -q 'brew START'
 
-echo "Test: --log-file + --json interaction"
+UPDATES_TEST_CASE
+
+run_test "--log-file + --json interaction" <<'UPDATES_TEST_CASE'
 log_file_json="${tmp_dir}/test-log-file-json.log"
 json_log_stderr="${tmp_dir}/json-log-stderr.log"
 json_log_stdout="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --json --dry-run --only brew --log-file "$log_file_json" --no-emoji --no-color 2>"$json_log_stderr")"
@@ -1646,7 +2000,9 @@ assert found, 'Expected module_start event in JSON stdout'
 "
 grep -q '==> brew START' "$log_file_json"
 
-echo "Test: --parallel validation"
+UPDATES_TEST_CASE
+
+run_test "--parallel validation" <<'UPDATES_TEST_CASE'
 write_stub uname 'echo Darwin'
 set +e
 UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --parallel 0 --dry-run --only brew --no-emoji --no-color >/dev/null 2>&1
@@ -1673,7 +2029,9 @@ if [ "$rc" -ne 0 ]; then
 	exit 1
 fi
 
-echo "Test: --only linux on macOS exits with error"
+UPDATES_TEST_CASE
+
+run_test "--only linux on macOS exits with error" <<'UPDATES_TEST_CASE'
 write_stub uname 'echo Darwin'
 set +e
 linux_on_mac_out="$("$SCRIPT" --only linux --no-emoji --no-color 2>&1)"
@@ -1685,4 +2043,14 @@ if [ "$rc" -ne 2 ]; then
 fi
 echo "$linux_on_mac_out" | grep -q 'not supported'
 
-echo "All tests passed."
+UPDATES_TEST_CASE
+
+if [ -n "$TEST_FILTER" ] && [ "$TEST_MATCHED" -eq 0 ]; then
+	echo "No selectable test matched: $TEST_FILTER" >&2
+	exit 2
+fi
+if [ -n "$TEST_FILTER" ]; then
+	echo "Selected tests passed."
+else
+	echo "All tests passed."
+fi

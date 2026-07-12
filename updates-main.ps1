@@ -19,7 +19,7 @@ if ($CliArgs -and $CliArgs.Count -gt 0) {
     }
 }
 
-$script:UpdatesVersion = '2.0.2'
+$script:UpdatesVersion = '2.1.0'
 $script:CanonicalRepo = 'amanthanvi/updates'
 $script:ReleaseChannel = 'github-release'
 $script:ReleaseManifestName = 'updates-release.json'
@@ -52,6 +52,7 @@ $script:NonInteractive = $false
 $script:NoConfig = $false
 $script:SelfUpdate = $true
 $script:ForceSelfUpdate = $false
+$script:DoctorMode = $false
 $script:PipForce = $false
 $script:Parallel = $null
 $script:FullMode = $false
@@ -67,18 +68,18 @@ $script:ModuleRegistry = @(
     [ordered]@{ Name = 'shell';  Platforms = @('macos', 'linux'); Default = $true;  Description = 'Update Oh My Zsh and custom git plugins/themes' },
     [ordered]@{ Name = 'repos';  Platforms = @('macos', 'linux'); Default = $true;  Description = 'Update aman dev repos under ~/GitRepos' },
     [ordered]@{ Name = 'linux';  Platforms = @('linux');          Default = $true;  Description = 'Upgrade Linux system packages' },
-    [ordered]@{ Name = 'winget'; Platforms = @('windows');        Default = $true;  Description = 'Upgrade Windows packages via winget' },
-    [ordered]@{ Name = 'node';   Platforms = @('macos', 'linux', 'windows'); Default = $true; Description = 'Upgrade global npm packages via npm-check-updates' },
-    [ordered]@{ Name = 'bun';    Platforms = @('macos', 'linux', 'windows'); Default = $true; Description = 'Update Bun globals (and Bun itself when standalone-installed)' },
-    [ordered]@{ Name = 'python'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Description = 'Upgrade global Python packages via pip' },
-    [ordered]@{ Name = 'uv';     Platforms = @('macos', 'linux', 'windows'); Default = $true; Description = 'Update uv and uv-managed tools' },
+    [ordered]@{ Name = 'winget'; Platforms = @('windows'); Default = $true; Handler = 'Invoke-ModuleWinget'; Description = 'Upgrade Windows packages via winget' },
+    [ordered]@{ Name = 'node'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModuleNode'; Description = 'Upgrade global npm packages via npm-check-updates' },
+    [ordered]@{ Name = 'bun'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModuleBun'; Description = 'Update Bun globals (and Bun itself when standalone-installed)' },
+    [ordered]@{ Name = 'python'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModulePython'; Description = 'Upgrade global Python packages via pip' },
+    [ordered]@{ Name = 'uv'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModuleUv'; Description = 'Update uv and uv-managed tools' },
     [ordered]@{ Name = 'mas';    Platforms = @('macos');          Default = $false; Description = 'Upgrade Mac App Store apps via mas (opt-in)' },
-    [ordered]@{ Name = 'pipx';   Platforms = @('macos', 'linux', 'windows'); Default = $true; Description = 'Upgrade pipx-managed apps via pipx' },
-    [ordered]@{ Name = 'rustup'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Description = 'Update Rust toolchains via rustup' },
-    [ordered]@{ Name = 'claude'; Platforms = @('macos', 'linux'); Default = $true; Description = 'Update Claude Code CLI' },
-    [ordered]@{ Name = 'pi';     Platforms = @('macos', 'linux'); Default = $true; Description = 'Update pi AI CLI extensions via pi update' },
+    [ordered]@{ Name = 'pipx'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModulePipx'; Description = 'Upgrade pipx-managed apps via pipx' },
+    [ordered]@{ Name = 'rustup'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModuleRustup'; Description = 'Update Rust toolchains via rustup' },
+    [ordered]@{ Name = 'claude'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModuleClaude'; Description = 'Update Claude Code CLI' },
+    [ordered]@{ Name = 'pi'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModulePi'; Description = 'Update pi AI CLI extensions via pi update' },
     [ordered]@{ Name = 'mise';   Platforms = @('macos', 'linux'); Default = $true; Description = 'Update mise and upgrade installed tools' },
-    [ordered]@{ Name = 'go';     Platforms = @('macos', 'linux', 'windows'); Default = $true; Description = 'Update Go binaries from GO_BINARIES config' },
+    [ordered]@{ Name = 'go'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModuleGo'; Description = 'Update Go binaries from GO_BINARIES config' },
     [ordered]@{ Name = 'macos';  Platforms = @('macos');          Default = $false; Description = 'List available macOS software updates (opt-in)' }
 )
 
@@ -275,6 +276,7 @@ Options:
   -h, --help               Show this help
       --version            Print version
       --list-modules       List available modules
+      --doctor             Check local install integrity; make no changes or network requests
       --dry-run            Print what would run; make no changes
       --only <list>        Run only these modules (CSV; or quote a space-separated list)
       --skip <list>        Skip these modules (CSV; or quote a space-separated list)
@@ -305,6 +307,7 @@ function PreScan-NoConfig {
             '--help' { $script:NoConfig = $true }
             '--version' { $script:NoConfig = $true }
             '--list-modules' { $script:NoConfig = $true }
+            '--doctor' { $script:NoConfig = $true; $script:DoctorMode = $true }
         }
     }
 }
@@ -427,6 +430,7 @@ function Parse-Args {
             '--help' { Show-Usage; exit 0 }
             '--version' { [Console]::Out.WriteLine($script:UpdatesVersion); exit 0 }
             '--list-modules' { List-Modules | ForEach-Object { [Console]::Out.WriteLine($_) }; exit 0 }
+            '--doctor' { $script:DoctorMode = $true; $script:SelfUpdate = $false }
             '--dry-run' { $script:DryRun = $true }
             '--strict' { $script:Strict = $true }
             '--json' { $script:JsonMode = $true }
@@ -1179,23 +1183,41 @@ function Invoke-ModuleGo {
     return 0
 }
 
+function Invoke-ModuleClaude {
+    $claude = Resolve-ApplicationCommand @('claude.exe', 'claude.cmd', 'claude')
+    if (-not $claude) {
+        return (Resolve-MissingDependency -ModuleName 'claude' -Detail 'claude not found.')
+    }
+    $result = Invoke-LoggedProcess -FilePath $claude -ArgumentList @('update')
+    if ($result.ExitCode -ne 0) {
+        Write-ErrorLine 'claude: update failed'
+        return 1
+    }
+    return 0
+}
+
+function Invoke-ModulePi {
+    $pi = Resolve-ApplicationCommand @('pi.exe', 'pi.cmd', 'pi')
+    if (-not $pi) {
+        return (Resolve-MissingDependency -ModuleName 'pi' -Detail 'pi not found.')
+    }
+    $result = Invoke-LoggedProcess -FilePath $pi -ArgumentList @('update')
+    if ($result.ExitCode -ne 0) {
+        Write-ErrorLine 'pi: update failed'
+        return 1
+    }
+    return 0
+}
+
 function Invoke-Module {
     param([string]$ModuleName)
 
-    switch ($ModuleName) {
-        'winget' { return Invoke-ModuleWinget }
-        'node' { return Invoke-ModuleNode }
-        'bun' { return Invoke-ModuleBun }
-        'python' { return Invoke-ModulePython }
-        'uv' { return Invoke-ModuleUv }
-        'pipx' { return Invoke-ModulePipx }
-        'rustup' { return Invoke-ModuleRustup }
-        'go' { return Invoke-ModuleGo }
-        default {
-            Write-LogLine ("Skipping {0}: module is not implemented on native Windows." -f $ModuleName)
-            return 2
-        }
+    $module = Get-ModuleInfo -Name $ModuleName
+    if ($null -eq $module -or -not ($module.Platforms -contains 'windows') -or -not $module.Handler) {
+        Write-LogLine ("Skipping {0}: module is not implemented on native Windows." -f $ModuleName)
+        return 2
     }
+    return (& $module.Handler)
 }
 
 function Get-SelectedModules {
@@ -1258,6 +1280,31 @@ function Test-InstallRootWritable {
         return $true
     } catch {
         return $false
+    }
+}
+
+function Get-PathEffectiveWriteAccess {
+    param([string]$Path)
+    try {
+        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        $principals = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+        $null = $principals.Add($identity.User.Value)
+        foreach ($group in @($identity.Groups)) { $null = $principals.Add($group.Value) }
+        $rules = (Get-Acl -LiteralPath $Path -ErrorAction Stop).GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])
+        $writeMask = [System.Security.AccessControl.FileSystemRights]::Write -bor
+            [System.Security.AccessControl.FileSystemRights]::Modify -bor
+            [System.Security.AccessControl.FileSystemRights]::FullControl -bor
+            [System.Security.AccessControl.FileSystemRights]::CreateFiles -bor
+            [System.Security.AccessControl.FileSystemRights]::CreateDirectories
+        $allowed = $false
+        foreach ($rule in $rules) {
+            if (-not $principals.Contains($rule.IdentityReference.Value) -or (($rule.FileSystemRights -band $writeMask) -eq 0)) { continue }
+            if ($rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Deny) { return $false }
+            if ($rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow) { $allowed = $true }
+        }
+        return $allowed
+    } catch {
+        return $null
     }
 }
 
@@ -1368,11 +1415,18 @@ function Test-VersionedPayloadManifest {
     )
 
     $manifestPath = Join-Path $VersionRoot 'manifest.json'
-    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
-        return $false
-    }
+    $payloadPath = Join-Path $VersionRoot 'updates-main.ps1'
 
     try {
+        $rootFull = [System.IO.Path]::GetFullPath($VersionRoot).TrimEnd('\', '/')
+        $rootItem = Get-Item -LiteralPath $rootFull -Force -ErrorAction Stop
+        if (($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+        foreach ($trustedPath in @($manifestPath, $payloadPath)) {
+            $full = [System.IO.Path]::GetFullPath($trustedPath)
+            if (-not $full.StartsWith($rootFull + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+            $item = Get-Item -LiteralPath $full -Force -ErrorAction Stop
+            if ($item.PSIsContainer -or ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+        }
         $manifest = (Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -AsHashtable)
     } catch {
         return $false
@@ -1394,7 +1448,51 @@ function Test-VersionedPayloadManifest {
         return $false
     }
 
-    return (Test-Path -LiteralPath (Join-Path $VersionRoot 'updates-main.ps1') -PathType Leaf)
+    try {
+        $payloadText = [System.IO.File]::ReadAllText($payloadPath)
+        $assignments = [regex]::Matches($payloadText, '(?m)^\s*\$script:UpdatesVersion\s*=.*$')
+        $canonical = [regex]::Matches($payloadText, '(?m)^\$script:UpdatesVersion = ''(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)''$')
+        return $assignments.Count -eq 1 -and $canonical.Count -eq 1 -and $canonical[0].Groups[1].Value -eq $ExpectedVersion
+    } catch {
+        return $false
+    }
+}
+
+function Test-ContainedRegularFile {
+    param([string]$RootPath, [string]$Path)
+    try {
+        $rootFull = [System.IO.Path]::GetFullPath($RootPath).TrimEnd('\', '/')
+        $pathFull = [System.IO.Path]::GetFullPath($Path)
+        if (-not $pathFull.StartsWith($rootFull + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+        $item = Get-Item -LiteralPath $pathFull -Force -ErrorAction Stop
+        return (-not $item.PSIsContainer -and ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0)
+    } catch {
+        return $false
+    }
+}
+
+function Test-SelfUpdateMutationRootsSafe {
+    param(
+        [string]$VersionsRoot,
+        [string]$StagingRoot,
+        [string]$TargetRoot
+    )
+    try {
+        $installFull = [System.IO.Path]::GetFullPath($script:InstallRoot).TrimEnd('\', '/')
+        $versionsFull = [System.IO.Path]::GetFullPath($VersionsRoot).TrimEnd('\', '/')
+        if (-not $versionsFull.StartsWith($installFull + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+        foreach ($path in @($installFull, $versionsFull, $StagingRoot, $TargetRoot)) {
+            $full = [System.IO.Path]::GetFullPath($path)
+            if ($path -ne $installFull -and -not $full.StartsWith($installFull + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+            if (Test-Path -LiteralPath $full) {
+                $item = Get-Item -LiteralPath $full -Force -ErrorAction Stop
+                if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+            }
+        }
+        return $true
+    } catch {
+        return $false
+    }
 }
 
 function Update-InstallReceiptVersion {
@@ -1403,7 +1501,36 @@ function Update-InstallReceiptVersion {
     $receiptPath = Join-Path $script:InstallRoot 'install-source.json'
     $receipt = (Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -AsHashtable)
     $receipt.installed_version = $Version
-    ($receipt | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath $receiptPath -Encoding utf8NoBOM
+    $temp = Join-Path $script:InstallRoot ('.install-source.{0}.tmp' -f [guid]::NewGuid().ToString('N'))
+    try {
+        [System.IO.File]::WriteAllText($temp, (($receipt | ConvertTo-Json -Depth 5) + "`n"), [System.Text.UTF8Encoding]::new($false))
+        Invoke-SelfUpdateCommitHook -Step 'receipt-temp'
+        Move-Item -LiteralPath $temp -Destination $receiptPath -Force
+    } finally {
+        if (Test-Path -LiteralPath $temp) {
+            Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Invoke-SelfUpdateCommitHook {
+    param([string]$Step)
+    if ($env:UPDATES_SELF_UPDATE_TESTING -eq '1' -and $env:UPDATES_SELF_UPDATE_FAIL_AFTER -eq $Step) {
+        throw "injected self-update failure after $Step"
+    }
+}
+
+function Commit-SelfUpdateMetadata {
+    param([string]$PreviousVersion, [string]$InstalledVersion)
+
+    Write-VersionPointer -Name 'previous.txt' -Value $PreviousVersion
+    Invoke-SelfUpdateCommitHook -Step 'previous'
+    # Receipt records the newest fully installed valid payload, which may precede activation.
+    Update-InstallReceiptVersion -Version $InstalledVersion
+    Invoke-SelfUpdateCommitHook -Step 'receipt'
+    # Activate last, after payload, rollback pointer, and receipt are durable.
+    Write-VersionPointer -Name 'current.txt' -Value $InstalledVersion
+    Invoke-SelfUpdateCommitHook -Step 'current'
 }
 
 function Write-VersionPointer {
@@ -1414,8 +1541,15 @@ function Write-VersionPointer {
 
     $target = Join-Path $script:InstallRoot $Name
     $temp = Join-Path $script:InstallRoot ('.{0}.{1}.tmp' -f $Name, [guid]::NewGuid().ToString('N'))
-    [System.IO.File]::WriteAllText($temp, ($Value + "`n"), [System.Text.UTF8Encoding]::new($false))
-    Move-Item -LiteralPath $temp -Destination $target -Force
+    try {
+        [System.IO.File]::WriteAllText($temp, ($Value + "`n"), [System.Text.UTF8Encoding]::new($false))
+        Invoke-SelfUpdateCommitHook -Step (($Name -replace '\.txt$', '') + '-temp')
+        Move-Item -LiteralPath $temp -Destination $target -Force
+    } finally {
+        if (Test-Path -LiteralPath $temp) {
+            Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Get-SelfUpdateEpoch {
@@ -1454,29 +1588,11 @@ function Read-SelfUpdateCache {
     try {
         $checkedAt = $null
         $latestTag = $null
-        $draft = $null
-        $prerelease = $null
-        $immutable = $null
-        $windowsUrl = $null
-        $windowsDigest = $null
-        $manifestUrl = $null
-        $manifestDigest = $null
-        $sumsUrl = $null
-        $sumsDigest = $null
         foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
-            if ($line -match '^(checked_at|latest_tag|draft|prerelease|immutable|windows_url|windows_digest|manifest_url|manifest_digest|sums_url|sums_digest)=(.*)$') {
+            if ($line -match '^(checked_at|latest_tag)=(.*)$') {
                 switch ($Matches[1]) {
                     'checked_at' { $checkedAt = $Matches[2] }
                     'latest_tag' { $latestTag = $Matches[2] }
-                    'draft' { $draft = $Matches[2] }
-                    'prerelease' { $prerelease = $Matches[2] }
-                    'immutable' { $immutable = $Matches[2] }
-                    'windows_url' { $windowsUrl = $Matches[2] }
-                    'windows_digest' { $windowsDigest = $Matches[2] }
-                    'manifest_url' { $manifestUrl = $Matches[2] }
-                    'manifest_digest' { $manifestDigest = $Matches[2] }
-                    'sums_url' { $sumsUrl = $Matches[2] }
-                    'sums_digest' { $sumsDigest = $Matches[2] }
                 }
             }
         }
@@ -1486,17 +1602,8 @@ function Read-SelfUpdateCache {
         }
 
         return [pscustomobject]@{
-            CheckedAt      = [int64]$checkedAt
-            LatestTag      = $latestTag
-            Draft          = $draft
-            Prerelease     = $prerelease
-            Immutable      = $immutable
-            WindowsUrl     = $windowsUrl
-            WindowsDigest  = $windowsDigest
-            ManifestUrl    = $manifestUrl
-            ManifestDigest = $manifestDigest
-            SumsUrl        = $sumsUrl
-            SumsDigest     = $sumsDigest
+            CheckedAt = [int64]$checkedAt
+            LatestTag = $latestTag
         }
     } catch {
         return $null
@@ -1516,42 +1623,11 @@ function Test-SelfUpdateCacheFresh {
     return (($CurrentEpoch - $CheckedAt) -lt $script:SelfUpdateCacheTtl)
 }
 
-function Test-SelfUpdateCacheHasReleaseMetadata {
-    param($Cache)
-
-    if ($null -eq $Cache) {
-        return $false
-    }
-
-    foreach ($name in @('Draft', 'Prerelease', 'Immutable')) {
-        if ([string]$Cache.$name -notin @('0', '1')) {
-            return $false
-        }
-    }
-
-    foreach ($name in @('WindowsUrl', 'WindowsDigest', 'ManifestUrl', 'ManifestDigest', 'SumsUrl', 'SumsDigest')) {
-        if ([string]::IsNullOrWhiteSpace([string]$Cache.$name)) {
-            return $false
-        }
-    }
-
-    return $true
-}
-
 function Write-SelfUpdateCache {
     param(
         [string]$Path,
         [int64]$CheckedAt,
-        [string]$LatestTag,
-        [string]$Draft = '',
-        [string]$Prerelease = '',
-        [string]$Immutable = '',
-        [string]$WindowsUrl = '',
-        [string]$WindowsDigest = '',
-        [string]$ManifestUrl = '',
-        [string]$ManifestDigest = '',
-        [string]$SumsUrl = '',
-        [string]$SumsDigest = ''
+        [string]$LatestTag
     )
 
     if (-not $Path -or [string]::IsNullOrWhiteSpace($LatestTag)) {
@@ -1567,15 +1643,6 @@ function Write-SelfUpdateCache {
         $content = @(
             ("checked_at={0}" -f $CheckedAt)
             ("latest_tag={0}" -f $LatestTag)
-            ("draft={0}" -f $Draft)
-            ("prerelease={0}" -f $Prerelease)
-            ("immutable={0}" -f $Immutable)
-            ("windows_url={0}" -f $WindowsUrl)
-            ("windows_digest={0}" -f $WindowsDigest)
-            ("manifest_url={0}" -f $ManifestUrl)
-            ("manifest_digest={0}" -f $ManifestDigest)
-            ("sums_url={0}" -f $SumsUrl)
-            ("sums_digest={0}" -f $SumsDigest)
             ''
         ) -join "`n"
         [System.IO.File]::WriteAllText($temp, $content, [System.Text.UTF8Encoding]::new($false))
@@ -1638,33 +1705,9 @@ function Invoke-WindowsSelfUpdate {
                     Write-DebugLine ("self-update: using cached release tag ({0}) from {1}" -f $cachedTag, $cachePath)
                     return
                 }
-                if (Test-SelfUpdateCacheHasReleaseMetadata -Cache $cache) {
-                    $latestTag = $cachedTag
-                    $latestVersion = $cachedVersion
-                    $releaseDraft = ([string]$cache.Draft -eq '1')
-                    $releasePrerelease = ([string]$cache.Prerelease -eq '1')
-                    $releaseImmutable = ([string]$cache.Immutable -eq '1')
-                    $assets = @{
-                        $script:WindowsAssetName = [pscustomobject]@{
-                            name = $script:WindowsAssetName
-                            digest = [string]$cache.WindowsDigest
-                            browser_download_url = [string]$cache.WindowsUrl
-                        }
-                        $script:ReleaseManifestName = [pscustomobject]@{
-                            name = $script:ReleaseManifestName
-                            digest = [string]$cache.ManifestDigest
-                            browser_download_url = [string]$cache.ManifestUrl
-                        }
-                        $script:ChecksumAssetName = [pscustomobject]@{
-                            name = $script:ChecksumAssetName
-                            digest = [string]$cache.SumsDigest
-                            browser_download_url = [string]$cache.SumsUrl
-                        }
-                    }
-                    Write-DebugLine ("self-update: using cached release metadata for newer tag ({0}) from {1}" -f $cachedTag, $cachePath)
-                } else {
-                    Write-DebugLine ("self-update: cached release tag ({0}) is newer but metadata is incomplete; fetching live metadata" -f $cachedTag)
-                }
+                # A newer cached tag is only a hint. URLs, digests, and trust state must
+                # always come from fresh canonical GitHub release metadata.
+                Write-DebugLine ("self-update: cached release tag ({0}) is newer; fetching live metadata" -f $cachedTag)
             }
         }
     }
@@ -1701,16 +1744,7 @@ function Invoke-WindowsSelfUpdate {
         $null = Write-SelfUpdateCache `
             -Path $cachePath `
             -CheckedAt $currentEpoch `
-            -LatestTag $latestTag `
-            -Draft $(if ($releaseDraft) { '1' } else { '0' }) `
-            -Prerelease $(if ($releasePrerelease) { '1' } else { '0' }) `
-            -Immutable $(if ($releaseImmutable) { '1' } else { '0' }) `
-            -WindowsUrl $windowsUrl `
-            -WindowsDigest $windowsDigest `
-            -ManifestUrl $manifestUrl `
-            -ManifestDigest $manifestDigest `
-            -SumsUrl $sumsUrl `
-            -SumsDigest $sumsDigest
+            -LatestTag $latestTag
 
         if ([version]$latestVersion -le [version]$script:UpdatesVersion) {
             return
@@ -1737,6 +1771,7 @@ function Invoke-WindowsSelfUpdate {
 
     $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('updates-self-update-{0}' -f ([guid]::NewGuid().ToString('N')))
     $null = New-Item -ItemType Directory -Path $tempRoot -Force
+    $ownedStagingRoot = $null
     try {
         $zipPath = Join-Path $tempRoot $script:WindowsAssetName
         $manifestPath = Join-Path $tempRoot $script:ReleaseManifestName
@@ -1762,12 +1797,13 @@ function Invoke-WindowsSelfUpdate {
             return
         }
 
-        $sumEntry = Select-String -LiteralPath $sumsPath -Pattern ('\s{0}$' -f [regex]::Escape($script:WindowsAssetName)) | Select-Object -First 1
+        $sumPattern = ('^([0-9a-fA-F]{{64}})\s+{0}$' -f [regex]::Escape($script:WindowsAssetName))
+        $sumEntry = Select-String -LiteralPath $sumsPath -Pattern $sumPattern | Select-Object -First 1
         if (-not $sumEntry) {
             Write-WarnLine 'updates: self-update checksum entry missing; continuing.'
             return
         }
-        $expectedZipHash = ($sumEntry.Line -split '\s+')[0].ToLowerInvariant()
+        $expectedZipHash = $sumEntry.Matches[0].Groups[1].Value.ToLowerInvariant()
         $actualZipHash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($expectedZipHash -ne $actualZipHash) {
             Write-WarnLine 'updates: self-update checksum mismatch; continuing.'
@@ -1783,21 +1819,36 @@ function Invoke-WindowsSelfUpdate {
         }
 
         $versionsRoot = Join-Path $script:InstallRoot 'versions'
-        $stagingRoot = Join-Path $versionsRoot ("{0}.staging" -f $latestVersion)
+        $stagingRoot = Join-Path $versionsRoot ("{0}.{1}.staging" -f $latestVersion, [guid]::NewGuid().ToString('N'))
         $targetRoot = Join-Path $versionsRoot $latestVersion
+        if (-not (Test-SelfUpdateMutationRootsSafe -VersionsRoot $versionsRoot -StagingRoot $stagingRoot -TargetRoot $targetRoot)) {
+            Write-WarnLine 'updates: self-update install paths are redirected or unsafe; continuing.'
+            return
+        }
+        $ownedStagingRoot = $stagingRoot
         if (Test-Path -LiteralPath $stagingRoot) {
             Remove-Item -LiteralPath $stagingRoot -Recurse -Force
         }
         Copy-Item -LiteralPath $newVersionRoot -Destination $stagingRoot -Recurse -Force
-        if (Test-Path -LiteralPath $targetRoot) {
-            Remove-Item -LiteralPath $targetRoot -Recurse -Force
+        Invoke-SelfUpdateCommitHook -Step 'payload-staged'
+        if (-not (Test-VersionedPayloadManifest -VersionRoot $stagingRoot -ExpectedVersion $latestVersion)) {
+            throw 'self-update staged payload failed validation'
         }
-        Move-Item -LiteralPath $stagingRoot -Destination $targetRoot
+        Invoke-SelfUpdateCommitHook -Step 'payload-validated'
+        if (Test-Path -LiteralPath $targetRoot) {
+            if (Test-VersionedPayloadManifest -VersionRoot $targetRoot -ExpectedVersion $latestVersion) {
+                Remove-Item -LiteralPath $stagingRoot -Recurse -Force
+            } else {
+                Remove-Item -LiteralPath $targetRoot -Recurse -Force
+                Move-Item -LiteralPath $stagingRoot -Destination $targetRoot
+            }
+        } else {
+            Move-Item -LiteralPath $stagingRoot -Destination $targetRoot
+        }
+        Invoke-SelfUpdateCommitHook -Step 'target-committed'
 
         # Preserve the validated running payload version even if bootstrap recovered via previous.txt.
-        Write-VersionPointer -Name 'previous.txt' -Value $script:UpdatesVersion
-        Write-VersionPointer -Name 'current.txt' -Value $latestVersion
-        Update-InstallReceiptVersion -Version $latestVersion
+        Commit-SelfUpdateMetadata -PreviousVersion $script:UpdatesVersion -InstalledVersion $latestVersion
 
         Write-WarnLine ("updates: updated to {0}; restarting" -f $latestVersion)
         return [pscustomobject]@{
@@ -1811,6 +1862,22 @@ function Invoke-WindowsSelfUpdate {
         return
     }
     finally {
+        try {
+            if ($ownedStagingRoot -and (Test-Path -LiteralPath $ownedStagingRoot)) {
+                $versionsRoot = Join-Path $script:InstallRoot 'versions'
+                $targetRoot = Join-Path $versionsRoot $latestVersion
+                $stagingItem = Get-Item -LiteralPath $ownedStagingRoot -Force -ErrorAction Stop
+                if (
+                    [System.IO.Path]::GetFileName($ownedStagingRoot) -match ('^{0}\.[0-9a-f]{{32}}\.staging$' -f [regex]::Escape($latestVersion)) -and
+                    ($stagingItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0 -and
+                    (Test-SelfUpdateMutationRootsSafe -VersionsRoot $versionsRoot -StagingRoot $ownedStagingRoot -TargetRoot $targetRoot)
+                ) {
+                    Remove-Item -LiteralPath $ownedStagingRoot -Recurse -Force -ErrorAction Stop
+                }
+            }
+        } catch {
+            # Preserve the original self-update result; never follow or broaden cleanup past the owned staging root.
+        }
         if (Test-Path -LiteralPath $tempRoot) {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
         }
@@ -1870,6 +1937,105 @@ function Invoke-SelectedModules {
     return 0
 }
 
+function Invoke-WindowsDoctor {
+    $counts = @{ ok = 0; warn = 0; fail = 0 }
+    function Add-DoctorCheck {
+        param([string]$Check, [string]$Status, [string]$Message)
+        $counts[$Status]++
+        Write-JsonEvent @{ event = 'doctor_check'; check = $Check; status = $Status; message = $Message }
+        if (-not $script:JsonMode) {
+            [Console]::Out.WriteLine(('{0,-5} {1,-20} {2}' -f $Status.ToUpperInvariant(), $Check, $Message))
+        }
+    }
+
+    $bootstrapFiles = @('updates.cmd', 'updates.ps1')
+    $missingBootstrap = @($bootstrapFiles | Where-Object { -not (Test-ContainedRegularFile -RootPath $script:InstallRoot -Path (Join-Path $script:InstallRoot $_)) })
+    if ($missingBootstrap.Count -eq 0) {
+        Add-DoctorCheck 'bootstrap' 'ok' 'bootstrap entrypoints are present'
+    } else {
+        Add-DoctorCheck 'bootstrap' 'fail' ("missing, redirected, or outside install root: {0}" -f ($missingBootstrap -join ', '))
+    }
+
+    $pointerResults = @{}
+    foreach ($pointer in @('current.txt', 'previous.txt')) {
+        $path = Join-Path $script:InstallRoot $pointer
+        if (-not (Test-ContainedRegularFile -RootPath $script:InstallRoot -Path $path)) {
+            $status = if ($pointer -eq 'current.txt') { 'fail' } else { 'warn' }
+            Add-DoctorCheck $pointer $status 'pointer is missing, redirected, or outside install root'
+            continue
+        }
+        try {
+            $version = ([System.IO.File]::ReadAllText($path)).Trim()
+            if ([string]::IsNullOrWhiteSpace($version) -and $pointer -eq 'previous.txt') {
+                Add-DoctorCheck $pointer 'ok' 'rollback pointer is empty (fresh install)'
+                continue
+            }
+            if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') { throw 'pointer is not SemVer' }
+            $root = [System.IO.Path]::GetFullPath((Join-Path (Join-Path $script:InstallRoot 'versions') $version))
+            $rootItem = Get-Item -LiteralPath $root -Force -ErrorAction Stop
+            if (($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'payload root is a reparse point' }
+            if (-not (Test-VersionedPayloadManifest -VersionRoot $root -ExpectedVersion $version)) { throw 'payload or manifest is invalid' }
+            $pointerResults[$pointer] = $version
+            Add-DoctorCheck $pointer 'ok' ("valid payload v{0}" -f $version)
+        } catch {
+            $status = if ($pointer -eq 'current.txt') { 'fail' } else { 'warn' }
+            Add-DoctorCheck $pointer $status $_.Exception.Message
+        }
+    }
+
+    $receiptPath = Join-Path $script:InstallRoot 'install-source.json'
+    try {
+        if (-not (Test-ContainedRegularFile -RootPath $script:InstallRoot -Path $receiptPath)) { throw 'receipt is missing, redirected, or outside install root' }
+        $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -AsHashtable
+        if ($receipt.kind -ne 'standalone' -or $receipt.channel -ne $script:ReleaseChannel -or $receipt.source_repo -ne $script:CanonicalRepo -or $receipt.scope -ne 'user') {
+            throw 'receipt does not match the official standalone contract'
+        }
+        $receiptVersion = [string]$receipt.installed_version
+        if ($receiptVersion -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') { throw 'installed_version is not SemVer' }
+        $receiptRoot = Join-Path (Join-Path $script:InstallRoot 'versions') $receiptVersion
+        if (-not (Test-VersionedPayloadManifest -VersionRoot $receiptRoot -ExpectedVersion $receiptVersion)) { throw 'receipt-referenced payload is missing or invalid' }
+        Add-DoctorCheck 'install-receipt' 'ok' ("official standalone receipt references valid payload v{0}" -f $receiptVersion)
+    } catch {
+        Add-DoctorCheck 'install-receipt' 'fail' $_.Exception.Message
+    }
+
+    $versionsRoot = Join-Path $script:InstallRoot 'versions'
+    $staging = @(if (Test-Path -LiteralPath $versionsRoot -PathType Container) { Get-ChildItem -LiteralPath $versionsRoot -Directory -Filter '*.staging' -ErrorAction SilentlyContinue })
+    if ($staging.Count -gt 0) {
+        Add-DoctorCheck 'staging' 'warn' ("abandoned staging directories: {0}" -f (($staging | ForEach-Object Name) -join ', '))
+    } else {
+        Add-DoctorCheck 'staging' 'ok' 'no abandoned staging directories'
+    }
+
+    try {
+        $item = Get-Item -LiteralPath $script:InstallRoot -Force -ErrorAction Stop
+        if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { throw 'install root is a reparse point' }
+        $versionsItem = Get-Item -LiteralPath $versionsRoot -Force -ErrorAction Stop
+        if ($versionsItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { throw 'versions root is a reparse point' }
+        foreach ($version in @($pointerResults.Values)) {
+            $versionItem = Get-Item -LiteralPath (Join-Path $versionsRoot $version) -Force -ErrorAction Stop
+            if ($versionItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { throw ("payload root v{0} is a reparse point" -f $version) }
+        }
+        $writeAccess = Get-PathEffectiveWriteAccess -Path $script:InstallRoot
+        if ($null -eq $writeAccess) {
+            Add-DoctorCheck 'install-root' 'warn' 'paths are accessible and not reparse points; effective write access could not be determined'
+        } elseif ($writeAccess) {
+            Add-DoctorCheck 'install-root' 'ok' 'paths are accessible, contained, and effectively writable'
+        } else {
+            Add-DoctorCheck 'install-root' 'fail' 'install root is not effectively writable'
+        }
+    } catch {
+        Add-DoctorCheck 'install-root' 'fail' $_.Exception.Message
+    }
+
+    Write-JsonEvent @{ event = 'doctor_summary'; ok = $counts.ok; warn = $counts.warn; fail = $counts.fail }
+    if (-not $script:JsonMode) {
+        [Console]::Out.WriteLine(('SUMMARY ok={0} warn={1} fail={2}' -f $counts.ok, $counts.warn, $counts.fail))
+    }
+    if ($counts.fail -gt 0) { return 1 }
+    return 0
+}
+
 function Invoke-UpdatesMain {
     PreScan-NoConfig -CliInput $script:EffectiveCliArgs
     Read-Config
@@ -1879,6 +2045,9 @@ function Invoke-UpdatesMain {
         Fail-Usage ("UPDATES_SELF_UPDATE_REPO is no longer supported in v2.0.0; self-update is fixed to {0}" -f $script:CanonicalRepo)
     }
 
+    if ($script:DoctorMode) {
+        return (Invoke-WindowsDoctor)
+    }
     Ensure-LogFileReady
     Validate-OnlyModulesSupported
     $selfUpdateResult = Invoke-WindowsSelfUpdate -OriginalArgs $script:EffectiveCliArgs

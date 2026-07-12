@@ -53,12 +53,72 @@ release_script_version() {
 
 release_script_version_from_path() {
 	local path="${1:-updates}"
-	awk -F'"' '/^UPDATES_VERSION=/{print $2; exit}' "$path"
+	awk '
+		/^UPDATES_VERSION[[:space:]]*=/ {
+			assignments++
+			if ($0 ~ /^UPDATES_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/) {
+				canonical++
+				value = $0
+				sub(/^UPDATES_VERSION="/, "", value)
+				sub(/"$/, "", value)
+			}
+		}
+		END { if (assignments == 1 && canonical == 1) print value }
+	' "$path"
 }
 
 release_windows_payload_version() {
 	local path="${1:-updates-main.ps1}"
-	awk -F"'" '/^\$script:UpdatesVersion[[:space:]]*=/{print $2; exit}' "$path"
+	awk '
+		/^\$script:UpdatesVersion[[:space:]]*=/ {
+			assignments++
+			if ($0 ~ /^\$script:UpdatesVersion = '\''[0-9]+\.[0-9]+\.[0-9]+'\''$/) {
+				canonical++
+				value = $0
+				sub(/^\$script:UpdatesVersion = '\''/, "", value)
+				sub(/'\''$/, "", value)
+			}
+		}
+		END { if (assignments == 1 && canonical == 1) print value }
+	' "$path"
+}
+
+release_validate_invariants() {
+	local requested="${1:-}"
+	local tag="${2:-}"
+	local unix_path="${3:-updates}"
+	local windows_path="${4:-updates-main.ps1}"
+	local changelog_path="${5:-CHANGELOG.md}"
+	local version=""
+	local expected_tag=""
+	local unix_version=""
+	local windows_version=""
+
+	version="$(release_normalize_version "$requested")"
+	release_validate_version "$version"
+	expected_tag="$(release_tag_for_version "$version")"
+
+	if [ -n "$tag" ] && [ "$tag" != "$expected_tag" ]; then
+		release_fail "Release tag ($tag) does not match requested version ($version)"
+	fi
+
+	release_require_file "$unix_path"
+	release_require_file "$windows_path"
+	release_require_file "$changelog_path"
+
+	unix_version="$(release_script_version_from_path "$unix_path")"
+	[ -n "$unix_version" ] || release_fail "Failed to detect UPDATES_VERSION in $unix_path"
+	if [ "$unix_version" != "$version" ]; then
+		release_fail "UPDATES_VERSION ($unix_version) does not match requested version ($version)"
+	fi
+
+	windows_version="$(release_windows_payload_version "$windows_path")"
+	[ -n "$windows_version" ] || release_fail "Failed to detect UpdatesVersion in $windows_path"
+	if [ "$windows_version" != "$version" ]; then
+		release_fail "UpdatesVersion ($windows_version) does not match requested version ($version)"
+	fi
+
+	grep -q "^## \\[$version\\]" "$changelog_path" || release_fail "CHANGELOG.md missing entry for version $version"
 }
 
 release_resolve_path() {

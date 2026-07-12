@@ -17,8 +17,8 @@ if (-not $IsWindows) {
 Remove-Item Env:CI -ErrorAction SilentlyContinue
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$currentReleaseVersion = '2.0.2'
-$previousReleaseVersion = '2.0.1'
+$currentReleaseVersion = '2.1.0'
+$previousReleaseVersion = '2.0.2'
 
 function Should-RunTest {
     param(
@@ -44,6 +44,13 @@ function Invoke-WithTempInstall {
     }
 }
 
+function New-MatchedVersionedPayload {
+    param([string]$InstallRoot, [string]$Version)
+    $payload = Get-Content -LiteralPath (Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot) -Raw
+    $payload = [regex]::Replace($payload, '(?m)^\$script:UpdatesVersion\s*=\s*''[^'']+''', ("`$script:UpdatesVersion = '{0}'" -f $Version), 1)
+    New-VersionedPayload -InstallRoot $InstallRoot -Version $Version -PayloadContent $payload
+}
+
 function New-SelfUpdateFixture {
     param(
         [Parameter(Mandatory = $true)]
@@ -60,6 +67,7 @@ function New-SelfUpdateFixture {
     $sumsPath = Join-Path $fixtureRoot 'SHA256SUMS'
 
     Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $assetRoot -Version $Version -WithReceipt
+    Write-Utf8NoBom -Path (Join-Path $assetRoot 'previous.txt') -Content ''
     if ($PayloadBootstrapMin -ne 1) {
         $payloadManifestPath = Join-Path $assetRoot (Join-Path 'versions' (Join-Path $Version 'manifest.json'))
         Write-JsonFile -Path $payloadManifestPath -Data ([ordered]@{
@@ -151,6 +159,250 @@ if (Should-RunTest 'install-windows.ps1 creates official standalone layout under
             }
             Assert-Equal -Expected 0 -Actual $versionResult.ExitCode -Message 'installed updates.cmd --version should exit 0'
             Assert-Equal -Expected $currentReleaseVersion -Actual ($versionResult.Stdout.Trim()) -Message 'installed updates.cmd --version should print the payload version'
+        }
+    }
+}
+
+if (Should-RunTest 'install-windows.ps1 verifies optional local ZIP SHA256') {
+    Invoke-TestCase 'install-windows.ps1 verifies optional local ZIP SHA256' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+            $fixture = New-SelfUpdateFixture -Root $installRoot -Version $currentReleaseVersion
+            $installerPath = Join-Path $repoRoot 'install-windows.ps1'
+            $goodHash = (Get-FileHash -LiteralPath $fixture.ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $goodRoot = Join-Path $installRoot 'good'
+            $good = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', $installerPath, '-InstallRoot', $goodRoot, '-SourceZip', $fixture.ZipPath, '-SourceZipSha256', $goodHash) -WorkingDirectory $repoRoot
+            Assert-Equal -Expected 0 -Actual $good.ExitCode -Message "matching local ZIP hash should install`n$($good.Output)"
+
+            $bad = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', $installerPath, '-InstallRoot', (Join-Path $installRoot 'bad'), '-SourceZip', $fixture.ZipPath, '-SourceZipSha256', ('0' * 64)) -WorkingDirectory $repoRoot
+            Assert-Equal -Expected 2 -Actual $bad.ExitCode -Message 'mismatched local ZIP hash should be a usage/integrity error'
+            Assert-Match -Text $bad.Output -Pattern '(?i)does not match' -Message 'hash mismatch should be explicit'
+
+            $warning = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', $installerPath, '-InstallRoot', (Join-Path $installRoot 'warning'), '-SourceZip', $fixture.ZipPath) -WorkingDirectory $repoRoot
+            Assert-Equal -Expected 0 -Actual $warning.ExitCode -Message 'unhashed local ZIP remains supported in v2.1'
+            Assert-Match -Text $warning.Output -Pattern '(?i)unauthenticated.*SourceZipSha256' -Message 'unhashed local ZIP should emit a trust warning'
+        }
+    }
+}
+
+if (Should-RunTest 'install-windows.ps1 commit failures preserve prior runnable install') {
+    Invoke-TestCase 'install-windows.ps1 commit failures preserve prior runnable install' {
+        Invoke-WithTempInstall {
+            param($testRoot)
+            $installerPath = Join-Path $repoRoot 'install-windows.ps1'
+            $oldSource = Join-Path $testRoot 'old-source'
+            $null = New-Item -ItemType Directory -Path $oldSource
+            foreach ($name in @('updates.cmd', 'updates.ps1')) { Copy-Item -LiteralPath (Join-Path $repoRoot $name) -Destination (Join-Path $oldSource $name) }
+            $oldPayload = Get-Content -LiteralPath (Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot) -Raw
+            $oldPayload = [regex]::Replace($oldPayload, '(?m)^\$script:UpdatesVersion\s*=\s*''[^'']+''', ("`$script:UpdatesVersion = '{0}'" -f $previousReleaseVersion), 1)
+            Write-Utf8NoBom -Path (Join-Path $oldSource 'updates-main.ps1') -Content $oldPayload
+
+            foreach ($step in @('payload-staged', 'payload-validated', 'updates.cmd-temp', 'updates.cmd', 'updates.ps1-temp', 'updates.ps1', 'receipt-temp', 'receipt', 'previous-temp', 'previous', 'current-temp', 'current')) {
+                $installRoot = Join-Path $testRoot ("install-{0}" -f ($step -replace '\.', '-'))
+                $initial = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', $installerPath, '-InstallRoot', $installRoot, '-SourceRoot', $oldSource, '-Version', $previousReleaseVersion) -WorkingDirectory $repoRoot
+                Assert-Equal -Expected 0 -Actual $initial.ExitCode -Message ("prior install setup failed for {0}`n{1}" -f $step, $initial.Output)
+
+                $upgrade = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', $installerPath, '-InstallRoot', $installRoot, '-SourceRoot', $repoRoot, '-Version', $currentReleaseVersion) -WorkingDirectory $repoRoot -Environment @{ UPDATES_INSTALL_TESTING = '1'; UPDATES_INSTALL_FAIL_AFTER = $step }
+                Assert-True -Condition ($upgrade.ExitCode -ne 0) -Message ("injected {0} failure should fail installer" -f $step)
+                Assert-Match -Text $upgrade.Output -Pattern ('injected installer failure after {0}' -f [regex]::Escape($step)) -Message ("failure hook should identify {0}" -f $step)
+                $stagingLeftovers = @(Get-ChildItem -LiteralPath (Join-Path $installRoot 'versions') -Directory -Filter '.install-*.staging' -ErrorAction SilentlyContinue)
+                Assert-Equal -Expected 0 -Actual $stagingLeftovers.Count -Message ("installer must clean GUID staging roots after {0} failure" -f $step)
+                $tempLeftovers = @(Get-ChildItem -LiteralPath $installRoot -File -Filter '.*.tmp' -ErrorAction SilentlyContinue)
+                Assert-Equal -Expected 0 -Actual $tempLeftovers.Count -Message ("installer must clean GUID temp files after {0} failure" -f $step)
+
+                $launch = Invoke-Launcher -InstallRoot $installRoot -ArgumentList @('--version')
+                Assert-Equal -Expected 0 -Actual $launch.ExitCode -Message ("install must remain runnable after {0} failure`n{1}" -f $step, $launch.Output)
+                Assert-True -Condition ($launch.Stdout.Trim() -in @($previousReleaseVersion, $currentReleaseVersion)) -Message ("launcher version must be old or new after {0}" -f $step)
+                $receipt = Get-Content -LiteralPath (Join-Path $installRoot 'install-source.json') -Raw | ConvertFrom-Json -AsHashtable
+                $receiptVersion = [string]$receipt.installed_version
+                $receiptPayload = Join-Path $installRoot (Join-Path 'versions' (Join-Path $receiptVersion 'updates-main.ps1'))
+                Assert-FileExists -Path $receiptPayload -Message ("receipt payload missing after {0}" -f $step)
+                $embedded = [regex]::Match((Get-Content -LiteralPath $receiptPayload -Raw), '(?m)^\$script:UpdatesVersion\s*=\s*''([^'']+)''').Groups[1].Value
+                Assert-Equal -Expected $receiptVersion -Actual $embedded -Message ("receipt payload version mismatch after {0}" -f $step)
+            }
+        }
+    }
+}
+
+if (Should-RunTest 'install-windows.ps1 same-version reinstall preserves valid rollback pointer') {
+    Invoke-TestCase 'install-windows.ps1 same-version reinstall preserves valid rollback pointer' {
+        Invoke-WithTempInstall {
+            param($testRoot)
+            $installerPath = Join-Path $repoRoot 'install-windows.ps1'
+            $installRoot = Join-Path $testRoot 'install'
+            $oldSource = Join-Path $testRoot 'old-source'
+            $null = New-Item -ItemType Directory -Path $oldSource
+            foreach ($name in @('updates.cmd', 'updates.ps1')) { Copy-Item -LiteralPath (Join-Path $repoRoot $name) -Destination (Join-Path $oldSource $name) }
+            $oldPayload = Get-Content -LiteralPath (Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot) -Raw
+            $oldPayload = [regex]::Replace($oldPayload, '(?m)^\$script:UpdatesVersion\s*=\s*''[^'']+''', ("`$script:UpdatesVersion = '{0}'" -f $previousReleaseVersion), 1)
+            Write-Utf8NoBom -Path (Join-Path $oldSource 'updates-main.ps1') -Content $oldPayload
+
+            $oldInstall = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', $installerPath, '-InstallRoot', $installRoot, '-SourceRoot', $oldSource, '-Version', $previousReleaseVersion) -WorkingDirectory $repoRoot
+            Assert-Equal -Expected 0 -Actual $oldInstall.ExitCode -Message "old install setup should succeed`n$($oldInstall.Output)"
+            $upgrade = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', $installerPath, '-InstallRoot', $installRoot, '-SourceRoot', $repoRoot, '-Version', $currentReleaseVersion) -WorkingDirectory $repoRoot
+            Assert-Equal -Expected 0 -Actual $upgrade.ExitCode -Message "upgrade should succeed`n$($upgrade.Output)"
+            $reinstall = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', $installerPath, '-InstallRoot', $installRoot, '-SourceRoot', $repoRoot, '-Version', $currentReleaseVersion) -WorkingDirectory $repoRoot
+            Assert-Equal -Expected 0 -Actual $reinstall.ExitCode -Message "same-version reinstall should succeed`n$($reinstall.Output)"
+            Assert-Equal -Expected $previousReleaseVersion -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'previous.txt') -Raw).Trim()) -Message 'same-version reinstall must preserve the valid rollback pointer'
+        }
+    }
+}
+
+if (Should-RunTest 'install-windows.ps1 replaces a corrupt existing payload') {
+    Invoke-TestCase 'install-windows.ps1 replaces a corrupt existing payload' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+            $installerPath = Join-Path $repoRoot 'install-windows.ps1'
+            $initial = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', $installerPath, '-InstallRoot', $installRoot, '-SourceRoot', $repoRoot, '-Version', $currentReleaseVersion) -WorkingDirectory $repoRoot
+            Assert-Equal -Expected 0 -Actual $initial.ExitCode -Message "initial install should succeed`n$($initial.Output)"
+
+            $payloadPath = Join-Path $installRoot (Join-Path 'versions' (Join-Path $currentReleaseVersion 'updates-main.ps1'))
+            Add-Content -LiteralPath $payloadPath -Value ("`n`$script:UpdatesVersion = '{0}'" -f $currentReleaseVersion)
+
+            $reinstall = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', $installerPath, '-InstallRoot', $installRoot, '-SourceRoot', $repoRoot, '-Version', $currentReleaseVersion) -WorkingDirectory $repoRoot
+            Assert-Equal -Expected 0 -Actual $reinstall.ExitCode -Message "reinstall should replace a malformed existing payload`n$($reinstall.Output)"
+            $assignments = [regex]::Matches((Get-Content -LiteralPath $payloadPath -Raw), '(?m)^\s*\$script:UpdatesVersion\s*=.*$')
+            Assert-Equal -Expected 1 -Actual $assignments.Count -Message 'replacement payload should restore one canonical version assignment'
+        }
+    }
+}
+
+if (Should-RunTest 'install-windows.ps1 replaces a file at the version path') {
+    Invoke-TestCase 'install-windows.ps1 replaces a file at the version path' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+            $installerPath = Join-Path $repoRoot 'install-windows.ps1'
+            $versionRoot = Join-Path $installRoot (Join-Path 'versions' $currentReleaseVersion)
+            $null = New-Item -ItemType Directory -Path (Split-Path -Parent $versionRoot) -Force
+            Set-Content -LiteralPath $versionRoot -Value 'corrupt'
+
+            $install = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', $installerPath, '-InstallRoot', $installRoot, '-SourceRoot', $repoRoot, '-Version', $currentReleaseVersion) -WorkingDirectory $repoRoot
+            Assert-Equal -Expected 0 -Actual $install.ExitCode -Message "install should replace a file at the version path`n$($install.Output)"
+            Assert-FileExists -Path (Join-Path $versionRoot 'updates-main.ps1') -Message 'replacement should install the version payload'
+        }
+    }
+}
+
+if (Should-RunTest 'install-windows.ps1 rejects target reparse roots before mutation') {
+    Invoke-TestCase 'install-windows.ps1 rejects target reparse roots before mutation' {
+        Invoke-WithTempInstall {
+            param($testRoot)
+            $installerPath = Join-Path $repoRoot 'install-windows.ps1'
+            foreach ($seam in @('target-root', 'versions-root', 'target-version')) {
+                $caseRoot = Join-Path $testRoot $seam
+                $installRoot = Join-Path $caseRoot 'install'
+                $outside = Join-Path $caseRoot 'outside'
+                $null = New-Item -ItemType Directory -Path $installRoot -Force
+                $null = New-Item -ItemType Directory -Path $outside -Force
+                $sentinel = Join-Path $outside 'sentinel.txt'
+                Write-Utf8NoBom -Path $sentinel -Content 'must-remain-unchanged'
+
+                switch ($seam) {
+                    'target-root' {
+                        Remove-Item -LiteralPath $installRoot -Recurse -Force
+                        $null = New-Item -ItemType Junction -Path $installRoot -Target $outside
+                    }
+                    'versions-root' {
+                        $null = New-Item -ItemType Junction -Path (Join-Path $installRoot 'versions') -Target $outside
+                    }
+                    'target-version' {
+                        $versions = Join-Path $installRoot 'versions'
+                        $null = New-Item -ItemType Directory -Path $versions -Force
+                        $null = New-Item -ItemType Junction -Path (Join-Path $versions $currentReleaseVersion) -Target $outside
+                    }
+                }
+
+                $result = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', $installerPath, '-InstallRoot', $installRoot, '-SourceRoot', $repoRoot, '-Version', $currentReleaseVersion) -WorkingDirectory $repoRoot
+                Assert-True -Condition ($result.ExitCode -ne 0) -Message ("installer must reject {0} reparse seam" -f $seam)
+                Assert-Match -Text $result.Output -Pattern '(?i)reparse-point' -Message ("installer should identify {0} as a reparse point" -f $seam)
+                Assert-Equal -Expected 'must-remain-unchanged' -Actual ([System.IO.File]::ReadAllText($sentinel)) -Message ("outside sentinel must remain unchanged for {0}" -f $seam)
+                Assert-Equal -Expected 1 -Actual (@(Get-ChildItem -LiteralPath $outside -Force).Count) -Message ("installer must not create files through {0}" -f $seam)
+            }
+        }
+    }
+}
+
+if (Should-RunTest 'install-windows.ps1 includes token auth and strict checksum parsing guards') {
+    Invoke-TestCase 'install-windows.ps1 includes token auth and strict checksum parsing guards' {
+        $source = Get-Content -LiteralPath (Join-Path $repoRoot 'install-windows.ps1') -Raw
+        Assert-Match -Text $source -Pattern '\$headers\.Authorization\s*=\s*"Bearer \$\(\$env:GITHUB_TOKEN\)"' -Message 'release metadata and asset requests should use GITHUB_TOKEN bearer auth when configured'
+        Assert-Match -Text $source -Pattern "\^\(\[0-9a-fA-F\]\{\{64\}\}\)\\s\+" -Message 'SHA256SUMS parser should require an anchored 64-hex digest before the literal asset name'
+        Assert-True -Condition ($source -notmatch '(?i)Write-(?:Host|Output|Verbose|Debug|Information|Warning).*GITHUB_TOKEN') -Message 'installer must not log GITHUB_TOKEN'
+    }
+}
+
+if (Should-RunTest 'install-windows.ps1 mocked official network validates release trust chain') {
+    Invoke-TestCase 'install-windows.ps1 mocked official network validates release trust chain' {
+        Invoke-WithTempInstall {
+            param($testRoot)
+            $installerPath = Join-Path $repoRoot 'install-windows.ps1'
+
+            function New-NetworkFixture {
+                param([string]$Name)
+                $root = Join-Path $testRoot $Name
+                $fixture = New-SelfUpdateFixture -Root $root -Version $currentReleaseVersion
+                $null = New-Item -ItemType Directory -Path $root -Force
+                Copy-Item -LiteralPath $fixture.ZipPath -Destination (Join-Path $root 'updates-windows.zip') -Force
+                Copy-Item -LiteralPath $fixture.ReleaseManifest -Destination (Join-Path $root 'updates-release.json') -Force
+                Copy-Item -LiteralPath $fixture.SumsPath -Destination (Join-Path $root 'SHA256SUMS') -Force
+                Write-JsonFile -Path (Join-Path $root 'release-metadata.json') -Data ([ordered]@{
+                    tag_name = "v$currentReleaseVersion"
+                    draft = $false
+                    prerelease = $false
+                    immutable = $true
+                    assets = @(
+                        [ordered]@{ name = 'updates-windows.zip'; digest = $fixture.ZipDigest; browser_download_url = 'https://example.invalid/updates-windows.zip' },
+                        [ordered]@{ name = 'updates-release.json'; digest = $fixture.ReleaseDigest; browser_download_url = 'https://example.invalid/updates-release.json' },
+                        [ordered]@{ name = 'SHA256SUMS'; digest = $fixture.SumsDigest; browser_download_url = 'https://example.invalid/SHA256SUMS' }
+                    )
+                })
+                return $root
+            }
+
+            function Invoke-NetworkFixtureInstall {
+                param([string]$FixtureRoot, [string]$Name)
+                return Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', $installerPath, '-InstallRoot', (Join-Path $testRoot ('install-' + $Name)), '-Version', $currentReleaseVersion) -WorkingDirectory $repoRoot -Environment @{
+                    UPDATES_INSTALL_TESTING = '1'
+                    UPDATES_INSTALL_RELEASE_FIXTURE_ROOT = $FixtureRoot
+                    GITHUB_TOKEN = 'test-token-must-not-appear'
+                }
+            }
+
+            $validRoot = New-NetworkFixture -Name 'valid'
+            $valid = Invoke-NetworkFixtureInstall -FixtureRoot $validRoot -Name 'valid'
+            Assert-Equal -Expected 0 -Actual $valid.ExitCode -Message "valid mocked official release should install`n$($valid.Output)"
+            Assert-Match -Text $valid.Stderr -Pattern '^WARNING: updates installer test fixture mode bypasses the live canonical GitHub release fetch; verification uses local fixture files\.\r?\n' -Message 'fixture mode must prominently disclose that live canonical release fetch is bypassed'
+            Assert-Equal -Expected 'bearer' -Actual ([System.IO.File]::ReadAllText((Join-Path $validRoot 'authorization-kind.txt'))) -Message 'mocked request should receive bearer authorization'
+            Assert-True -Condition ($valid.Output -notmatch 'test-token-must-not-appear') -Message 'installer output must not reveal GITHUB_TOKEN'
+
+            $digestRoot = New-NetworkFixture -Name 'digest'
+            $digestMetadata = Get-Content -LiteralPath (Join-Path $digestRoot 'release-metadata.json') -Raw | ConvertFrom-Json -AsHashtable
+            $digestMetadata.assets[0].digest = 'sha256:' + ('0' * 64)
+            Write-JsonFile -Path (Join-Path $digestRoot 'release-metadata.json') -Data $digestMetadata
+            Assert-True -Condition ((Invoke-NetworkFixtureInstall -FixtureRoot $digestRoot -Name 'digest').ExitCode -ne 0) -Message 'release asset digest mismatch must fail'
+
+            $sumRoot = New-NetworkFixture -Name 'checksum'
+            Write-Utf8NoBom -Path (Join-Path $sumRoot 'SHA256SUMS') -Content (('0' * 64) + '  updates-windows.zip' + "`n")
+            $sumMetadata = Get-Content -LiteralPath (Join-Path $sumRoot 'release-metadata.json') -Raw | ConvertFrom-Json -AsHashtable
+            $sumMetadata.assets[2].digest = 'sha256:' + ((Get-FileHash -LiteralPath (Join-Path $sumRoot 'SHA256SUMS') -Algorithm SHA256).Hash.ToLowerInvariant())
+            Write-JsonFile -Path (Join-Path $sumRoot 'release-metadata.json') -Data $sumMetadata
+            Assert-True -Condition ((Invoke-NetworkFixtureInstall -FixtureRoot $sumRoot -Name 'checksum').ExitCode -ne 0) -Message 'SHA256SUMS payload mismatch must fail'
+
+            foreach ($field in @('draft', 'prerelease', 'immutable')) {
+                $trustRoot = New-NetworkFixture -Name ('trust-' + $field)
+                $metadata = Get-Content -LiteralPath (Join-Path $trustRoot 'release-metadata.json') -Raw | ConvertFrom-Json -AsHashtable
+                $metadata[$field] = $field -ne 'immutable'
+                Write-JsonFile -Path (Join-Path $trustRoot 'release-metadata.json') -Data $metadata
+                Assert-True -Condition ((Invoke-NetworkFixtureInstall -FixtureRoot $trustRoot -Name ('trust-' + $field)).ExitCode -ne 0) -Message ("untrusted {0} release metadata must fail" -f $field)
+            }
+
+            $malformedRoot = New-NetworkFixture -Name 'malformed-sums'
+            $zipHash = (Get-FileHash -LiteralPath (Join-Path $malformedRoot 'updates-windows.zip') -Algorithm SHA256).Hash.ToLowerInvariant()
+            Write-Utf8NoBom -Path (Join-Path $malformedRoot 'SHA256SUMS') -Content ('prefix' + $zipHash + '  updates-windows.zip' + "`n")
+            $malformedMetadata = Get-Content -LiteralPath (Join-Path $malformedRoot 'release-metadata.json') -Raw | ConvertFrom-Json -AsHashtable
+            $malformedMetadata.assets[2].digest = 'sha256:' + ((Get-FileHash -LiteralPath (Join-Path $malformedRoot 'SHA256SUMS') -Algorithm SHA256).Hash.ToLowerInvariant())
+            Write-JsonFile -Path (Join-Path $malformedRoot 'release-metadata.json') -Data $malformedMetadata
+            Assert-True -Condition ((Invoke-NetworkFixtureInstall -FixtureRoot $malformedRoot -Name 'malformed-sums').ExitCode -ne 0) -Message 'malformed unanchored SHA256SUMS line must fail'
         }
     }
 }
@@ -1058,6 +1310,158 @@ if (Should-RunTest 'native payload self-update preserves rollback pointer during
     }
 }
 
+if (Should-RunTest 'native payload self-update payload commit failures preserve old current') {
+    Invoke-TestCase 'native payload self-update payload commit failures preserve old current' {
+        foreach ($failureStep in @('payload-staged', 'payload-validated', 'target-committed')) {
+            Invoke-WithTempInstall {
+                param($installRoot)
+
+                Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
+                New-MatchedVersionedPayload -InstallRoot $installRoot -Version $previousReleaseVersion
+                $fixture = New-SelfUpdateFixture -Root $installRoot -Version $currentReleaseVersion
+                $foreignStagingRoot = Join-Path $installRoot (Join-Path 'versions' ("{0}.{1}.staging" -f $currentReleaseVersion, ('a' * 32)))
+                $null = New-Item -ItemType Directory -Path $foreignStagingRoot -Force
+                $foreignSentinel = Join-Path $foreignStagingRoot 'foreign-sentinel.txt'
+                Write-Utf8NoBom -Path $foreignSentinel -Content 'foreign-staging-must-survive'
+                $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
+                $localAppData = Join-Path $installRoot 'localappdata'
+                $null = New-Item -ItemType Directory -Path $localAppData -Force
+
+                & {
+                    . $payloadSource
+                    $script:UpdatesVersion = $previousReleaseVersion
+                    $script:InstallRoot = $installRoot
+                    $script:JsonMode = $false
+                    $script:LogLevel = 'debug'
+                    $script:LogLevelNum = 3
+                    $script:DryRun = $false
+                    $script:SelfUpdate = $true
+                    $env:LOCALAPPDATA = $localAppData
+                    $env:UPDATES_SELF_UPDATE_TESTING = '1'
+                    $env:UPDATES_SELF_UPDATE_FAIL_AFTER = $failureStep
+
+                    function Test-InstallRootWritable { return $true }
+                    function Test-GitCheckout { return $false }
+                    function Test-SymlinkedInstall { return $false }
+                    function Get-LatestReleaseMetadata {
+                        return [pscustomobject]@{
+                            tag_name   = "v$currentReleaseVersion"
+                            draft      = $false
+                            prerelease = $false
+                            immutable  = $true
+                            assets     = @(
+                                [pscustomobject]@{ name = 'updates-windows.zip'; digest = $fixture.ZipDigest; browser_download_url = 'https://example.invalid/updates-windows.zip' },
+                                [pscustomobject]@{ name = 'updates-release.json'; digest = $fixture.ReleaseDigest; browser_download_url = 'https://example.invalid/updates-release.json' },
+                                [pscustomobject]@{ name = 'SHA256SUMS'; digest = $fixture.SumsDigest; browser_download_url = 'https://example.invalid/SHA256SUMS' }
+                            )
+                        }
+                    }
+                    function Invoke-WebRequest {
+                        param([string]$Uri, $Headers, [string]$OutFile, [int]$TimeoutSec)
+                        switch ($Uri) {
+                            'https://example.invalid/updates-windows.zip' { Copy-Item -LiteralPath $fixture.ZipPath -Destination $OutFile -Force }
+                            'https://example.invalid/updates-release.json' { Copy-Item -LiteralPath $fixture.ReleaseManifest -Destination $OutFile -Force }
+                            'https://example.invalid/SHA256SUMS' { Copy-Item -LiteralPath $fixture.SumsPath -Destination $OutFile -Force }
+                            default { throw "Unexpected download URI: $Uri" }
+                        }
+                    }
+                    function Invoke-SelfUpdatedRelaunch { throw 'failure-injected self-update must not relaunch' }
+
+                    try {
+                        $result = Invoke-WindowsSelfUpdate -OriginalArgs @()
+                        Assert-True -Condition ($null -eq $result) -Message ("{0} failure should be non-fatal and must not relaunch" -f $failureStep)
+                    } finally {
+                        Remove-Item Env:UPDATES_SELF_UPDATE_TESTING -ErrorAction SilentlyContinue
+                        Remove-Item Env:UPDATES_SELF_UPDATE_FAIL_AFTER -ErrorAction SilentlyContinue
+                    }
+                }
+
+                Assert-Equal -Expected $previousReleaseVersion -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message ("current pointer must remain old after {0} failure" -f $failureStep)
+                $receipt = Get-Content -LiteralPath (Join-Path $installRoot 'install-source.json') -Raw | ConvertFrom-Json -AsHashtable
+                Assert-Equal -Expected $previousReleaseVersion -Actual ([string]$receipt.installed_version) -Message ("receipt must remain old after {0} failure" -f $failureStep)
+                Assert-Equal -Expected 'foreign-staging-must-survive' -Actual ([System.IO.File]::ReadAllText($foreignSentinel)) -Message ("self-update must preserve foreign staging after {0} failure" -f $failureStep)
+                $ownedLeftovers = @(Get-ChildItem -LiteralPath (Join-Path $installRoot 'versions') -Directory -Filter ("{0}.*.staging" -f $currentReleaseVersion) -ErrorAction SilentlyContinue | Where-Object { $_.FullName -ne $foreignStagingRoot })
+                Assert-Equal -Expected 0 -Actual $ownedLeftovers.Count -Message ("self-update must clean only its owned staging root after {0} failure" -f $failureStep)
+                $launch = Invoke-Launcher -InstallRoot $installRoot -ArgumentList @('--version')
+                Assert-Equal -Expected 0 -Actual $launch.ExitCode -Message ("old current must remain runnable after {0} failure`n{1}" -f $failureStep, $launch.Output)
+                Assert-Equal -Expected $previousReleaseVersion -Actual $launch.Stdout.Trim() -Message ("launcher must still execute old current after {0} failure" -f $failureStep)
+            }
+        }
+    }
+}
+
+if (Should-RunTest 'native payload self-update rejects redirected mutation roots') {
+    Invoke-TestCase 'native payload self-update rejects redirected mutation roots' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
+            New-MatchedVersionedPayload -InstallRoot $installRoot -Version $previousReleaseVersion
+            $fixture = New-SelfUpdateFixture -Root $installRoot -Version $currentReleaseVersion
+            $outside = Join-Path $installRoot 'outside-target'
+            $null = New-Item -ItemType Directory -Path $outside -Force
+            $sentinel = Join-Path $outside 'sentinel.txt'
+            Write-Utf8NoBom -Path $sentinel -Content 'must-remain-unchanged'
+            $targetRoot = Join-Path $installRoot (Join-Path 'versions' $currentReleaseVersion)
+            $null = New-Item -ItemType Junction -Path $targetRoot -Target $outside
+            $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
+            $localAppData = Join-Path $installRoot 'localappdata'
+            $null = New-Item -ItemType Directory -Path $localAppData -Force
+
+            & {
+                . $payloadSource
+                $script:UpdatesVersion = $previousReleaseVersion
+                $script:InstallRoot = $installRoot
+                $script:JsonMode = $false
+                $script:LogLevel = 'debug'
+                $script:LogLevelNum = 3
+                $script:DryRun = $false
+                $script:SelfUpdate = $true
+                $env:LOCALAPPDATA = $localAppData
+
+                function Test-InstallRootWritable { return $true }
+                function Test-GitCheckout { return $false }
+                function Test-SymlinkedInstall { return $false }
+                function Get-LatestReleaseMetadata {
+                    return [pscustomobject]@{
+                        tag_name   = "v$currentReleaseVersion"
+                        draft      = $false
+                        prerelease = $false
+                        immutable  = $true
+                        assets     = @(
+                            [pscustomobject]@{ name = 'updates-windows.zip'; digest = $fixture.ZipDigest; browser_download_url = 'https://example.invalid/updates-windows.zip' },
+                            [pscustomobject]@{ name = 'updates-release.json'; digest = $fixture.ReleaseDigest; browser_download_url = 'https://example.invalid/updates-release.json' },
+                            [pscustomobject]@{ name = 'SHA256SUMS'; digest = $fixture.SumsDigest; browser_download_url = 'https://example.invalid/SHA256SUMS' }
+                        )
+                    }
+                }
+                function Invoke-WebRequest {
+                    param([string]$Uri, $Headers, [string]$OutFile, [int]$TimeoutSec)
+                    switch ($Uri) {
+                        'https://example.invalid/updates-windows.zip' { Copy-Item -LiteralPath $fixture.ZipPath -Destination $OutFile -Force }
+                        'https://example.invalid/updates-release.json' { Copy-Item -LiteralPath $fixture.ReleaseManifest -Destination $OutFile -Force }
+                        'https://example.invalid/SHA256SUMS' { Copy-Item -LiteralPath $fixture.SumsPath -Destination $OutFile -Force }
+                        default { throw "Unexpected download URI: $Uri" }
+                    }
+                }
+                function Invoke-SelfUpdatedRelaunch { throw 'unsafe-path self-update must not relaunch' }
+
+                $result = Invoke-WindowsSelfUpdate -OriginalArgs @()
+                Assert-True -Condition ($null -eq $result) -Message 'unsafe mutation root should skip self-update without relaunch'
+            }
+
+            Assert-Equal -Expected 'must-remain-unchanged' -Actual ([System.IO.File]::ReadAllText($sentinel)) -Message 'outside sentinel must remain unchanged'
+            Assert-Equal -Expected 1 -Actual (@(Get-ChildItem -LiteralPath $outside -Force).Count) -Message 'self-update must not create or delete through target junction'
+            Assert-Equal -Expected $previousReleaseVersion -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message 'unsafe target must leave old current unchanged'
+            $receipt = Get-Content -LiteralPath (Join-Path $installRoot 'install-source.json') -Raw | ConvertFrom-Json -AsHashtable
+            Assert-Equal -Expected $previousReleaseVersion -Actual ([string]$receipt.installed_version) -Message 'unsafe target must leave receipt unchanged'
+            $launch = Invoke-Launcher -InstallRoot $installRoot -ArgumentList @('--version')
+            Assert-Equal -Expected 0 -Actual $launch.ExitCode -Message "old payload must remain runnable`n$($launch.Output)"
+            Assert-Equal -Expected $previousReleaseVersion -Actual $launch.Stdout.Trim() -Message 'launcher must still execute old current'
+        }
+    }
+}
+
 if (Should-RunTest 'native payload self-update skips live metadata fetch when cache is fresh') {
     Invoke-TestCase 'native payload self-update skips live metadata fetch when cache is fresh' {
         Invoke-WithTempInstall {
@@ -1094,16 +1498,15 @@ if (Should-RunTest 'native payload self-update skips live metadata fetch when ca
     }
 }
 
-if (Should-RunTest 'native payload fresh newer-version cache reuses cached release metadata') {
-    Invoke-TestCase 'native payload fresh newer-version cache reuses cached release metadata' {
+if (Should-RunTest 'native payload never trusts forged newer cached release metadata') {
+    Invoke-TestCase 'native payload never trusts forged newer cached release metadata' {
         Invoke-WithTempInstall {
             param($installRoot)
 
             Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
-            $fixture = New-SelfUpdateFixture -Root $installRoot -Version $currentReleaseVersion
             $payloadSource = Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot
             $localAppData = Join-Path $installRoot 'localappdata'
-            $downloadLogPath = Join-Path $installRoot 'cached-downloads.log'
+            $markerPath = Join-Path $installRoot 'live-metadata-marker.txt'
             $null = New-Item -ItemType Directory -Path $localAppData -Force
 
             & {
@@ -1121,38 +1524,55 @@ if (Should-RunTest 'native payload fresh newer-version cache reuses cached relea
                 function Test-InstallRootWritable { return $true }
                 function Test-GitCheckout { return $false }
                 function Test-SymlinkedInstall { return $false }
-                function Get-LatestReleaseMetadata { throw 'Get-LatestReleaseMetadata should not run when cached release metadata is complete' }
-                function Invoke-WebRequest {
-                    param([string]$Uri, $Headers, [string]$OutFile, [int]$TimeoutSec)
-                    Add-Content -LiteralPath $downloadLogPath -Value $Uri
-                    switch ($Uri) {
-                        'https://example.invalid/updates-windows.zip' { Copy-Item -LiteralPath $fixture.ZipPath -Destination $OutFile -Force }
-                        'https://example.invalid/updates-release.json' { Copy-Item -LiteralPath $fixture.ReleaseManifest -Destination $OutFile -Force }
-                        'https://example.invalid/SHA256SUMS' { Copy-Item -LiteralPath $fixture.SumsPath -Destination $OutFile -Force }
-                        default { throw "Unexpected download URI: $Uri" }
-                    }
+                function Get-LatestReleaseMetadata {
+                    [System.IO.File]::WriteAllText($markerPath, 'fetched')
+                    return [pscustomobject]@{ tag_name = "v$previousReleaseVersion"; draft = $false; prerelease = $false; immutable = $true; assets = @() }
                 }
+                function Invoke-WebRequest { throw 'forged cached URL must never be contacted' }
 
                 $cachePath = Get-SelfUpdateCachePath
-                $null = Write-SelfUpdateCache `
-                    -Path $cachePath `
-                    -CheckedAt (Get-SelfUpdateEpoch) `
-                    -LatestTag "v$currentReleaseVersion" `
-                    -Draft '0' `
-                    -Prerelease '0' `
-                    -Immutable '1' `
-                    -WindowsUrl 'https://example.invalid/updates-windows.zip' `
-                    -WindowsDigest $fixture.ZipDigest `
-                    -ManifestUrl 'https://example.invalid/updates-release.json' `
-                    -ManifestDigest 'md5:deadbeef' `
-                    -SumsUrl 'https://example.invalid/SHA256SUMS' `
-                    -SumsDigest $fixture.SumsDigest
+                $legacyCache = @(
+                    ('checked_at={0}' -f (Get-SelfUpdateEpoch))
+                    "latest_tag=v$currentReleaseVersion"
+                    'draft=0'
+                    'prerelease=0'
+                    'immutable=1'
+                    'windows_url=https://attacker.invalid/updates-windows.zip'
+                    ('windows_digest=sha256:{0}' -f ('0' * 64))
+                    'manifest_url=https://attacker.invalid/updates-release.json'
+                    ('manifest_digest=sha256:{0}' -f ('0' * 64))
+                    'sums_url=https://attacker.invalid/SHA256SUMS'
+                    ('sums_digest=sha256:{0}' -f ('0' * 64))
+                    ''
+                ) -join "`n"
+                $null = New-Item -ItemType Directory -Path (Split-Path -Parent $cachePath) -Force
+                [System.IO.File]::WriteAllText($cachePath, $legacyCache, [System.Text.UTF8Encoding]::new($false))
                 $result = Invoke-WindowsSelfUpdate -OriginalArgs @()
-                Assert-True -Condition ($null -eq $result) -Message 'cached newer-version release metadata should keep self-update non-fatal'
+                Assert-True -Condition ($null -eq $result) -Message 'live current-version metadata should end self-update cleanly'
             }
 
-            Assert-Equal -Expected $previousReleaseVersion -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message 'unsupported cached manifest digest should leave current.txt unchanged'
-            Assert-Match -Text (Get-Content -LiteralPath $downloadLogPath -Raw) -Pattern 'updates-release\.json' -Message 'cached release metadata should still trigger asset downloads'
+            Assert-FileExists -Path $markerPath -Message 'newer cached tags must force canonical live metadata fetch'
+            Assert-Equal -Expected $previousReleaseVersion -Actual ((Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()) -Message 'forged cache must not activate a payload'
+        }
+    }
+}
+
+if (Should-RunTest 'native self-update cache persists only timestamp and latest tag') {
+    Invoke-TestCase 'native self-update cache persists only timestamp and latest tag' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+            & {
+                . (Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot)
+                $cachePath = Join-Path $installRoot 'self-update.cache'
+                Assert-True -Condition (Write-SelfUpdateCache -Path $cachePath -CheckedAt 123 -LatestTag 'v2.1.0') -Message 'cache write should succeed'
+                Assert-Equal -Expected "checked_at=123`nlatest_tag=v2.1.0`n" -Actual ([System.IO.File]::ReadAllText($cachePath)) -Message 'cache must persist tag freshness only'
+                [System.IO.File]::AppendAllText($cachePath, "windows_url=https://attacker.invalid/payload.zip`nimmutable=1`n", [System.Text.UTF8Encoding]::new($false))
+                $cache = Read-SelfUpdateCache -Path $cachePath
+                Assert-Equal -Expected 123 -Actual ([int64]$cache.CheckedAt) -Message 'cache should read checked_at'
+                Assert-Equal -Expected 'v2.1.0' -Actual $cache.LatestTag -Message 'cache should read latest_tag'
+                Assert-True -Condition ($cache.PSObject.Properties.Name -notcontains 'WindowsUrl') -Message 'legacy trust fields must not be exposed from cache reads'
+                Assert-True -Condition ($cache.PSObject.Properties.Name -notcontains 'Immutable') -Message 'legacy trust fields must be ignored'
+            }
         }
     }
 }
@@ -1495,6 +1915,314 @@ if (Should-RunTest 'native payload skips self-update when install receipt source
 
             Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'mismatched install receipt should skip self-update, not fail the run'
             Assert-Match -Text $result.Output -Pattern '(?is)(receipt.*source_repo|source_repo.*receipt|receipt.*mismatch)' -Message 'receipt source_repo mismatch should be visible in output'
+        }
+    }
+}
+
+if (Should-RunTest 'native registry owns every supported Windows handler') {
+    Invoke-TestCase 'native registry owns every supported Windows handler' {
+        & {
+            . (Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot)
+            foreach ($module in @($script:ModuleRegistry | Where-Object { $_.Platforms -contains 'windows' })) {
+                Assert-True -Condition (-not [string]::IsNullOrWhiteSpace([string]$module.Handler)) -Message ("Windows module {0} should own a handler" -f $module.Name)
+                Assert-True -Condition ($null -ne (Get-Command -Name $module.Handler -CommandType Function -ErrorAction SilentlyContinue)) -Message ("handler {0} should exist" -f $module.Handler)
+            }
+        }
+    }
+}
+
+if (Should-RunTest 'native payload runs Claude and Pi update modules') {
+    Invoke-TestCase 'native payload runs Claude and Pi update modules' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $currentReleaseVersion
+            $stubDir = Join-Path $installRoot 'stubs'
+            $log = Join-Path $installRoot 'ai-modules.log'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'claude.cmd') -Lines @(('echo claude:%*>>"{0}"' -f $log))
+            Write-CmdStub -Path (Join-Path $stubDir 'pi.cmd') -Lines @(('echo pi:%*>>"{0}"' -f $log))
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', 'claude,pi', '--no-emoji', '--no-color') -Environment @{ PATH = $stubDir }
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message "Claude/Pi modules should succeed`n$($result.Output)"
+            $calls = Get-Content -LiteralPath $log -Raw
+            Assert-Match -Text $calls -Pattern '(?m)^claude:update\s*$' -Message 'Claude module should run claude update'
+            Assert-Match -Text $calls -Pattern '(?m)^pi:update\s*$' -Message 'Pi module should run pi update'
+        }
+    }
+}
+
+if (Should-RunTest 'native Claude and Pi modules cover missing dry-run failure strict and JSON') {
+    Invoke-TestCase 'native Claude and Pi modules cover missing dry-run failure strict and JSON' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $currentReleaseVersion
+            $emptyPath = Join-Path $installRoot 'empty'
+            $null = New-Item -ItemType Directory -Path $emptyPath
+            $missing = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', 'claude', '--no-emoji') -Environment @{ PATH = $emptyPath }
+            Assert-Equal -Expected 1 -Actual $missing.ExitCode -Message 'explicit missing Claude dependency should fail the run'
+            $missingPi = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', 'pi', '--no-emoji') -Environment @{ PATH = $emptyPath }
+            Assert-Equal -Expected 1 -Actual $missingPi.ExitCode -Message 'explicit missing Pi dependency should fail the run'
+            Assert-Match -Text $missingPi.Output -Pattern '(?i)pi not found' -Message 'missing Pi dependency should be explicit'
+
+            $stubDir = Join-Path $installRoot 'stubs'
+            $log = Join-Path $installRoot 'ai-matrix.log'
+            $null = New-Item -ItemType Directory -Path $stubDir
+            Write-CmdStub -Path (Join-Path $stubDir 'claude.cmd') -Lines @(('echo claude:%*>>"{0}"' -f $log))
+            Write-CmdStub -Path (Join-Path $stubDir 'pi.cmd') -Lines @(('echo pi:%*>>"{0}"' -f $log))
+            $dry = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', 'claude,pi', '--dry-run', '--no-emoji') -Environment @{ PATH = $stubDir }
+            Assert-Equal -Expected 0 -Actual $dry.ExitCode -Message 'Claude/Pi dry-run should succeed'
+            Assert-True -Condition (-not (Test-Path -LiteralPath $log)) -Message 'Claude/Pi dry-run must not invoke commands'
+            Assert-Match -Text $dry.Output -Pattern '(?i)DRY RUN: .*claude(\.cmd)? update' -Message 'Claude dry-run command should be visible'
+            Assert-Match -Text $dry.Output -Pattern '(?i)DRY RUN: .*pi(\.cmd)? update' -Message 'Pi dry-run command should be visible'
+
+            Write-Utf8NoBom -Path (Join-Path $stubDir 'claude.cmd') -Content "@echo off`r`necho claude-failed`r`nexit /b 7`r`n"
+            Write-CmdStub -Path (Join-Path $stubDir 'pi.cmd') -Lines @(('echo pi:%*>>"{0}"' -f $log))
+            $strict = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', 'claude,pi', '--strict', '--json', '--no-emoji') -Environment @{ PATH = $stubDir }
+            Assert-Equal -Expected 1 -Actual $strict.ExitCode -Message 'Claude command failure should fail the run'
+            Assert-True -Condition (-not (Test-Path -LiteralPath $log)) -Message 'strict mode must stop before Pi after Claude failure'
+            $events = @($strict.Stdout -split "`r?`n" | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+            Assert-True -Condition ($null -ne ($events | Where-Object { $_.event -eq 'module_start' -and $_.PSObject.Properties['module'] -and $_.module -eq 'claude' } | Select-Object -First 1)) -Message 'JSON should include Claude start event'
+            Assert-True -Condition ($null -ne ($events | Where-Object { $_.event -eq 'module_end' -and $_.PSObject.Properties['module'] -and $_.module -eq 'claude' -and $_.status -eq 'fail' } | Select-Object -First 1)) -Message 'JSON should include Claude failure event'
+            Assert-True -Condition ($null -eq ($events | Where-Object { $_.PSObject.Properties['module'] -and $_.module -eq 'pi' } | Select-Object -First 1)) -Message 'strict JSON must not include Pi events'
+
+            Write-CmdStub -Path (Join-Path $stubDir 'claude.cmd') -Lines @(('echo claude:%*>>"{0}"' -f $log))
+            Write-Utf8NoBom -Path (Join-Path $stubDir 'pi.cmd') -Content "@echo off`r`necho pi-failed`r`nexit /b 9`r`n"
+            $piFailure = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', 'pi', '--json', '--no-emoji') -Environment @{ PATH = $stubDir }
+            Assert-Equal -Expected 1 -Actual $piFailure.ExitCode -Message 'Pi command failure should fail non-strict run'
+            $piEvents = @($piFailure.Stdout -split "`r?`n" | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+            Assert-True -Condition ($null -ne ($piEvents | Where-Object { $_.event -eq 'module_end' -and $_.module -eq 'pi' -and $_.status -eq 'fail' } | Select-Object -First 1)) -Message 'JSON should include Pi failure event'
+        }
+    }
+}
+
+if (Should-RunTest 'native payload rejects duplicate or noncanonical version assignments') {
+    Invoke-TestCase 'native payload rejects duplicate or noncanonical version assignments' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $currentReleaseVersion -WithReceipt
+            $payloadPath = Join-Path $installRoot (Join-Path 'versions' (Join-Path $currentReleaseVersion 'updates-main.ps1'))
+            $original = Get-Content -LiteralPath $payloadPath -Raw
+            foreach ($mutant in @(
+                ($original + "`n`$script:UpdatesVersion = '$currentReleaseVersion'`n"),
+                ($original -replace [regex]::Escape("`$script:UpdatesVersion = '$currentReleaseVersion'"), "`$script:UpdatesVersion='$currentReleaseVersion'")
+            )) {
+                Write-Utf8NoBom -Path $payloadPath -Content $mutant
+                & {
+                    . (Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot)
+                    Assert-True -Condition (-not (Test-VersionedPayloadManifest -VersionRoot (Split-Path -Parent $payloadPath) -ExpectedVersion $currentReleaseVersion)) -Message 'validator must reject duplicate or noncanonical UpdatesVersion assignments'
+                }
+                $doctor = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--doctor', '--json') -Environment @{ PATH = '' }
+                Assert-Equal -Expected 1 -Actual $doctor.ExitCode -Message 'doctor must reject duplicate or noncanonical UpdatesVersion assignments'
+            }
+        }
+    }
+}
+
+if (Should-RunTest 'native doctor rejects file-level payload reparse points') {
+    Invoke-TestCase 'native doctor rejects file-level payload reparse points' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $currentReleaseVersion -WithReceipt
+            $versionRoot = Join-Path $installRoot (Join-Path 'versions' $currentReleaseVersion)
+            $payloadPath = Join-Path $versionRoot 'updates-main.ps1'
+            $realPayload = Join-Path $installRoot 'redirected-payload.ps1'
+            Move-Item -LiteralPath $payloadPath -Destination $realPayload
+            try {
+                $null = New-Item -ItemType SymbolicLink -Path $payloadPath -Target $realPayload -ErrorAction Stop
+            } catch {
+                Write-Host 'SKIP: file symbolic links require Windows Developer Mode or elevation.'
+                return
+            }
+            $doctor = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--doctor', '--json') -Environment @{ PATH = '' }
+            Assert-Equal -Expected 1 -Actual $doctor.ExitCode -Message 'doctor must reject file-level payload reparse points'
+            Assert-Match -Text $doctor.Stdout -Pattern '(?i)(invalid|redirected|reparse)' -Message 'doctor should report redirected payload as invalid'
+        }
+    }
+}
+
+if (Should-RunTest 'native doctor rejects redirected pointer and receipt files') {
+    Invoke-TestCase 'native doctor rejects redirected pointer and receipt files' {
+        foreach ($fileName in @('current.txt', 'previous.txt', 'install-source.json')) {
+            Invoke-WithTempInstall {
+                param($installRoot)
+                Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $currentReleaseVersion -WithReceipt
+                Write-Utf8NoBom -Path (Join-Path $installRoot 'previous.txt') -Content ''
+                $trustedPath = Join-Path $installRoot $fileName
+                $outsidePath = Join-Path $installRoot ('redirected-' + $fileName)
+                Move-Item -LiteralPath $trustedPath -Destination $outsidePath
+                try {
+                    $null = New-Item -ItemType SymbolicLink -Path $trustedPath -Target $outsidePath -ErrorAction Stop
+                } catch {
+                    Write-Host 'SKIP: file symbolic links require Windows Developer Mode or elevation.'
+                    return
+                }
+
+                $doctor = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--doctor', '--json') -Environment @{ PATH = '' }
+                $events = @($doctor.Stdout -split "`r?`n" | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+                $checkName = if ($fileName -eq 'install-source.json') { 'install-receipt' } else { $fileName }
+                $event = $events | Where-Object { $_.event -eq 'doctor_check' -and $_.check -eq $checkName } | Select-Object -First 1
+                Assert-True -Condition ($null -ne $event) -Message ("doctor should emit a check for redirected {0}" -f $fileName)
+                Assert-Match -Text ([string]$event.message) -Pattern '(?i)(redirected|outside install root)' -Message ("doctor should reject redirected {0} before reading" -f $fileName)
+                $expectedStatus = if ($fileName -eq 'previous.txt') { 'warn' } else { 'fail' }
+                Assert-Equal -Expected $expectedStatus -Actual ([string]$event.status) -Message ("redirected {0} should have correct severity" -f $fileName)
+            }
+        }
+    }
+}
+
+if (Should-RunTest 'native payload rejects embedded payload version mismatch') {
+    Invoke-TestCase 'native payload rejects embedded payload version mismatch' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $currentReleaseVersion -WithReceipt
+            Write-Utf8NoBom -Path (Join-Path $installRoot 'previous.txt') -Content ''
+            $payloadPath = Join-Path $installRoot (Join-Path 'versions' (Join-Path $currentReleaseVersion 'updates-main.ps1'))
+            $payload = Get-Content -LiteralPath $payloadPath -Raw
+            $payload = [regex]::Replace($payload, '(?m)^\$script:UpdatesVersion\s*=\s*''[^'']+''', "`$script:UpdatesVersion = '9.9.9'", 1)
+            Write-Utf8NoBom -Path $payloadPath -Content $payload
+            & {
+                . (Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot)
+                Assert-True -Condition (-not (Test-VersionedPayloadManifest -VersionRoot (Split-Path -Parent $payloadPath) -ExpectedVersion $currentReleaseVersion)) -Message 'manifest validator must reject embedded version mismatch'
+            }
+            $doctor = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--doctor', '--json') -Environment @{ PATH = '' }
+            Assert-Equal -Expected 1 -Actual $doctor.ExitCode -Message 'doctor should fail embedded payload version mismatch'
+            Assert-Match -Text $doctor.Stdout -Pattern '(?i)payload.*invalid' -Message 'doctor should report invalid payload'
+        }
+    }
+}
+
+if (Should-RunTest 'native doctor is local read-only JSONL') {
+    Invoke-TestCase 'native doctor is local read-only JSONL' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $currentReleaseVersion -WithReceipt
+            Write-Utf8NoBom -Path (Join-Path $installRoot 'previous.txt') -Content ''
+            $before = @(Get-ChildItem -LiteralPath $installRoot -Recurse -File | ForEach-Object { $_.FullName + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
+            $doctorLog = Join-Path $installRoot 'doctor-must-not-create.log'
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--doctor', '--json', '--log-file', $doctorLog) -Environment @{ PATH = '' }
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message "healthy doctor should exit 0`n$($result.Output)"
+            foreach ($line in @($result.Stdout -split "`r?`n" | Where-Object { $_ })) { $null = $line | ConvertFrom-Json }
+            Assert-Match -Text $result.Stdout -Pattern '"event":"doctor_check"' -Message 'doctor should emit check events'
+            Assert-Match -Text $result.Stdout -Pattern '"event":"doctor_summary"' -Message 'doctor should emit summary event'
+            $after = @(Get-ChildItem -LiteralPath $installRoot -Recurse -File | ForEach-Object { $_.FullName + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
+            Assert-Equal -Expected $before -Actual $after -Message 'doctor must not mutate the install'
+            Assert-True -Condition (-not (Test-Path -LiteralPath $doctorLog)) -Message 'doctor must not initialize --log-file'
+
+            Write-Utf8NoBom -Path (Join-Path $installRoot 'install-source.json') -Content '{broken'
+            $broken = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--doctor', '--json') -Environment @{ PATH = '' }
+            Assert-Equal -Expected 1 -Actual $broken.ExitCode -Message 'doctor integrity failures should exit 1'
+            $summary = @($broken.Stdout -split "`r?`n" | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.event -eq 'doctor_summary' })[-1]
+            Assert-True -Condition ([int]$summary.fail -gt 0) -Message 'doctor failure summary should report failures'
+        }
+    }
+}
+
+if (Should-RunTest 'native doctor human output matches shared format') {
+    Invoke-TestCase 'native doctor human output matches shared format' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $currentReleaseVersion -WithReceipt
+            Write-Utf8NoBom -Path (Join-Path $installRoot 'previous.txt') -Content ''
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--doctor') -Environment @{ PATH = '' }
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message "doctor warnings should exit 0`n$($result.Output)"
+            Assert-Match -Text $result.Stdout -Pattern '(?m)^OK\s{4}bootstrap\s{12}bootstrap entrypoints are present\r?$' -Message 'doctor checks should use padded STATUS/check/message columns'
+            Assert-Match -Text $result.Stdout -Pattern '(?m)^(?:OK\s{4}|WARN\s{2})install-root\s{9}(?:paths are accessible|paths are accessible, contained)' -Message 'doctor install-root result should use padded shared format'
+            Assert-Match -Text $result.Stdout -Pattern '(?m)^SUMMARY ok=\d+ warn=\d+ fail=0\r?$' -Message 'doctor summary should match Bash exactly'
+            Assert-True -Condition ($result.Stdout -notmatch '(?m)^doctor ') -Message 'doctor human output must not use the former Windows-only prefix'
+        }
+    }
+}
+
+if (Should-RunTest 'native doctor writability check uses ACLs without writes') {
+    Invoke-TestCase 'native doctor writability check uses ACLs without writes' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+            $null = New-Item -ItemType Directory -Path $installRoot -Force
+            $beforeNames = @(Get-ChildItem -LiteralPath $installRoot -Force | ForEach-Object Name)
+            & {
+                . (Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot)
+                Assert-True -Condition (Get-PathEffectiveWriteAccess -Path $installRoot) -Message 'temporary install root should initially be writable'
+                $originalAcl = Get-Acl -LiteralPath $installRoot
+                try {
+                    $acl = Get-Acl -LiteralPath $installRoot
+                    $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+                    $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+                        $sid,
+                        [System.Security.AccessControl.FileSystemRights]::Write,
+                        [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit,
+                        [System.Security.AccessControl.PropagationFlags]::None,
+                        [System.Security.AccessControl.AccessControlType]::Deny
+                    )
+                    $null = $acl.AddAccessRule($rule)
+                    Set-Acl -LiteralPath $installRoot -AclObject $acl
+                    Assert-True -Condition (-not (Get-PathEffectiveWriteAccess -Path $installRoot)) -Message 'explicit deny-write ACL should be reported as non-writable'
+                } finally {
+                    Set-Acl -LiteralPath $installRoot -AclObject $originalAcl
+                }
+            }
+            $afterNames = @(Get-ChildItem -LiteralPath $installRoot -Force | ForEach-Object Name)
+            Assert-Equal -Expected ($beforeNames -join "`n") -Actual ($afterNames -join "`n") -Message 'ACL writability check must not create probe files'
+        }
+    }
+}
+
+if (Should-RunTest 'native doctor accepts receipt for newest valid staged payload') {
+    Invoke-TestCase 'native doctor accepts receipt for newest valid staged payload' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
+            New-MatchedVersionedPayload -InstallRoot $installRoot -Version $previousReleaseVersion
+            New-MatchedVersionedPayload -InstallRoot $installRoot -Version $currentReleaseVersion
+            Write-InstallReceipt -InstallRoot $installRoot -InstalledVersion $currentReleaseVersion
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--doctor', '--json') -Environment @{ PATH = '' }
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message "receipt may reference newest fully installed payload before current activation`n$($result.Output)"
+        }
+    }
+}
+
+if (Should-RunTest 'native self-update metadata commit failures preserve runnable payload') {
+    Invoke-TestCase 'native self-update metadata commit failures preserve runnable payload' {
+        foreach ($failureStep in @('previous-temp', 'previous', 'receipt-temp', 'receipt', 'current-temp', 'current')) {
+            Invoke-WithTempInstall {
+                param($installRoot)
+                Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
+                New-MatchedVersionedPayload -InstallRoot $installRoot -Version $currentReleaseVersion
+                $failureMessage = & {
+                    . (Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot)
+                    $script:InstallRoot = $installRoot
+                    function Invoke-SelfUpdateCommitHook { param([string]$Step); if ($Step -eq $failureStep) { throw "injected $Step failure" } }
+                    try {
+                        Commit-SelfUpdateMetadata -PreviousVersion $previousReleaseVersion -InstalledVersion $currentReleaseVersion
+                        return ''
+                    } catch {
+                        return $_.Exception.Message
+                    }
+                }
+                Assert-Match -Text $failureMessage -Pattern ('injected {0} failure' -f [regex]::Escape($failureStep)) -Message ("failure hook should identify {0}" -f $failureStep)
+                $current = (Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()
+                $currentRoot = Join-Path $installRoot (Join-Path 'versions' $current)
+                Assert-True -Condition (Test-Path -LiteralPath (Join-Path $currentRoot 'updates-main.ps1') -PathType Leaf) -Message ("current payload must remain runnable after {0} failure" -f $failureStep)
+                $receipt = Get-Content -LiteralPath (Join-Path $installRoot 'install-source.json') -Raw | ConvertFrom-Json -AsHashtable
+                $receiptRoot = Join-Path $installRoot (Join-Path 'versions' ([string]$receipt.installed_version))
+                Assert-True -Condition (Test-Path -LiteralPath (Join-Path $receiptRoot 'updates-main.ps1') -PathType Leaf) -Message ("receipt payload must remain valid after {0} failure" -f $failureStep)
+                $tempLeftovers = @(Get-ChildItem -LiteralPath $installRoot -File -Filter '.*.tmp' -ErrorAction SilentlyContinue)
+                Assert-Equal -Expected 0 -Actual $tempLeftovers.Count -Message ("self-update must clean GUID temp files after {0} failure" -f $failureStep)
+            }
+        }
+    }
+}
+
+if (Should-RunTest 'native doctor rejects reparse-point payload root') {
+    Invoke-TestCase 'native doctor rejects reparse-point payload root' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $currentReleaseVersion -WithReceipt
+            Write-Utf8NoBom -Path (Join-Path $installRoot 'previous.txt') -Content ''
+            $realRoot = Join-Path $installRoot 'real-payload'
+            Move-Item -LiteralPath (Join-Path $installRoot (Join-Path 'versions' $currentReleaseVersion)) -Destination $realRoot
+            $null = New-Item -ItemType Junction -Path (Join-Path $installRoot (Join-Path 'versions' $currentReleaseVersion)) -Target $realRoot
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--doctor', '--json') -Environment @{ PATH = '' }
+            Assert-Equal -Expected 1 -Actual $result.ExitCode -Message 'doctor should fail reparse-point payload roots'
+            Assert-Match -Text $result.Stdout -Pattern '(?i)reparse point' -Message 'doctor should identify the reparse-point seam'
         }
     }
 }

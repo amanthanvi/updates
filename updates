@@ -6,7 +6,7 @@ set -o pipefail
 # SECTION: globals — version, state variables, module registry
 ###############################################################################
 
-UPDATES_VERSION="2.0.2"
+UPDATES_VERSION="2.1.0"
 
 SCRIPT_NAME="$(basename "$0")"
 
@@ -22,6 +22,7 @@ SELF_UPDATE=1
 SELF_UPDATE_FORCE_REFRESH=0
 NO_CONFIG=0
 JSON=0
+DOCTOR=0
 GO_BINARIES=""
 REPOS_DIR=""
 NODE_NPM_INSTALL_FLAGS=""
@@ -98,15 +99,6 @@ JSON_TS_CACHE_VALUE=""
 SELF_UPDATE_CACHE_TTL=86400
 SELF_UPDATE_CACHE_CHECKED_AT=""
 SELF_UPDATE_CACHE_LATEST_TAG=""
-SELF_UPDATE_CACHE_RELEASE_DRAFT=""
-SELF_UPDATE_CACHE_RELEASE_PRERELEASE=""
-SELF_UPDATE_CACHE_RELEASE_IMMUTABLE=""
-SELF_UPDATE_CACHE_UPDATES_URL=""
-SELF_UPDATE_CACHE_UPDATES_DIGEST=""
-SELF_UPDATE_CACHE_MANIFEST_URL=""
-SELF_UPDATE_CACHE_MANIFEST_DIGEST=""
-SELF_UPDATE_CACHE_SUMS_URL=""
-SELF_UPDATE_CACHE_SUMS_DIGEST=""
 
 BREW_FORMULA_DEFAULT_HINT_EMITTED=0
 
@@ -301,6 +293,22 @@ json_emit_summary() {
 		"$total_seconds" \
 		"$failures_json" \
 		"$ts"
+}
+
+json_emit_doctor_check() {
+	local check="$1" status="$2" message="$3"
+	local ts
+	ts="$(json_timestamp)"
+	printf '{"event":"doctor_check","check":"%s","status":"%s","message":"%s","timestamp":"%s"}\n' \
+		"$(json_escape "$check")" "$(json_escape "$status")" "$(json_escape "$message")" "$ts"
+}
+
+json_emit_doctor_summary() {
+	local ok="$1" warn_count="$2" fail="$3"
+	local ts
+	ts="$(json_timestamp)"
+	printf '{"event":"doctor_summary","ok":%s,"warn":%s,"fail":%s,"timestamp":"%s"}\n' \
+		"$ok" "$warn_count" "$fail" "$ts"
 }
 
 progress() {
@@ -1444,15 +1452,6 @@ self_update_cache_file() {
 self_update_cache_reset() {
 	SELF_UPDATE_CACHE_CHECKED_AT=""
 	SELF_UPDATE_CACHE_LATEST_TAG=""
-	SELF_UPDATE_CACHE_RELEASE_DRAFT=""
-	SELF_UPDATE_CACHE_RELEASE_PRERELEASE=""
-	SELF_UPDATE_CACHE_RELEASE_IMMUTABLE=""
-	SELF_UPDATE_CACHE_UPDATES_URL=""
-	SELF_UPDATE_CACHE_UPDATES_DIGEST=""
-	SELF_UPDATE_CACHE_MANIFEST_URL=""
-	SELF_UPDATE_CACHE_MANIFEST_DIGEST=""
-	SELF_UPDATE_CACHE_SUMS_URL=""
-	SELF_UPDATE_CACHE_SUMS_DIGEST=""
 }
 
 self_update_cache_load() {
@@ -1468,15 +1467,6 @@ self_update_cache_load() {
 		case "$key" in
 		checked_at) SELF_UPDATE_CACHE_CHECKED_AT="$value" ;;
 		latest_tag) SELF_UPDATE_CACHE_LATEST_TAG="$value" ;;
-		draft) SELF_UPDATE_CACHE_RELEASE_DRAFT="$value" ;;
-		prerelease) SELF_UPDATE_CACHE_RELEASE_PRERELEASE="$value" ;;
-		immutable) SELF_UPDATE_CACHE_RELEASE_IMMUTABLE="$value" ;;
-		updates_url) SELF_UPDATE_CACHE_UPDATES_URL="$value" ;;
-		updates_digest) SELF_UPDATE_CACHE_UPDATES_DIGEST="$value" ;;
-		manifest_url) SELF_UPDATE_CACHE_MANIFEST_URL="$value" ;;
-		manifest_digest) SELF_UPDATE_CACHE_MANIFEST_DIGEST="$value" ;;
-		sums_url) SELF_UPDATE_CACHE_SUMS_URL="$value" ;;
-		sums_digest) SELF_UPDATE_CACHE_SUMS_DIGEST="$value" ;;
 		esac
 	done <"$path"
 
@@ -1516,41 +1506,10 @@ self_update_cache_is_fresh() {
 	[ $((current_epoch - checked_at)) -lt "$SELF_UPDATE_CACHE_TTL" ]
 }
 
-self_update_cache_has_release_metadata() {
-	case "$SELF_UPDATE_CACHE_RELEASE_DRAFT" in
-	0 | 1) ;;
-	*) return 1 ;;
-	esac
-	case "$SELF_UPDATE_CACHE_RELEASE_PRERELEASE" in
-	0 | 1) ;;
-	*) return 1 ;;
-	esac
-	case "$SELF_UPDATE_CACHE_RELEASE_IMMUTABLE" in
-	0 | 1) ;;
-	*) return 1 ;;
-	esac
-	[ -n "$SELF_UPDATE_CACHE_UPDATES_URL" ] || return 1
-	[ -n "$SELF_UPDATE_CACHE_UPDATES_DIGEST" ] || return 1
-	[ -n "$SELF_UPDATE_CACHE_MANIFEST_URL" ] || return 1
-	[ -n "$SELF_UPDATE_CACHE_MANIFEST_DIGEST" ] || return 1
-	[ -n "$SELF_UPDATE_CACHE_SUMS_URL" ] || return 1
-	[ -n "$SELF_UPDATE_CACHE_SUMS_DIGEST" ] || return 1
-	return 0
-}
-
 self_update_cache_write() {
 	local path="$1"
 	local checked_at="$2"
 	local latest_tag="$3"
-	local release_draft="${4:-}"
-	local release_prerelease="${5:-}"
-	local release_immutable="${6:-}"
-	local updates_url="${7:-}"
-	local updates_digest="${8:-}"
-	local manifest_url="${9:-}"
-	local manifest_digest="${10:-}"
-	local sums_url="${11:-}"
-	local sums_digest="${12:-}"
 	local dir=""
 	local tmp=""
 
@@ -1566,15 +1525,6 @@ self_update_cache_write() {
 		{
 			printf 'checked_at=%s\n' "$checked_at"
 			printf 'latest_tag=%s\n' "$latest_tag"
-			printf 'draft=%s\n' "$release_draft"
-			printf 'prerelease=%s\n' "$release_prerelease"
-			printf 'immutable=%s\n' "$release_immutable"
-			printf 'updates_url=%s\n' "$updates_url"
-			printf 'updates_digest=%s\n' "$updates_digest"
-			printf 'manifest_url=%s\n' "$manifest_url"
-			printf 'manifest_digest=%s\n' "$manifest_digest"
-			printf 'sums_url=%s\n' "$sums_url"
-			printf 'sums_digest=%s\n' "$sums_digest"
 		} >"$tmp"
 	); then
 		debug "self-update: failed to write cache temp file: $tmp"
@@ -1654,21 +1604,10 @@ maybe_self_update() {
 			elif self_update_cache_is_fresh "$current_epoch" "$SELF_UPDATE_CACHE_CHECKED_AT"; then
 				tag="$SELF_UPDATE_CACHE_LATEST_TAG"
 				if self_update_cache_latest_is_newer_than_current "$tag"; then
-					if self_update_cache_has_release_metadata; then
-						live_check_needed=0
-						release_draft="$SELF_UPDATE_CACHE_RELEASE_DRAFT"
-						release_prerelease="$SELF_UPDATE_CACHE_RELEASE_PRERELEASE"
-						release_immutable="$SELF_UPDATE_CACHE_RELEASE_IMMUTABLE"
-						updates_url="$SELF_UPDATE_CACHE_UPDATES_URL"
-						updates_digest="$SELF_UPDATE_CACHE_UPDATES_DIGEST"
-						manifest_url="$SELF_UPDATE_CACHE_MANIFEST_URL"
-						manifest_digest="$SELF_UPDATE_CACHE_MANIFEST_DIGEST"
-						sums_url="$SELF_UPDATE_CACHE_SUMS_URL"
-						sums_digest="$SELF_UPDATE_CACHE_SUMS_DIGEST"
-						debug "self-update: using cached release metadata for newer tag (${tag}) from ${cache_file}"
-					else
-						debug "self-update: cached release tag (${tag}) is newer but metadata is incomplete; fetching live metadata"
-					fi
+					# Cache contents are only a freshness optimization. Never trust cached
+					# URLs or digests to authorize an upgrade; re-fetch canonical release
+					# metadata from GitHub whenever the cached tag is newer.
+					debug "self-update: cached release tag (${tag}) is newer; fetching live metadata"
 				else
 					debug "self-update: using cached release tag (${tag}) from ${cache_file}"
 					return 0
@@ -1734,16 +1673,7 @@ maybe_self_update() {
 			self_update_cache_write \
 				"$cache_file" \
 				"$current_epoch" \
-				"$tag" \
-				"$release_draft" \
-				"$release_prerelease" \
-				"$release_immutable" \
-				"$updates_url" \
-				"$updates_digest" \
-				"$manifest_url" \
-				"$manifest_digest" \
-				"$sums_url" \
-				"$sums_digest" || true
+				"$tag" || true
 		fi
 	fi
 
@@ -1908,6 +1838,98 @@ maybe_self_update() {
 }
 
 ###############################################################################
+# SECTION: doctor — local, read-only installation integrity checks
+###############################################################################
+
+DOCTOR_OK=0
+DOCTOR_WARN=0
+DOCTOR_FAIL=0
+
+doctor_record() {
+	local check="$1" status="$2" message="$3"
+	case "$status" in
+	ok) DOCTOR_OK=$((DOCTOR_OK + 1)) ;;
+	warn) DOCTOR_WARN=$((DOCTOR_WARN + 1)) ;;
+	fail) DOCTOR_FAIL=$((DOCTOR_FAIL + 1)) ;;
+	esac
+	if json_enabled; then
+		json_emit_doctor_check "$check" "$status" "$message"
+	else
+		printf '%-5s %-20s %s\n' "$(printf '%s' "$status" | tr '[:lower:]' '[:upper:]')" "$check" "$message"
+	fi
+}
+
+run_doctor() {
+	local self_path="" embedded_version="" cache_file="" cache_state=0
+	DOCTOR_OK=0
+	DOCTOR_WARN=0
+	DOCTOR_FAIL=0
+
+	if self_path="$(self_update_resolve_self_path)" && [ -r "$self_path" ] && [ -x "$self_path" ]; then
+		doctor_record executable ok "updates is executable at ${self_path}"
+	else
+		doctor_record executable fail "cannot resolve or read the updates executable; reinstall updates"
+		self_path=""
+	fi
+
+	if [ -n "$self_path" ]; then
+		embedded_version="$(self_update_script_file_version "$self_path")"
+		if [ "$embedded_version" = "$UPDATES_VERSION" ] && semver_is_valid "$embedded_version"; then
+			doctor_record version ok "running version ${UPDATES_VERSION} matches the executable"
+		else
+			doctor_record version fail "executable version does not match ${UPDATES_VERSION}; reinstall updates"
+		fi
+	fi
+
+	if is_macos || is_linux; then
+		doctor_record platform ok "$(current_platform_name) is supported"
+	else
+		doctor_record platform fail "${OS_NAME:-unknown} is unsupported; use the native Windows package on Windows"
+	fi
+
+	if [ -n "$self_path" ]; then
+		if self_update_is_git_checkout "$self_path"; then
+			doctor_record self_update_path warn "git checkout detected; self-update is intentionally disabled"
+		elif [ -L "$self_path" ]; then
+			doctor_record self_update_path warn "symlink install detected; update through its package manager"
+		elif [ -w "$self_path" ]; then
+			doctor_record self_update_path ok "installed copy is writable"
+		else
+			doctor_record self_update_path warn "installed copy is not writable; update through its package manager or reinstall to ~/.local/bin"
+		fi
+	fi
+
+	if cmd_exists sha256sum || cmd_exists shasum; then
+		doctor_record checksum ok "SHA-256 verification tool is available"
+	else
+		doctor_record checksum warn "sha256sum or shasum is required for verified self-update"
+	fi
+
+	if cache_file="$(self_update_cache_file "$SELF_UPDATE_REPO" 2>/dev/null)"; then
+		if [ ! -e "$cache_file" ]; then
+			doctor_record self_update_cache ok "no self-update cache exists"
+		else
+			self_update_cache_load "$cache_file"
+			cache_state=$?
+			if [ "$cache_state" -eq 0 ]; then
+				doctor_record self_update_cache ok "self-update cache is parseable"
+			else
+				doctor_record self_update_cache fail "self-update cache is invalid; remove ${cache_file} and retry"
+			fi
+		fi
+	else
+		doctor_record self_update_cache warn "self-update cache path cannot be resolved"
+	fi
+
+	if json_enabled; then
+		json_emit_doctor_summary "$DOCTOR_OK" "$DOCTOR_WARN" "$DOCTOR_FAIL"
+	else
+		printf 'SUMMARY ok=%s warn=%s fail=%s\n' "$DOCTOR_OK" "$DOCTOR_WARN" "$DOCTOR_FAIL"
+	fi
+	[ "$DOCTOR_FAIL" -eq 0 ]
+}
+
+###############################################################################
 # SECTION: cli — usage, config parsing, argument parsing
 ###############################################################################
 
@@ -1964,6 +1986,7 @@ Options:
   -h, --help               Show this help
       --version            Print version
       --list-modules       List available modules
+      --doctor             Check local installation integrity; make no changes
       --dry-run            Print what would run; make no changes
       --only <list>        Run only these modules (CSV; or quote a space-separated list)
       --skip <list>        Skip these modules (CSV; or quote a space-separated list)
@@ -2004,7 +2027,7 @@ pre_scan_no_config() {
 		--json)
 			JSON=1
 			;;
-		-h | --help | --version | --list-modules)
+		-h | --help | --version | --list-modules | --doctor)
 			# These commands don't need config defaults; avoid config parse warnings
 			# polluting help/version output (and keep --json + --help sane).
 			NO_CONFIG=1
@@ -2172,6 +2195,9 @@ parse_args() {
 		--list-modules)
 			list_modules
 			exit 0
+			;;
+		--doctor)
+			DOCTOR=1
 			;;
 		--dry-run)
 			DRY_RUN=1
@@ -3639,6 +3665,10 @@ run_selected_modules() {
 on_interrupt() {
 	local code="$1"
 	local sig="$2"
+	local pid
+	for pid in $(jobs -pr); do
+		kill "$pid" 2>/dev/null || true
+	done
 	err "Interrupted ($sig)."
 	exit "$code"
 }
@@ -3651,6 +3681,14 @@ main() {
 
 	if [ "$JSON" -eq 1 ]; then
 		HUMAN_FD=2
+	fi
+
+	# Doctor is strictly read-only. Run it before log redirection, directory
+	# creation, color initialization, or any other mutable startup behavior.
+	if [ "$DOCTOR" -eq 1 ]; then
+		init_platform_cache
+		run_doctor
+		return $?
 	fi
 
 	if [ -n "$LOG_FILE" ] && [ "${UPDATES_LOG_REDIRECTED:-0}" != "1" ]; then
