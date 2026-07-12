@@ -239,7 +239,7 @@ function Expand-SourceZip {
     Expand-Archive -LiteralPath $ZipPath -DestinationPath $OutputRoot -Force
 }
 
-function Download-AuthenticatedRelease {
+function Get-AuthenticatedRelease {
     param(
         [string]$RequestedVersion,
         [string]$OutputRoot
@@ -505,7 +505,7 @@ try {
     if ($SourceRoot) {
         New-LayoutFromSourceRoot -Root $SourceRoot -ExpectedVersion $Version -OutputRoot $layoutRoot
     } else {
-        $zipPath = if ($SourceZip) { Get-CanonicalPath $SourceZip } else { Download-AuthenticatedRelease -RequestedVersion $Version -OutputRoot $tempRoot }
+        $zipPath = if ($SourceZip) { Get-CanonicalPath $SourceZip } else { Get-AuthenticatedRelease -RequestedVersion $Version -OutputRoot $tempRoot }
         if ($SourceZip) {
             if ($SourceZipSha256) {
                 if ($SourceZipSha256 -notmatch '^[0-9a-fA-F]{64}$' -or (Get-Sha256Hex $zipPath) -ne $SourceZipSha256.ToLowerInvariant()) {

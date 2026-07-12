@@ -15,11 +15,6 @@ fi
 VERSION="$(release_normalize_version "$1")"
 TAG="$(release_tag_for_version "$VERSION")"
 
-if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-	echo "Version must be SemVer: X.Y.Z" >&2
-	exit 2
-fi
-
 release_validate_invariants "$VERSION" "$TAG"
 
 if [ -n "$(git status --porcelain=v1)" ]; then

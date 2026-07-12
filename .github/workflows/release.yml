@@ -52,10 +52,13 @@ jobs:
 
       - name: Validate release invariants
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
         run: |
           set -euo pipefail
           source ./scripts/release-lib.sh
-          release_validate_invariants "${{ steps.meta.outputs.version }}" "${{ steps.meta.outputs.tag }}"
+          release_validate_invariants "$RELEASE_VERSION" "$RELEASE_TAG"
 
       - name: Syntax check
         shell: bash
