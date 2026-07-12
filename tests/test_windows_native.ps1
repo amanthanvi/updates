@@ -2151,12 +2151,18 @@ if (Should-RunTest 'native self-update metadata commit failures preserve runnabl
                 param($installRoot)
                 Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $previousReleaseVersion -WithReceipt
                 New-MatchedVersionedPayload -InstallRoot $installRoot -Version $currentReleaseVersion
-                & {
+                $failureMessage = & {
                     . (Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot)
                     $script:InstallRoot = $installRoot
                     function Invoke-SelfUpdateCommitHook { param([string]$Step); if ($Step -eq $failureStep) { throw "injected $Step failure" } }
-                    try { Commit-SelfUpdateMetadata -PreviousVersion $previousReleaseVersion -InstalledVersion $currentReleaseVersion } catch { }
+                    try {
+                        Commit-SelfUpdateMetadata -PreviousVersion $previousReleaseVersion -InstalledVersion $currentReleaseVersion
+                        return ''
+                    } catch {
+                        return $_.Exception.Message
+                    }
                 }
+                Assert-Match -Text $failureMessage -Pattern ('injected {0} failure' -f [regex]::Escape($failureStep)) -Message ("failure hook should identify {0}" -f $failureStep)
                 $current = (Get-Content -LiteralPath (Join-Path $installRoot 'current.txt') -Raw).Trim()
                 $currentRoot = Join-Path $installRoot (Join-Path 'versions' $current)
                 Assert-True -Condition (Test-Path -LiteralPath (Join-Path $currentRoot 'updates-main.ps1') -PathType Leaf) -Message ("current payload must remain runnable after {0} failure" -f $failureStep)
