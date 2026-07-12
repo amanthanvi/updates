@@ -2,7 +2,7 @@
 
 A small, modular CLI to update common macOS, Linux, WSL, and Windows tooling.
 
-The v2 contract uses Bash on macOS/Linux/WSL and PowerShell 7 via `updates.cmd`/`updates.ps1` on native Windows. The upcoming v2.1 release adds offline diagnosis and safer Windows activation without changing existing v2 interfaces.
+The v2 contract uses Bash on macOS/Linux/WSL and PowerShell 7 via `updates.cmd`/`updates.ps1` on native Windows. The v2.1 release adds offline diagnosis and safer Windows activation without changing existing v2 interfaces.
 
 This script can be disruptive (it updates global environments). Use `--dry-run` and scope with `--only` / `--skip`.
 

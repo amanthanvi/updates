@@ -39,7 +39,7 @@ Ship a safer, diagnosable `updates` release while preserving the v2 CLI contract
 - [x] Add the v2.1 glossary and `--doctor` ADR.
 - [x] Align README, SPEC, help, platform matrix, and changelog with final implemented behavior.
 - [x] Pass Bash lint/tests, native Windows tests, release build, and distribution verification.
-- [ ] Release `v2.1.0` only from a clean, reviewed, green commit.
+- [x] Release `v2.1.0` only from a clean, reviewed, green commit.
 
 ## Locked boundaries
 
