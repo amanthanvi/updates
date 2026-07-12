@@ -1,449 +1,49 @@
-# Plan: Unreleased NODE_NPM_INSTALL_FLAGS
+# Plan: v2.1.0
 
 ## Goal
 
-- Add a scoped `NODE_NPM_INSTALL_FLAGS` config key for the `node` module without changing default npm behavior.
+Ship a safer, diagnosable `updates` release while preserving the v2 CLI contract and dependency-free distribution model.
 
 ## Execution checklist
 
-- [x] Implement Bash and native Windows PowerShell config parsing.
-- [x] Insert configured npm flags before the `npm install -g --` package separator.
-- [x] Preserve configured flags across ERESOLVE and allow-scripts retry paths, with `--legacy-peer-deps` deduped on ERESOLVE retry.
-- [x] Cover Bash and Windows dry-run/retry behavior.
-- [x] Guard Bash npm flag handling under inherited `nounset`.
-- [x] Keep Windows self-update fixture tests on the non-CI path under GitHub Actions.
-- [x] Update README, SPEC, and CHANGELOG contract docs.
+### Safety characterization
 
----
+- [x] Add selectable Bash test cases without changing the default full-suite invocation.
+- [x] Synchronize SIGINT/SIGTERM tests and verify active-child termination with exit `130`/`143`.
+- [x] Centralize release invariants and cover unsafe paths, dirty trees, existing tags, verification failure, and annotated-tag creation.
+- [x] Add Windows failure injection at every install/self-update commit boundary.
 
-# Plan: v2.0.0
+### Windows install and self-update
 
-This is the released execution record for `updates` **v2.0.0**. It adds native Windows support, hardens self-update around first-party GitHub Releases only, and removes custom self-update repo overrides.
+- [x] Authenticate network release metadata and assets before extraction.
+- [x] Add optional `-SourceZipSha256`; warn when a local ZIP is accepted without it.
+- [x] Stage and validate complete version directories before atomically committing bootstrap, receipt, and pointers.
+- [x] Keep the previously runnable payload active through every interrupted or failed upgrade state.
 
-## Goals (v2.0.0)
+### Cross-platform doctor
 
-- Add native Windows support with `pwsh` only.
-- Keep one top-level CLI contract across macOS, Linux, WSL, and Windows.
-- Add official Windows entrypoints: `updates.cmd`, `updates.ps1`.
-- Add Windows modules: `winget` and `bun`; support `node`, `python`, `uv`, `pipx`, `rustup`, and `go` on native Windows.
-- Make GitHub Releases the only official install/update channel for `updates` itself.
-- Remove `UPDATES_SELF_UPDATE_REPO`; hard cutover to the canonical repo `amanthanvi/updates`.
-- Ship first-party Windows self-update only for official standalone installs with a valid install receipt.
-- Harden release trust with immutable releases, asset digests, `updates-release.json`, and `SHA256SUMS`.
+- [x] Add local-only, read-only `--doctor` with stable human checks.
+- [x] Add JSONL `doctor_check` and `doctor_summary` events with stdout purity.
+- [x] Return `0` for healthy/warnings, `1` for failed checks, and `2` for usage/configuration errors.
+- [x] Cover healthy, warning, failure, offline, JSONL, exit-code, and no-mutation behavior on Bash and Windows.
 
-## Non-goals
+### Windows parity and simplification
 
-- No third-party package-manager publication for `updates` itself.
-- No manager-owned install delegation or in-place overwrite of unknown/manual layouts.
-- No fallback to Windows PowerShell 5.1.
-- No self-update elevation on Windows.
+- [x] Add default-on native Windows `claude` and `pi` modules.
+- [x] Route all Windows module metadata, selection, and invocation through one registry.
+- [x] Investigate `mise` ownership behavior; defer unless one safe command sequence covers supported installs.
+- [x] Preserve the dependency-free Bash self-update parser fallback and independently distributed containment helpers.
 
-## Execution checklist
+### Documentation and release
 
-### 1) Docs + contract
+- [x] Add the v2.1 glossary and `--doctor` ADR.
+- [x] Align README, SPEC, help, platform matrix, and changelog with final implemented behavior.
+- [x] Pass Bash lint/tests, native Windows tests, release build, and distribution verification.
+- [ ] Release `v2.1.0` only from a clean, reviewed, green commit.
 
-- [x] Update `SPEC.md`, `PLAN.md`, `README.md`, and `CHANGELOG.md` for the `v2.0.0` contract.
-- [x] Record the breaking removal of `UPDATES_SELF_UPDATE_REPO`.
-- [x] Document the native Windows payload layout, release artifacts, and trust model.
+## Locked boundaries
 
-### 2) Native Windows entrypoints + layout
-
-- [x] Add `updates.cmd` as the thin Windows launcher.
-- [x] Add `updates.ps1` as the stable Windows bootstrap.
-- [x] Add `install-windows.ps1` for the official standalone Windows layout.
-- [x] Add the Windows payload layout under `%LOCALAPPDATA%\\Programs\\updates`.
-- [x] Add `install-source.json`, `current.txt`, `previous.txt`, and versioned payload manifests.
-
-### 3) Windows modules
-
-- [x] Add module: `winget`.
-- [x] Add module: `bun`.
-- [x] Support native Windows execution for `node`, `python`, `uv`, `pipx`, `rustup`, and `go`.
-- [x] Keep unsupported modules auto-skipping on Windows; `--only <unsupported>` must error with exit `2`.
-
-### 4) Self-update + trust hardening
-
-- [x] Remove support for `UPDATES_SELF_UPDATE_REPO`; setting it must error with exit `2`.
-- [x] Add `updates-release.json` as the canonical self-update manifest.
-- [x] Add Windows standalone receipt validation via `install-source.json`.
-- [x] Require GitHub release asset digests plus `SHA256SUMS`.
-- [x] Require published releases to be immutable before they are eligible for runtime self-update.
-- [x] Add installed-copy reopen/version validation before Unix re-exec and Windows relaunch.
-
-### 5) Cross-platform hardening
-
-- [x] Replace loose platform markers with explicit allow-lists.
-- [x] Make config parsing BOM-safe.
-- [x] Resolve home via `HOME`, then `USERPROFILE` on Windows.
-- [x] Resolve Python launchers as `py -3`, then `python`, then `python3`.
-- [x] Resolve npm-check-updates on Windows as `ncu.cmd`, then `ncu`, then `npx npm-check-updates`.
-- [x] Enforce LF for shell, PowerShell, batch, workflow, and packaged assets.
-
-### 6) Tests + release validation
-
-- [x] Add native Windows contract tests.
-- [x] Add Windows module coverage for `winget`, `bun`, `node`, `python`, `uv`, `pipx`, `rustup`, and `go`.
-- [x] Add Windows signal coverage for `Ctrl+C` / `Ctrl+Break` => `130`.
-- [x] Add release-artifact smoke validation for `updates`, `updates-windows.zip`, `updates-release.json`, and `SHA256SUMS`.
-- [x] Run release-artifact build/verification on normal push/PR CI.
-- [x] Add post-publish verification with `gh release verify` and `gh release verify-asset`.
-
-## Notes / decisions (locked)
-
-- Native Windows runtime is PowerShell 7 (`pwsh`) only.
-- Official Windows install root is `%LOCALAPPDATA%\\Programs\\updates`.
-- Official distribution for `updates` itself is GitHub Releases only.
-- Windows self-update is only for official standalone installs carrying `install-source.json`.
-- `UPDATES_SELF_UPDATE_REPO` removal is a breaking change, so this release is `v2.0.0`.
-
----
-
-# Plan: v1.0.1
-
-This is the execution plan for shipping `updates` **v1.0.1**. It is a small patch release focused on maintainability and self-update throttling.
-
-## Goals (v1.0.1)
-
-- Remove duplicated module metadata and keep module selection/dispatch aligned from one registry.
-- Reduce avoidable subprocess work without changing the public CLI contract.
-- Throttle self-update GitHub release checks with a small persistent cache while preserving checksum verification and explicit `--self-update`.
-
-## Execution checklist
-
-- [x] Centralize module metadata in one registry and route validation/listing/dispatch through it.
-- [x] Cache cheap runtime facts (`uname` result, JSON timestamps) and keep JSON stdout pure.
-- [x] Add repo-scoped self-update metadata caching with 24-hour throttling, forced refresh on `--self-update`, and cached fallback on live-check failure.
-- [x] Update `README.md`, `SPEC.md`, and `tests/test_cli.sh`.
-- [x] Run `./scripts/lint.sh` and `./scripts/test.sh`.
-
----
-
-# Plan: v1.0.0
-
-This is the execution plan for shipping `updates` **v1.0.0**. It is a living checklist and should be updated as work lands.
-
-## Release sequence
-
-- `v0.9.0`: deprecation bridge + new features (old flags still accepted with `WARN:`).
-- `v1.0.0`: stable contract (deprecated flags removed; using them is an error).
-
-## Goals (v1.0)
-
-- Freeze a stable CLI contract: **flags**, **module names**, **exit codes**, **output boundaries + summary**, and **JSONL event types**.
-- Add a simple config file (`~/.updatesrc`) for defaults (with `--no-config`).
-- Add `--json` mode for automation (JSONL on stdout; human output on stderr).
-- Replace flag sprawl with enums:
-  - `--brew-mode <formula|casks|greedy>`
-  - `--log-level <error|warn|info|debug>`
-- Add modules: `uv`, `mise`, `go`.
-- Keep the script safe-by-default, deterministic in tests, and Bash 3.2 compatible.
-
-## Non-goals
-
-- No rich TUI and no new output formats beyond JSONL + current human text.
-- No new runtime dependencies.
-- No plugin system / third-party modules.
-- No auto-installation of missing tools.
-
-## Execution checklist
-
-### Milestone: v0.9.0 (deprecation bridge)
-
-#### 1) Docs + scaffolding (spec-first)
-
-- [x] Update `SPEC.md` where decisions changed (e.g. `--full`, go `@latest` default).
-- [x] Add/refresh this `PLAN.md` section for v0.9.0 + v1.0.0.
-- [x] Update repo `AGENTS.md` with v1.0 dev rules (Bash 3.2, JSON stdout purity, golden commands).
-
-#### 2) Core CLI surface (v1 flags added; v0 flags deprecated)
-
-- [x] Add `--log-level <error|warn|info|debug>` (default `info`).
-- [x] Add `--json` (JSONL on stdout; human logs on stderr).
-- [x] Add `--no-config` and implement `~/.updatesrc` (config < CLI flags).
-- [x] Add `--brew-mode <formula|casks|greedy>`.
-- [x] Add `--pip-force` (maps to pip `--break-system-packages`).
-- [x] Add `-n` alias for `--non-interactive`.
-- [x] Keep v0.x flags working but deprecated (print `WARN:` and map internally):
-  - [x] `--brew-casks` / `--no-brew-casks`
-  - [x] `--brew-greedy` / `--no-brew-greedy`
-  - [x] `-q` / `--quiet`
-  - [x] `-v` / `--verbose`
-  - [x] `--python-break-system-packages`
-
-#### 3) Module work
-
-- [x] Add module: `uv` (`uv self update` + `uv tool upgrade --all`).
-- [x] Add module: `mise` (`mise self-update` + `mise upgrade`).
-- [x] Add module: `go` (`go install <module>@<version>`; default to `@latest` when version omitted).
-- [x] Update module registration everywhere (`is_module_known`, descriptions, list, supported matrix, execution order).
-- [x] Ensure `--full` enables `mas` + `macos` and runs everything else (including `uv`/`mise`/`go` when detected/configured).
-
-#### 4) Tests + CI + docs alignment
-
-- [x] Expand `tests/test_cli.sh`:
-  - [x] config precedence + `--no-config`
-  - [x] `--brew-mode` and deprecated brew flags mapping
-  - [x] `--log-level` filtering
-  - [x] `--json` stream purity + event sanity
-  - [x] new module stubs: `uv`, `mise`, `go`
-  - [x] deprecated flags emit `WARN:` (0.9.0 behavior)
-- [x] Update `README.md` with new flags/modules/config examples.
-- [x] Update CI to run on macOS + Linux.
-
-#### 5) Release v0.9.0
-
-- [x] Update `CHANGELOG.md` with `0.9.0` entry.
-- [x] Bump `UPDATES_VERSION` to `0.9.0`.
-- [x] Run `./scripts/lint.sh` and `./scripts/test.sh`.
-- [x] `./scripts/release.sh 0.9.0` and push `main` + tags.
-
-### Milestone: v1.0.0 (breaking cleanup)
-
-- [x] Remove deprecated flags entirely; using them must error (exit `2`).
-- [x] Update tests to assert deprecated flags now fail.
-- [x] Update `README.md`/help text to remove deprecated flags.
-- [x] Update `CHANGELOG.md` with `1.0.0` entry.
-- [x] Bump `UPDATES_VERSION` to `1.0.0`.
-- [x] Run `./scripts/lint.sh` and `./scripts/test.sh`.
-- [x] `./scripts/release.sh 1.0.0` and push `main` + tags.
-
-## Notes / decisions (locked)
-
-- Go module is hands-off by default: config entries may omit `@version` and will default to `@latest`.
-- `--full` should run everything it can (including `uv`/`mise`/`go`, plus the existing opt-in modules).
-
----
-
-# Plan: v0.4.0
-
-This is the execution plan for shipping `updates` **v0.4.0**. It is a living checklist and should be updated as work lands.
-
-## Goals
-
-- Fix Python failures on PEP 668 (“externally managed environment”) by defaulting to safe **user-site upgrades**.
-- Support **macOS and Linux** (including WSL detection) without changing default behavior on macOS.
-- Add a minimal Linux “system packages” module that **upgrades packages** via an auto-detected distro package manager.
-- Keep diffs small/medium; land changes as incremental commits on `main`.
-
-## Non-goals (avoid boiling the ocean)
-
-- Managing language toolchains beyond existing modules (no asdf/mise/nix/etc.).
-- Distro-specific edge-case tuning (keep Linux module intentionally small and safe).
-- Turning `updates` into a general-purpose “system maintenance” tool.
-
-## Execution checklist
-
-### 1) Docs + spec scaffolding
-
-- [x] Update `SPEC.md` with macOS/Linux/WSL platform rules and a module/platform matrix.
-- [x] Update `README.md` module list + examples for Linux + WSL.
-
-### 2) Platform support
-
-- [x] Replace macOS-only gating with “supported platforms: macOS + Linux”.
-- [x] Add WSL detection and document it (WSL updates apply to the distro, not Windows).
-
-### 3) Python hardening (PEP 668)
-
-- [x] Detect externally-managed Python environments.
-- [x] Default to guarded `pip install --user` upgrades when externally-managed.
-- [x] Prune guarded user-site upgrades that would add packages absent from the user site, use source distributions, or violate installed dependency constraints.
-- [x] Re-check the guarded safe subset with a combined dry-run before installing.
-- [x] Treat remaining pre-existing `pip check` failures as guarded-run warnings.
-- [x] Check pip `--dry-run --report` support before guarded user-site upgrades.
-- [x] Add an explicit opt-in flag for system-scope `--break-system-packages`.
-- [x] Add/adjust tests to cover the new behavior.
-
-### 4) Linux system package upgrades (minimal)
-
-- [x] Add a Linux module (name: `linux`) that auto-detects one of:
-  - `apt-get`, `dnf`, `yum`, `pacman`, `zypper`, `apk`
-- [x] Implement update + upgrade flow per package manager.
-- [x] Use `sudo` when needed; honor `--non-interactive` and `--dry-run`.
-- [x] Add tests for module selection + command invocation.
-
-### 5) Release prep
-
-- [x] Update `updates --help` and `SPEC.md` for any new flags/modules.
-- [x] Update `CHANGELOG.md` with a `0.4.0` entry (move items out of `[Unreleased]`).
-- [x] Bump `UPDATES_VERSION` to `0.4.0`.
-- [x] Run `./scripts/lint.sh` and `./scripts/test.sh`.
-- [x] Tag `v0.4.0` and push `main` + tags.
-
-## Notes / decisions
-
-- Linux module should **upgrade packages** (not just list them).
-- Homebrew can exist on Linux; `brew` module remains cross-platform (command-based).
-- PEP 668 default is **guarded** (user-site upgrades with wheel-only dry-run reports, dependency pruning, a combined safe-set dry-run, and `pip check`); system-scope “break system packages” requires explicit opt-in.
-
----
-
-# Plan: v0.5.0
-
-This is the execution plan for shipping `updates` **v0.5.0**. It focuses on clearer output, small performance improvements, and safety hardening without adding bloat.
-
-## Goals
-
-- Make output easier to scan: per-module boundaries, per-module statuses, and a concise end summary.
-- Preserve performance: reduce unnecessary subprocess usage and avoid extra network-y checks where safe.
-- Preserve security and safety: safer non-interactive behavior; clear failure reporting; no risky defaults.
-
-## Non-goals
-
-- Adding heavy output modes (no JSON output, no rich TUI).
-- Rewriting modules to wrap/parse tool output (brew/pip/etc. output remains the source).
-- Adding new runtime dependencies.
-
-## Execution checklist
-
-### 1) Spec-first: output contract
-
-- [x] Update `SPEC.md` with standardized module boundaries and summary lines.
-- [x] Document signal handling behavior (Ctrl-C) and exit codes.
-
-### 2) Implement output scaffolding + timings
-
-- [x] Add a module runner wrapper that prints `START`/`END` lines with `OK/SKIP/FAIL` + duration.
-- [x] Print a final summary (counts + failures) and preserve `--quiet` / `--verbose` behavior.
-- [x] Switch timing to Bash `SECONDS` (avoid `date` subprocesses).
-
-### 3) Safety + perf hardening
-
-- [x] Add SIGINT/SIGTERM handling with clean “interrupted” output and exit `130`.
-- [x] Improve non-interactive Linux upgrades (`DEBIAN_FRONTEND=noninteractive` for `apt-get`).
-- [x] Reduce pip overhead/noise where safe (e.g., disable pip version check).
-
-### 4) Tests + docs
-
-- [x] Extend `tests/test_cli.sh` to assert module boundary/summary output (using stubs).
-- [x] Update `README.md` with a short example of the new output.
-- [x] Add `CHANGELOG.md` entries for 0.5.0 as changes land.
-
-### 5) Release
-
-- [x] Bump `UPDATES_VERSION` to `0.5.0`.
-- [x] Finalize `CHANGELOG.md` with `## [0.5.0] - YYYY-MM-DD`.
-- [x] Run `./scripts/lint.sh` and `./scripts/test.sh`.
-- [x] Tag and push `v0.5.0`.
-
----
-
-# Plan: v0.5.1
-
-This is the execution plan for shipping `updates` **v0.5.1**. It adds optional, TTY-only ANSI coloring without changing non-TTY output.
-
-## Goals
-
-- Add user-friendly ANSI coloring for module boundary lines and `WARN:`/`ERROR:` prefixes.
-- Preserve stable, grep-friendly output when piped and keep `--log-file` output clean.
-
-## Non-goals
-
-- Adding a rich TUI or alternative output modes.
-- Colorizing third-party tool output (`brew`, `pip`, etc.).
-
-## Execution checklist
-
-- [x] Add `--no-color` flag and support `NO_COLOR=1`.
-- [x] Colorize boundary lines and `WARN:`/`ERROR:` prefixes when output is a TTY.
-- [x] Update `SPEC.md`, `README.md`, and `CHANGELOG.md`.
-- [x] Run `./scripts/lint.sh` and `./scripts/test.sh`.
-- [x] Tag `v0.5.1` and push `main` + tags.
-
----
-
-# Plan: v0.6.0 (superseded)
-
-This plan was superseded. `v0.6.0` shipped as opt-in app/system update presets; the `shell` module work moved to `v0.7.0`.
-
-## Goals
-
-- Add a `shell` module that detects and updates:
-  - Oh My Zsh itself (git fast-forward only)
-  - Git-backed Oh My Zsh custom plugins/themes
-- Fully align `SPEC.md` with the current CLI (remove stale flags; correct module defaults; correct `--non-interactive` behavior).
-
-## Non-goals (avoid feature creep)
-
-- No rich TUI / heavy output modes.
-- No support matrix explosion (start with Oh My Zsh + git-based custom repos only).
-- No modifications to the user’s shell config (`.zshrc`, etc.).
-
-**Note:** This plan was superseded; work moved to later releases.
-
-## Execution checklist
-
-### 1) Spec-first alignment
-
-- [ ] Remove stale flags from `SPEC.md` that are not implemented (`--full`, `--mas-upgrade`, `--macos-updates`, `--brew-casks`).
-- [ ] Update `SPEC.md` module selection rules and `--non-interactive` semantics to match the current code.
-
-### 2) Implement `shell` module (minimal)
-
-- [ ] Add module registration: `is_module_known()`, `module_description()`, `list_modules()`, `run_selected_modules()`, `module_supported()`.
-- [ ] Implement detection:
-  - `~/.oh-my-zsh` or `$ZSH`
-  - `$ZSH_CUSTOM` or `$ZSH/custom` for plugins/themes
-- [ ] Implement safe updates:
-  - `git pull --ff-only` for each detected repo
-  - Honor `--dry-run`
-  - In `--non-interactive`, prevent credential prompts
-
-### 3) Tests + docs
-
-- [ ] Add/extend tests for `--only shell` (using stubs + temp HOME fixtures).
-- [ ] Update `README.md`, `SPEC.md`, and `CHANGELOG.md` under `[Unreleased]`.
-
-### 4) Release
-
-- [ ] Bump `UPDATES_VERSION` to `0.6.0` and finalize `CHANGELOG.md`.
-- [ ] Run `./scripts/lint.sh` and `./scripts/test.sh`.
-- [ ] Tag `v0.6.0` and push `main` + tags.
-
----
-
-# Plan: v0.7.0
-
-This is the execution plan for shipping `updates` **v0.7.0**. It adds a minimal `shell` module for common shell customization tooling (starting with Oh My Zsh) and documents it in `SPEC.md`.
-
-## Goals
-
-- Add a `shell` module that detects and updates:
-  - Oh My Zsh itself (git fast-forward only)
-  - Git-backed Oh My Zsh custom plugins/themes
-- Keep behavior safe and non-invasive (no edits to shell config files).
-
-## Non-goals (avoid feature creep)
-
-- No support matrix explosion (start with Oh My Zsh + git-based custom repos only).
-- No rich TUI / alternative output modes.
-- No modification of user dotfiles (`.zshrc`, etc.).
-
-## Execution checklist
-
-### 1) Spec + docs
-
-- [x] Update `SPEC.md` module list/matrix to include `shell`.
-- [x] Update `README.md` module list + prerequisites.
-- [x] Add `CHANGELOG.md` entries under `[Unreleased]`.
-
-### 2) Implement `shell` module (minimal)
-
-- [x] Add module registration: `is_module_known()`, `module_description()`, `list_modules()`, `run_selected_modules()`, `module_supported()`.
-- [x] Implement detection:
-  - `~/.oh-my-zsh` or `$ZSH`
-  - `$ZSH_CUSTOM` or `$ZSH/custom` for plugins/themes
-- [x] Implement safe updates:
-  - `git pull --ff-only` for each detected repo
-  - Honor `--dry-run`
-  - In `--non-interactive`, disable git terminal prompts
-
-### 3) Tests
-
-- [x] Add tests for `--only shell` (using stubs + temp HOME fixtures).
-
-### 4) Release
-
-- [x] Bump `UPDATES_VERSION` to `0.7.0` and finalize `CHANGELOG.md`.
-- [x] Run `./scripts/lint.sh` and `./scripts/test.sh`.
-- [x] Tag `v0.7.0` and push `main` + tags.
+- No new runtime dependencies, plugin system, telemetry, automatic repair, or networked doctor checks.
+- Bash remains a Bash 3.2-compatible single-file distribution.
+- PowerShell 7 remains the native Windows runtime and GitHub Releases remain the sole official channel.
+- Existing v2 flags, config keys, module names, exit codes, and layout paths remain compatible.

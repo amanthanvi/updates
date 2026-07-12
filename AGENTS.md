@@ -6,6 +6,7 @@ Source-of-truth docs:
 
 - `SPEC.md`: living contract for flags/output/modules.
 - `PLAN.md`: living execution checklist (keep it updated as work lands).
+- `CONTEXT.md`: implementation-free domain vocabulary.
 
 ## Development workflow
 
@@ -26,6 +27,7 @@ Source-of-truth docs:
 - Keep output stable and easy to parse; prefer `--no-emoji` in tests.
 - Bash compatibility: assume macOS system Bash (3.2). Avoid Bash 4+ features.
 - `--json` contract: stdout must be JSONL-only; route human output to stderr.
+- `--doctor` must remain local-only and read-only; warnings exit `0`, failed checks exit `1`.
 
 ## Releases / versioning
 
@@ -33,6 +35,7 @@ Source-of-truth docs:
 - Keep `UPDATES_VERSION` in `updates` aligned with the latest release tag.
 - Add a `CHANGELOG.md` entry for each release.
 - Use `./scripts/release.sh X.Y.Z` when cutting a release (verifies invariants + runs lint/tests).
+- Keep release version/tag, Unix payload, Windows payload, and changelog validation in `release_validate_invariants`; do not duplicate parsers in workflows.
 
 ## Safety
 

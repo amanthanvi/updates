@@ -18,21 +18,12 @@ WINDOWS_CMD_SOURCE="${UPDATES_WINDOWS_CMD_SOURCE:-updates.cmd}"
 WINDOWS_BOOTSTRAP_SOURCE="${UPDATES_WINDOWS_BOOTSTRAP_SOURCE:-updates.ps1}"
 WINDOWS_PAYLOAD_SOURCE="${UPDATES_WINDOWS_PAYLOAD_SOURCE:-updates-main.ps1}"
 
-release_validate_version "$VERSION"
+release_validate_invariants "$VERSION" "" updates "$WINDOWS_PAYLOAD_SOURCE" CHANGELOG.md
 release_require_command zip
 release_require_file updates
 release_require_file "$WINDOWS_CMD_SOURCE"
 release_require_file "$WINDOWS_BOOTSTRAP_SOURCE"
 release_require_file "$WINDOWS_PAYLOAD_SOURCE"
-
-SCRIPT_VERSION="$(release_script_version)"
-if [ "$SCRIPT_VERSION" != "$VERSION" ]; then
-	release_fail "UPDATES_VERSION (${SCRIPT_VERSION}) does not match requested version (${VERSION})"
-fi
-WINDOWS_VERSION="$(release_windows_payload_version "$WINDOWS_PAYLOAD_SOURCE")"
-if [ "$WINDOWS_VERSION" != "$VERSION" ]; then
-	release_fail "UpdatesVersion (${WINDOWS_VERSION}) does not match requested version (${VERSION})"
-fi
 
 DIST_DIR_ABS="$(release_resolve_path "$DIST_DIR")"
 release_validate_output_dir "$DIST_DIR" "$DIST_DIR_ABS"

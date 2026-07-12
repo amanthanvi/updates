@@ -2,20 +2,25 @@
 
 set -euo pipefail
 
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# shellcheck source=scripts/release-lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/release-lib.sh"
+
+release_cd_root
 
 if [ "${1:-}" = "" ]; then
 	echo "Usage: scripts/release.sh X.Y.Z" >&2
 	exit 2
 fi
 
-VERSION="$1"
-TAG="v${VERSION}"
+VERSION="$(release_normalize_version "$1")"
+TAG="$(release_tag_for_version "$VERSION")"
 
 if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 	echo "Version must be SemVer: X.Y.Z" >&2
 	exit 2
 fi
+
+release_validate_invariants "$VERSION" "$TAG"
 
 if [ -n "$(git status --porcelain=v1)" ]; then
 	echo "Working tree must be clean" >&2
@@ -24,17 +29,6 @@ fi
 
 if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
 	echo "Tag already exists locally: $TAG" >&2
-	exit 2
-fi
-
-SCRIPT_VERSION="$(awk -F'"' '/^UPDATES_VERSION=/{print $2; exit}' updates)"
-if [ "$SCRIPT_VERSION" != "$VERSION" ]; then
-	echo "UPDATES_VERSION (${SCRIPT_VERSION}) does not match requested version (${VERSION})" >&2
-	exit 2
-fi
-
-if ! grep -q "^## \\[$VERSION\\]" CHANGELOG.md; then
-	echo "CHANGELOG.md missing entry for version $VERSION" >&2
 	exit 2
 fi
 

@@ -1,4 +1,4 @@
-# updates — Specification (v2.0.0)
+# updates — Specification (v2.1.0)
 
 This document is the **source of truth** for how the `updates` CLI behaves: flags, output, exit codes, module contracts, configuration, and release invariants.
 
@@ -6,11 +6,11 @@ If anything here disagrees with other docs, update the other docs (or this spec)
 
 ## 0) Metadata
 
-- **Title:** updates v2.0.0 specification
+- **Title:** updates v2.1.0 specification
 - **Owner (DRI):** Aman Thanvi (@amanthanvi)
-- **Status:** Released
-- **Last updated:** 2026-06-08
-- **Release date:** 2026-06-08
+- **Status:** Unreleased
+- **Last updated:** 2026-07-12
+- **Release date:** TBD
 - **Links:** [Repository](https://github.com/amanthanvi/updates)
 
 ## 1) Executive Summary
@@ -23,7 +23,7 @@ A cross-platform CLI that updates common macOS, Linux, WSL, and Windows developm
 
 Developers maintain a growing set of global tools and runtimes that each have their own update workflow. Running 5-10 separate update commands is tedious, easy to forget, and error-prone, and those workflows now span macOS, Linux distros, WSL, and native Windows. `updates` consolidates this into a single, safe-by-default command with dry-run, scoping, structured output for automation, and a first-party GitHub-only self-update channel.
 
-v2.0 signals the next stable CLI contract: native Windows support is added, the self-update source is fixed to the canonical GitHub repo, and the previous custom self-update repo override is removed. From `v2.0.0` onward, flag names, module names, exit codes, output format, and environment variables are again frozen until the next major version.
+v2.1 preserves the stable v2 contract while adding local diagnosis, safer Windows activation, and native Windows Claude/Pi parity.
 
 ### 1.3 Success metrics
 
@@ -102,6 +102,7 @@ Information:
 - `-h`, `--help`: print help and exit `0`.
 - `--version`: print the SemVer version (e.g. `2.0.0`) and exit `0`.
 - `--list-modules`: print the module list and exit `0`.
+- `--doctor`: run local, read-only integrity checks and exit `0` when required checks pass (warnings allowed), `1` when a check fails, or `2` for usage/configuration errors. Doctor never accesses the network or repairs state.
 
 Execution control:
 
@@ -229,6 +230,8 @@ When `--json` is passed:
 | `warn`         | `event`, `module`, `message`, `timestamp`                                  | A warning is emitted                           |
 | `error`        | `event`, `module`, `message`, `timestamp`                                  | An error is emitted                            |
 | `summary`      | `event`, `ok`, `skip`, `fail`, `total_seconds`, `failures`, `timestamp`    | Run completes                                  |
+| `doctor_check` | `event`, `check`, `status` (`ok`\|`warn`\|`fail`), `message`, `timestamp` | A doctor check completes                       |
+| `doctor_summary` | `event`, `ok`, `warn`, `fail`, `timestamp`                              | Doctor completes                               |
 
 `timestamp` is ISO 8601 UTC (e.g. `2026-02-07T12:00:00Z`).
 
@@ -357,13 +360,13 @@ Execution order: `brew`, `shell`, `repos`, `linux`, `winget`, `node`, `bun`, `py
 | `mas`    |  Yes  |  No   | No  |   No    | Requires `mas` (opt-in) |
 | `pipx`   |  Yes  |  Yes  | Yes |   Yes   | Requires `pipx` |
 | `rustup` |  Yes  |  Yes  | Yes |   Yes   | Requires `rustup` |
-| `claude` |  Yes  |  Yes  | Yes |   No    | Requires `claude` |
-| `pi`     |  Yes  |  Yes  | Yes |   No    | Requires `pi` |
+| `claude` |  Yes  |  Yes  | Yes |   Yes   | Requires `claude`; runs `claude update` |
+| `pi`     |  Yes  |  Yes  | Yes |   Yes   | Requires `pi`; runs `pi update` |
 | `mise`   |  Yes  |  Yes  | Yes |   No    | Requires `mise` |
 | `go`     |  Yes  |  Yes  | Yes |   Yes   | Requires `go`; binary list from config |
 | `macos`  |  Yes  |  No   | No  |   No    | Requires `softwareupdate` (opt-in) |
 
-Native Windows default runs auto-select `winget`, `node`, `bun`, `python`, `uv`, `pipx`, `rustup`, and `go` when their backing commands or config are present.
+Native Windows default runs auto-select `winget`, `node`, `bun`, `python`, `uv`, `pipx`, `rustup`, `claude`, `pi`, and `go` when their backing commands or config are present. `mise` remains deferred on native Windows until installer ownership can be handled safely.
 
 ### 7.3 Module execution order
 
@@ -554,6 +557,7 @@ Purpose: update mise itself and upgrade all installed tool versions.
   - `mise self-update`
   - `mise upgrade`
 - Side effects: updates mise binary and installed tool versions to latest matching constraints.
+- Native Windows remains deferred: the official Windows installation paths are Scoop and winget, while `mise self-update` is unavailable for package-managed installs. `updates` has no reliable ownership signal that would distinguish those installs from a manually downloaded binary without adding manager-specific coupling.
 
 ### 8.16 `go`
 
@@ -600,7 +604,7 @@ Purpose: list available macOS software updates.
   - `${HOME}/Library/Caches/updates` on macOS otherwise
   - `${HOME}/.cache/updates` on Linux/WSL otherwise
   - `%LOCALAPPDATA%\\updates` on native Windows
-- The cache stores only release-check metadata (`checked_at`, `latest_tag`) and is ignored if missing or invalid.
+- The cache stores only release-check metadata (`checked_at`, `latest_tag`) and is ignored if missing or invalid. Cache contents are untrusted scheduling hints: a cached tag never bypasses live release metadata, immutability, digest, checksum, or manifest verification before an update is applied.
 - Passing `--self-update` forces a live metadata refresh even when the cache is fresh.
 - Self-update is skipped when:
   - `--no-self-update` or `UPDATES_SELF_UPDATE=0`
@@ -621,7 +625,7 @@ Purpose: list available macOS software updates.
   - reopen the installed copy and verify its embedded version before re-exec
   - re-exec once, guarded by `UPDATES_SELF_UPDATED=1`
 - Native Windows self-update is supported only for official standalone installs rooted at `%LOCALAPPDATA%\\Programs\\updates`.
-- `install-windows.ps1` creates the official native Windows standalone layout from the published `updates-windows.zip` release asset, or from a local `-SourceZip`/repository `-SourceRoot` for verification.
+- `install-windows.ps1` creates the official native Windows standalone layout from the authenticated published `updates-windows.zip` release asset, or from a local `-SourceZip`/repository `-SourceRoot` for verification. `-SourceZipSha256` authenticates a local ZIP; v2.1 permits omission with a prominent trust warning as a compatibility bridge.
 - Native Windows standalone layout:
   - `updates.cmd`
   - `updates.ps1`
@@ -636,6 +640,7 @@ Purpose: list available macOS software updates.
   - `source_repo=amanthanvi/updates`
   - `scope=user`
   - `installed_version`
+- `installed_version` identifies the newest payload that completed installation and validation. It does not assert that `current.txt` already activates that payload; a recoverable failure may leave the prior active pointer in place while the receipt records the newer fully installed payload.
 - Native Windows self-update additionally requires:
   - a valid `install-source.json`
   - a user-writable install root proven by a real create/delete probe
@@ -643,9 +648,11 @@ Purpose: list available macOS software updates.
 - Native Windows apply flow:
   - validate receipt + release metadata
   - download and verify `updates-windows.zip`, `updates-release.json`, and `SHA256SUMS`
-  - extract into a staging directory
-  - validate payload structure and `bootstrap_min`
-  - update `previous.txt`, atomically switch `current.txt`, then relaunch once with `UPDATES_SELF_UPDATED=1`
+  - stage the complete version directory on the target filesystem
+  - validate payload structure, containment, embedded version, and `bootstrap_min`
+  - atomically commit bootstrap and receipt files
+  - preserve the actually runnable version in `previous.txt`
+  - atomically switch `current.txt` last, then relaunch once with `UPDATES_SELF_UPDATED=1`
 - Any receipt, trust, digest, checksum, manifest, extraction, staging, or relaunch failure leaves the current version active and prints a warning. The run stays non-fatal unless another selected module fails.
 
 ## 10) Security & Privacy
@@ -733,7 +740,8 @@ Ship all v1.0 features (config file, `--json`, new modules, `--brew-mode`, `--lo
 ### 14.1 Lint / test commands
 
 - Lint: `./scripts/lint.sh` (runs `bash -n`, `shellcheck`, `shfmt -d`).
-- Tests: `./scripts/test.sh` (runs `./tests/test_cli.sh`; requires `python3` with public `packaging` or pip's vendored packaging module available).
+- Tests: `./scripts/test.sh` (runs the Bash CLI suite and native Windows suite when available; requires `python3` with public `packaging` or pip's vendored packaging module available).
+- Release guards: `bash ./tests/test_release.sh` (isolated temporary repositories and paths).
 - Tests use temporary `PATH` stubs to avoid modifying the developer's machine.
 
 ### 14.2 Test plan
@@ -746,7 +754,10 @@ Ship all v1.0 features (config file, `--json`, new modules, `--brew-mode`, `--lo
   - `--log-level` output filtering tests.
   - `--json` JSONL output validation (parse each line as JSON in tests).
   - `UPDATES_SELF_UPDATE_REPO` error tests (`v2.0.0`).
-  - Native Windows contract tests for receipt validation, relaunch guard, and self-update artifact verification.
+- Native Windows contract tests for receipt validation, relaunch guard, and self-update artifact verification.
+  - Doctor healthy/warning/failure, offline, JSONL-purity, exit-code, and no-mutation cases on both runtimes.
+  - Windows Claude/Pi missing dependency, `--only`, dry-run, success, failure, strict, and JSON cases.
+  - Release invariant, unsafe output, dirty tree, existing tag, verification failure, and annotated-tag cases.
 - **Edge cases:**
   - `GO_BINARIES` empty/unset (go module skips).
   - `--json` + `--log-file` interaction.
@@ -770,6 +781,8 @@ Ship all v1.0 features (config file, `--json`, new modules, `--brew-mode`, `--lo
 9. **Given** an official native Windows standalone install with a valid receipt, **when** `updates --self-update` finds a newer immutable release, **then** it verifies `updates-windows.zip`, `updates-release.json`, and `SHA256SUMS`, flips `current.txt`, and relaunches once.
 10. **Given** `UPDATES_SELF_UPDATE_REPO` is set, **when** `updates` runs, **then** it prints `ERROR:` and exits `2`.
 11. **Given** native Windows receives `Ctrl+C` or `Ctrl+Break`, **when** `updates` is interrupted, **then** it exits `130`.
+12. **Given** `--doctor`, **when** checks run offline, **then** no network or filesystem mutation occurs and findings determine exit `0`/`1` as specified.
+13. **Given** an upgrade fails at any Windows commit boundary, **when** the launcher runs again, **then** the previously active payload remains runnable.
 
 ## 15) Releases
 
@@ -793,6 +806,7 @@ Invariants (enforced in CI/release):
 Maintainer workflow:
 
 - `./scripts/release.sh X.Y.Z` (validates invariants, runs lint/tests, creates annotated tag).
+- Local release orchestration and the GitHub release workflow **MUST** call the same `release_validate_invariants` implementation.
 - Create a draft release, upload `updates`, `updates-windows.zip`, `updates-release.json`, and `SHA256SUMS`, verify uploaded asset digests and downloaded smoke artifacts, then publish.
 - Post-publish, run `gh release verify <tag>` and `gh release verify-asset <tag> <artifact-path>`.
 
