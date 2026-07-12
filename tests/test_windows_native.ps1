@@ -248,6 +248,25 @@ if (Should-RunTest 'install-windows.ps1 same-version reinstall preserves valid r
     }
 }
 
+if (Should-RunTest 'install-windows.ps1 replaces a corrupt existing payload') {
+    Invoke-TestCase 'install-windows.ps1 replaces a corrupt existing payload' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+            $installerPath = Join-Path $repoRoot 'install-windows.ps1'
+            $initial = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', $installerPath, '-InstallRoot', $installRoot, '-SourceRoot', $repoRoot, '-Version', $currentReleaseVersion) -WorkingDirectory $repoRoot
+            Assert-Equal -Expected 0 -Actual $initial.ExitCode -Message "initial install should succeed`n$($initial.Output)"
+
+            $payloadPath = Join-Path $installRoot (Join-Path 'versions' (Join-Path $currentReleaseVersion 'updates-main.ps1'))
+            Add-Content -LiteralPath $payloadPath -Value ("`n`$script:UpdatesVersion = '{0}'" -f $currentReleaseVersion)
+
+            $reinstall = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', $installerPath, '-InstallRoot', $installRoot, '-SourceRoot', $repoRoot, '-Version', $currentReleaseVersion) -WorkingDirectory $repoRoot
+            Assert-Equal -Expected 0 -Actual $reinstall.ExitCode -Message "reinstall should replace a malformed existing payload`n$($reinstall.Output)"
+            $assignments = [regex]::Matches((Get-Content -LiteralPath $payloadPath -Raw), '(?m)^\s*\$script:UpdatesVersion\s*=.*$')
+            Assert-Equal -Expected 1 -Actual $assignments.Count -Message 'replacement payload should restore one canonical version assignment'
+        }
+    }
+}
+
 if (Should-RunTest 'install-windows.ps1 rejects target reparse roots before mutation') {
     Invoke-TestCase 'install-windows.ps1 rejects target reparse roots before mutation' {
         Invoke-WithTempInstall {

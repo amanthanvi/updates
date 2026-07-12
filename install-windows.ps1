@@ -151,17 +151,27 @@ function Get-DefaultInstallRoot {
     return (Join-Path $env:LOCALAPPDATA 'Programs\updates')
 }
 
-function Get-WindowsPayloadVersion {
+function Find-WindowsPayloadVersion {
     param([string]$PayloadPath)
 
     $content = [System.IO.File]::ReadAllText($PayloadPath)
     $assignments = [regex]::Matches($content, '(?m)^\s*\$script:UpdatesVersion\s*=.*$')
     $canonical = [regex]::Matches($content, '(?m)^\$script:UpdatesVersion = ''(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)''$')
     if ($assignments.Count -ne 1 -or $canonical.Count -ne 1) {
-        Fail-Install "updates: payload '$PayloadPath' must contain exactly one canonical UpdatesVersion assignment."
+        return $null
     }
 
     return $canonical[0].Groups[1].Value
+}
+
+function Get-WindowsPayloadVersion {
+    param([string]$PayloadPath)
+
+    $version = Find-WindowsPayloadVersion -PayloadPath $PayloadPath
+    if (-not $version) {
+        Fail-Install "updates: payload '$PayloadPath' must contain exactly one canonical UpdatesVersion assignment."
+    }
+    return $version
 }
 
 function New-TempDirectory {
@@ -387,7 +397,7 @@ function Test-InstalledVersionRoot {
         if (-not (Test-TrustedRegularFile -ParentPath $VersionRoot -Path $manifestPath) -or -not (Test-TrustedRegularFile -ParentPath $VersionRoot -Path $payloadPath)) { return $false }
         $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -AsHashtable
         if ($manifest.version -ne $ExpectedVersion -or [string]$manifest.bootstrap_min -ne [string]$script:BootstrapMin -or $manifest.entry_script -ne 'updates-main.ps1') { return $false }
-        return (Get-WindowsPayloadVersion -PayloadPath $payloadPath) -eq $ExpectedVersion
+        return (Find-WindowsPayloadVersion -PayloadPath $payloadPath) -eq $ExpectedVersion
     } catch {
         return $false
     }
