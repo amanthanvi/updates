@@ -97,7 +97,12 @@ function Write-AtomicText {
     $null = New-Item -ItemType Directory -Path $dir -Force
     $temp = Join-Path $dir ('.{0}.{1}.tmp' -f ([System.IO.Path]::GetFileName($Path)), [guid]::NewGuid().ToString('N'))
     [System.IO.File]::WriteAllText($temp, $Content, [System.Text.UTF8Encoding]::new($false))
-    Move-Item -LiteralPath $temp -Destination $Path -Force
+    try {
+        Move-Item -LiteralPath $temp -Destination $Path -Force
+    } catch {
+        Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+        throw
+    }
 }
 
 function Get-Sha256Hex {
@@ -430,7 +435,12 @@ function Copy-LayoutToInstallRoot {
             $source = Join-Path $Layout.LayoutRoot $fileName
             $temp = Join-Path $targetRootFull ('.{0}.{1}.tmp' -f $fileName, [guid]::NewGuid().ToString('N'))
             Copy-Item -LiteralPath $source -Destination $temp -Force
-            Move-Item -LiteralPath $temp -Destination (Join-Path $targetRootFull $fileName) -Force
+            try {
+                Move-Item -LiteralPath $temp -Destination (Join-Path $targetRootFull $fileName) -Force
+            } catch {
+                Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+                throw
+            }
             Invoke-InstallCommitHook -Step $fileName
         }
         $oldCurrent = if (Test-Path -LiteralPath (Join-Path $targetRootFull 'current.txt') -PathType Leaf) { Read-TrimmedTextFile (Join-Path $targetRootFull 'current.txt') } else { '' }
