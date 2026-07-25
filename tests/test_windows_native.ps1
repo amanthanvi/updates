@@ -672,7 +672,7 @@ if (Should-RunTest 'native payload dry-run covers winget, node fallback, bun, py
 
             Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'dry-run module coverage should succeed'
             Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*winget(\.cmd)? upgrade --all --silent --accept-source-agreements --accept-package-agreements' -Message 'winget dry-run command mismatch'
-            Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: npx --yes npm-check-updates -g --jsonUpgraded' -Message 'node should fall back to npx when ncu is absent'
+            Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: npx --yes npm-check-updates -g --enginesNode --jsonUpgraded' -Message 'node should fall back to engine-aware npx when ncu is absent'
             Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*npm(\.cmd)? install -g -- <packages\.\.\.>' -Message 'node dry-run install command mismatch'
             Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*bun(\.cmd)? update -g' -Message 'bun dry-run command mismatch'
             Assert-Match -Text $result.Output -Pattern '(?i)bun: skipping bun upgrade because Bun does not appear to be standalone-installed\.' -Message 'bun standalone skip should be explicit'
@@ -684,6 +684,98 @@ if (Should-RunTest 'native payload dry-run covers winget, node fallback, bun, py
             Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*rustup(\.cmd)? update' -Message 'rustup dry-run command mismatch'
             Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*go(\.cmd)? install example\.com/cmd/foo@latest' -Message 'go should default missing versions to @latest'
             Assert-Match -Text $result.Output -Pattern '(?i)DRY RUN: .*go(\.cmd)? install example\.com/cmd/bar@v1\.2\.3' -Message 'go should preserve explicit versions'
+        }
+    }
+}
+
+if (Should-RunTest 'native payload falls back from incapable ncu to engine-aware npx') {
+    Invoke-TestCase 'native payload falls back from incapable ncu to engine-aware npx' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'ncu.cmd') -Lines @(
+                'echo ncu %*>>"%NODE_MARKER%"',
+                'if "%~1"=="--help" (echo legacy ncu help & exit /b 0)',
+                'echo incapable ncu query should not run 1>&2',
+                'exit /b 1'
+            )
+            Write-CmdStub -Path (Join-Path $stubDir 'npx.cmd') -Lines @(
+                'echo npx %*>>"%NODE_MARKER%"',
+                'echo {"example-cli":"2.0.0"}'
+            )
+            Write-CmdStub -Path (Join-Path $stubDir 'npm.cmd') -Lines @(
+                'echo npm %*>>"%NODE_MARKER%"'
+            )
+
+            $markerPath = Join-Path $installRoot 'node-marker.txt'
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
+                '--no-self-update',
+                '--only', 'node',
+                '--no-color',
+                '--no-emoji'
+            ) -Environment @{
+                PATH        = $stubDir
+                HOME        = $installRoot
+                USERPROFILE = $installRoot
+                NODE_MARKER = $markerPath
+            }
+
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'node should fall back from incapable ncu to npx'
+            $marker = Get-Content -LiteralPath $markerPath -Raw
+            Assert-Match -Text $marker -Pattern '(?im)^ncu --help enginesNode\r?$' -Message 'node should probe direct ncu capability'
+            Assert-NotMatch -Text $marker -Pattern '(?im)^ncu -g ' -Message 'incapable direct ncu should not query upgrades'
+            Assert-Match -Text $marker -Pattern '(?im)^npx --yes npm-check-updates -g --enginesNode --jsonUpgraded\r?$' -Message 'npx fallback should filter by active Node engine'
+        }
+    }
+}
+
+if (Should-RunTest 'native payload isolates npm packages and does not retry EBADENGINE') {
+    Invoke-TestCase 'native payload isolates npm packages and does not retry EBADENGINE' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'npx.cmd') -Lines @(
+                'echo {"npm":"12.0.1","example-cli":"2.0.0"}'
+            )
+            Write-CmdStub -Path (Join-Path $stubDir 'npm.cmd') -Lines @(
+                'echo npm %*>>"%NODE_MARKER%"',
+                'echo %* | "%SystemRoot%\System32\findstr.exe" /C:"npm@12.0.1" >nul',
+                'if not errorlevel 1 (',
+                '  echo npm error code EBADENGINE 1>&2',
+                '  exit /b 0',
+                ')',
+                'echo %* | "%SystemRoot%\System32\findstr.exe" /C:"example-cli@2.0.0" >nul',
+                'if not errorlevel 1 exit /b 0',
+                'exit /b 1'
+            )
+
+            $markerPath = Join-Path $installRoot 'node-marker.txt'
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
+                '--no-self-update',
+                '--only', 'node',
+                '--no-color',
+                '--no-emoji'
+            ) -Environment @{
+                PATH        = $stubDir
+                HOME        = $installRoot
+                USERPROFILE = $installRoot
+                NODE_MARKER = $markerPath
+            }
+
+            Assert-Equal -Expected 1 -Actual $result.ExitCode -Message 'one incompatible package should fail the node module'
+            $marker = Get-Content -LiteralPath $markerPath -Raw
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g -- npm@12\.0\.1\r?$' -Message 'incompatible package should be attempted once'
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g -- example-cli@2\.0\.0\r?$' -Message 'later compatible package should still be attempted'
+            Assert-Equal -Expected 1 -Actual ([regex]::Matches($marker, '(?im)^npm install -g -- npm@12\.0\.1\r?$').Count) -Message 'EBADENGINE must not retry'
+            Assert-Match -Text $result.Output -Pattern 'npm@12\.0\.1 is incompatible with the active Node runtime' -Message 'engine failure should be actionable'
         }
     }
 }
@@ -850,6 +942,46 @@ if (Should-RunTest 'native payload node reruns npm with allow-scripts when npm r
             Assert-Match -Text $marker -Pattern '(?im)^npm install -g --allow-scripts=opencode-ai,koffi -- opencode-ai@1\.17\.8\r?$' -Message 'node should retry with npm-provided allow-scripts list'
             Assert-NotMatch -Text $result.Output -Pattern 'npm warn allow-scripts approve' -Message 'successful allow-scripts retry should suppress first-pass npm warning details'
             Assert-Match -Text $result.Output -Pattern 'retrying once with npm-provided allow-scripts list' -Message 'allow-scripts retry warning should be visible'
+        }
+    }
+}
+
+if (Should-RunTest 'native payload node keeps a successful install after allow-scripts retry exhaustion') {
+    Invoke-TestCase 'native payload node keeps a successful install after allow-scripts retry exhaustion' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'npx.cmd') -Lines @(
+                'echo {"opencode-ai":"1.17.8"}'
+            )
+            Write-CmdStub -Path (Join-Path $stubDir 'npm.cmd') -Lines @(
+                'echo npm %*>>"%NODE_MARKER%"',
+                'echo npm warn allow-scripts approve with --allow-scripts=opencode-ai,koffi 1>&2'
+            )
+
+            $markerPath = Join-Path $installRoot 'node-marker.txt'
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
+                '--no-self-update',
+                '--only', 'node',
+                '--no-color',
+                '--no-emoji'
+            ) -Environment @{
+                PATH        = $stubDir
+                HOME        = $installRoot
+                USERPROFILE = $installRoot
+                NODE_MARKER = $markerPath
+            }
+
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'successful npm install should remain successful after the bounded allow-scripts retry'
+            $marker = Get-Content -LiteralPath $markerPath -Raw
+            Assert-Equal -Expected 2 -Actual ([regex]::Matches($marker, '(?im)^npm install -g ').Count) -Message 'node should attempt one allow-scripts retry and stop'
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --allow-scripts=opencode-ai,koffi -- opencode-ai@1\.17\.8\r?$' -Message 'node should preserve the npm-provided allow-scripts argument'
+            Assert-Match -Text $result.Output -Pattern 'npm install completed for opencode-ai@1\.17\.8, but npm still reports install scripts needing approval after retry' -Message 'retry exhaustion should remain visible as a warning'
+            Assert-Match -Text $result.Output -Pattern 'npm warn allow-scripts approve with --allow-scripts=opencode-ai,koffi' -Message 'final npm diagnostics should remain visible'
         }
     }
 }
