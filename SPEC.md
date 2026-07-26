@@ -1,4 +1,4 @@
-# updates — Specification (v2.1.1)
+# updates — Specification (v2.1.2)
 
 This document is the **source of truth** for how the `updates` CLI behaves: flags, output, exit codes, module contracts, configuration, and release invariants.
 
@@ -6,7 +6,7 @@ If anything here disagrees with other docs, update the other docs (or this spec)
 
 ## 0) Metadata
 
-- **Title:** updates v2.1.1 specification
+- **Title:** updates v2.1.2 specification
 - **Owner (DRI):** Aman Thanvi (@amanthanvi)
 - **Status:** Released
 - **Last updated:** 2026-07-25
@@ -23,7 +23,7 @@ A cross-platform CLI that updates common macOS, Linux, WSL, and Windows developm
 
 Developers maintain a growing set of global tools and runtimes that each have their own update workflow. Running 5-10 separate update commands is tedious, easy to forget, and error-prone, and those workflows now span macOS, Linux distros, WSL, and native Windows. `updates` consolidates this into a single, safe-by-default command with dry-run, scoping, structured output for automation, and a first-party GitHub-only self-update channel.
 
-v2.1 preserves the stable v2 contract. Patch release v2.1.1 additionally filters Node upgrades for the active runtime, isolates npm installs per package, and adds conservative shared Git synchronization for shell and development repositories.
+v2.1 preserves the stable v2 contract. Patch release v2.1.1 filters Node upgrade plans, isolates npm installs per package, and adds conservative shared Git synchronization. Patch release v2.1.2 adds authoritative active-runtime engine preflights for every planned npm candidate.
 
 ### 1.3 Success metrics
 
