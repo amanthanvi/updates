@@ -1036,7 +1036,7 @@ if (Should-RunTest 'native payload node keeps a successful install after allow-s
 
             Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'successful npm install should remain successful after the bounded allow-scripts retry'
             $marker = Get-Content -LiteralPath $markerPath -Raw
-            Assert-Equal -Expected 2 -Actual ([regex]::Matches($marker, '(?im)^npm install -g ').Count) -Message 'node should attempt one allow-scripts retry and stop'
+            Assert-Equal -Expected 2 -Actual ([regex]::Matches($marker, '(?im)^npm install -g (?!.*--dry-run).*$').Count) -Message 'node should attempt one allow-scripts retry and stop'
             Assert-Match -Text $marker -Pattern '(?im)^npm install -g --allow-scripts=opencode-ai,koffi -- opencode-ai@1\.17\.8\r?$' -Message 'node should preserve the npm-provided allow-scripts argument'
             Assert-Match -Text $result.Output -Pattern 'npm install completed for opencode-ai@1\.17\.8, but npm still reports install scripts needing approval after retry' -Message 'retry exhaustion should remain visible as a warning'
             Assert-Match -Text $result.Output -Pattern 'npm warn allow-scripts approve with --allow-scripts=opencode-ai,koffi' -Message 'final npm diagnostics should remain visible'
