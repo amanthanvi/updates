@@ -877,14 +877,23 @@ function Test-NpmCandidateEngine {
     $preflightOptionList = [System.Collections.Generic.List[string]]::new()
     for ($index = 0; $index -lt $Options.Count; $index++) {
         $option = $Options[$index]
-        if ($option -in @('-f', '--force', '--dry-run', '--ignore-scripts', '--engine-strict')) {
+        if ($option -eq '--loglevel') {
+            if ($index + 1 -lt $Options.Count -and $Options[$index + 1] -match '^(?:silent|error|warn|notice|http|verbose|silly)$') {
+                $index++
+            }
+            continue
+        }
+        if ($option -in @('-f', '-s', '--force', '--silent', '--dry-run', '--ignore-scripts', '--engine-strict')) {
             if ($index + 1 -lt $Options.Count -and $Options[$index + 1] -match '^(?:0|1|true|false)$') {
                 $index++
             }
             continue
         }
         if (
+            $option -match '^-[^-]*[fs]' -or
             $option -like '--force=*' -or
+            $option -like '--silent=*' -or
+            $option -like '--loglevel=*' -or
             $option -like '--dry-run=*' -or
             $option -like '--ignore-scripts=*' -or
             $option -like '--engine-strict=*' -or
@@ -895,15 +904,18 @@ function Test-NpmCandidateEngine {
         $preflightOptionList.Add($option)
     }
     $preflightOptions = @($preflightOptionList)
-    $preflightOptions += @('--dry-run', '--ignore-scripts', '--engine-strict')
+    $preflightOptions += @('--dry-run', '--ignore-scripts', '--engine-strict', '--loglevel=error')
     $preflightArgs = New-NpmInstallArguments -Options $preflightOptions -Packages @($Package)
     $forceWasSet = Test-Path Env:NPM_CONFIG_FORCE
     $engineStrictWasSet = Test-Path Env:NPM_CONFIG_ENGINE_STRICT
+    $loglevelWasSet = Test-Path Env:NPM_CONFIG_LOGLEVEL
     $previousForce = $env:NPM_CONFIG_FORCE
     $previousEngineStrict = $env:NPM_CONFIG_ENGINE_STRICT
+    $previousLoglevel = $env:NPM_CONFIG_LOGLEVEL
     try {
         $env:NPM_CONFIG_FORCE = 'false'
         $env:NPM_CONFIG_ENGINE_STRICT = 'true'
+        $env:NPM_CONFIG_LOGLEVEL = 'error'
         $result = Invoke-LoggedProcess -FilePath $Npm -ArgumentList $preflightArgs -Capture
     } finally {
         if ($forceWasSet) {
@@ -915,6 +927,11 @@ function Test-NpmCandidateEngine {
             $env:NPM_CONFIG_ENGINE_STRICT = $previousEngineStrict
         } else {
             Remove-Item Env:NPM_CONFIG_ENGINE_STRICT -ErrorAction SilentlyContinue
+        }
+        if ($loglevelWasSet) {
+            $env:NPM_CONFIG_LOGLEVEL = $previousLoglevel
+        } else {
+            Remove-Item Env:NPM_CONFIG_LOGLEVEL -ErrorAction SilentlyContinue
         }
     }
     if ($result.Output -match 'EBADENGINE') {

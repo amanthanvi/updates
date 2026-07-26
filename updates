@@ -801,6 +801,7 @@ npm_preflight_candidate_engine() {
 	local -a preflight_options=()
 	local flag
 	local strip_boolean_value=0
+	local strip_loglevel_value=0
 	for flag in "$@"; do
 		if [ "$strip_boolean_value" -eq 1 ]; then
 			strip_boolean_value=0
@@ -808,12 +809,22 @@ npm_preflight_candidate_engine() {
 			0 | 1 | true | false) continue ;;
 			esac
 		fi
+		if [ "$strip_loglevel_value" -eq 1 ]; then
+			strip_loglevel_value=0
+			case "$flag" in
+			silent | error | warn | notice | http | verbose | silly) continue ;;
+			esac
+		fi
 		case "$flag" in
-		-f | --force | --dry-run | --ignore-scripts | --engine-strict)
+		-f | -s | --force | --silent | --dry-run | --ignore-scripts | --engine-strict)
 			strip_boolean_value=1
 			continue
 			;;
-		--force=* | --dry-run=* | --ignore-scripts=* | --engine-strict=* | --no-engine-strict) continue ;;
+		--loglevel)
+			strip_loglevel_value=1
+			continue
+			;;
+		-f* | -s* | -[!-]*f* | -[!-]*s* | --force=* | --silent=* | --loglevel=* | --dry-run=* | --ignore-scripts=* | --engine-strict=* | --no-engine-strict) continue ;;
 		esac
 		preflight_options+=("$flag")
 	done
@@ -825,10 +836,10 @@ npm_preflight_candidate_engine() {
 		return 0
 	}
 
-	debug "+ npm install -g ${preflight_options[*]} --dry-run --ignore-scripts --engine-strict -- ${package}"
-	npm_config_force=false npm_config_engine_strict=true \
-		NPM_CONFIG_FORCE=false NPM_CONFIG_ENGINE_STRICT=true \
-		npm install -g "${preflight_options[@]}" --dry-run --ignore-scripts --engine-strict -- "$package" >/dev/null 2>"$npm_err_log"
+	debug "+ npm install -g ${preflight_options[*]} --dry-run --ignore-scripts --engine-strict --loglevel=error -- ${package}"
+	npm_config_force=false npm_config_engine_strict=true npm_config_loglevel=error \
+		NPM_CONFIG_FORCE=false NPM_CONFIG_ENGINE_STRICT=true NPM_CONFIG_LOGLEVEL=error \
+		npm install -g "${preflight_options[@]}" --dry-run --ignore-scripts --engine-strict --loglevel=error -- "$package" >/dev/null 2>"$npm_err_log"
 	if grep -q 'EBADENGINE' "$npm_err_log"; then
 		command_outcome_set skip incompatible-engine "package is incompatible with the active Node runtime"
 	else

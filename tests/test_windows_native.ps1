@@ -799,9 +799,11 @@ if (Should-RunTest 'native payload rejects an engine-incompatible candidate retu
                 'echo %* | "%SystemRoot%\System32\findstr.exe" /C:"--dry-run" >nul',
                 'if not errorlevel 1 if not "%NPM_CONFIG_FORCE%"=="false" exit /b 1',
                 'if not errorlevel 1 if not "%NPM_CONFIG_ENGINE_STRICT%"=="true" exit /b 1',
+                'if not errorlevel 1 if not "%NPM_CONFIG_LOGLEVEL%"=="error" exit /b 1',
                 'if errorlevel 1 if defined NPM_CONFIG_FORCE exit /b 1',
                 'if errorlevel 1 if defined NPM_CONFIG_ENGINE_STRICT exit /b 1',
-                'echo %* | "%SystemRoot%\System32\findstr.exe" /C:"--dry-run --ignore-scripts --engine-strict -- npm@12.0.1" >nul',
+                'if errorlevel 1 if defined NPM_CONFIG_LOGLEVEL exit /b 1',
+                'echo %* | "%SystemRoot%\System32\findstr.exe" /C:"--dry-run --ignore-scripts --engine-strict --loglevel=error -- npm@12.0.1" >nul',
                 'if not errorlevel 1 (',
                 '  echo npm error code EBADENGINE 1>&2',
                 '  exit /b 1',
@@ -813,7 +815,7 @@ if (Should-RunTest 'native payload rejects an engine-incompatible candidate retu
                 ')',
                 'exit /b 0'
             )
-            Write-Utf8NoBom -Path (Join-Path $installRoot '.updatesrc') -Content "NODE_NPM_INSTALL_FLAGS=--registry=https://registry.example.invalid --force false`n"
+            Write-Utf8NoBom -Path (Join-Path $installRoot '.updatesrc') -Content "NODE_NPM_INSTALL_FLAGS=--registry=https://registry.example.invalid --force false -f=true -fg --silent`n"
 
             $markerPath = Join-Path $installRoot 'node-marker.txt'
             $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @(
@@ -830,9 +832,9 @@ if (Should-RunTest 'native payload rejects an engine-incompatible candidate retu
 
             Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'engine-incompatible ncu candidate should warn and skip'
             $marker = Get-Content -LiteralPath $markerPath -Raw
-            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --registry=https://registry\.example\.invalid --dry-run --ignore-scripts --engine-strict -- npm@12\.0\.1\r?$' -Message 'candidate should receive an engine-strict preflight without force'
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --registry=https://registry\.example\.invalid --dry-run --ignore-scripts --engine-strict --loglevel=error -- npm@12\.0\.1\r?$' -Message 'candidate should receive a diagnostic engine-strict preflight without force'
             Assert-Equal -Expected 1 -Actual ([regex]::Matches($marker, '(?im)^npm .*npm@12\.0\.1\r?$').Count) -Message 'engine-incompatible candidate should only receive the preflight'
-            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --registry=https://registry\.example\.invalid --force false -- example-cli@2\.0\.0\r?$' -Message 'later compatible package should retain configured install flags'
+            Assert-Match -Text $marker -Pattern '(?im)^npm install -g --registry=https://registry\.example\.invalid --force false -f=true -fg --silent -- example-cli@2\.0\.0\r?$' -Message 'later compatible package should retain configured install flags'
             Assert-Match -Text $result.Output -Pattern 'skipping npm@12\.0\.1 because it is incompatible with the active Node runtime' -Message 'engine skip should be actionable'
         }
     }
