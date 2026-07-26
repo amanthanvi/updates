@@ -8,9 +8,9 @@ If anything here disagrees with other docs, update the other docs (or this spec)
 
 - **Title:** updates v2.1.1 specification
 - **Owner (DRI):** Aman Thanvi (@amanthanvi)
-- **Status:** Unreleased
+- **Status:** Released
 - **Last updated:** 2026-07-25
-- **Release date:** TBD
+- **Release date:** 2026-07-25
 - **Links:** [Repository](https://github.com/amanthanvi/updates)
 
 ## 1) Executive Summary
