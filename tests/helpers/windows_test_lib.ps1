@@ -625,7 +625,7 @@ function Install-RepoWindowsRuntime {
         [string]$RepoRoot,
         [Parameter(Mandatory = $true)]
         [string]$InstallRoot,
-        [string]$Version = '2.1.0',
+        [string]$Version = '2.1.1',
         [switch]$WithReceipt
     )
 

@@ -1,4 +1,4 @@
-# Plan: Unreleased Node and Git resilience
+# Plan: v2.1.1 Node and Git resilience
 
 ## Goal
 
@@ -16,6 +16,7 @@
 - [x] Add Bash real-repository coverage and native Windows Node parity fixtures.
 - [x] Keep flags, config keys, exit codes, JSONL event types, summaries, and runtime dependencies unchanged.
 - [x] Update README and SPEC contracts.
+- [ ] Release `v2.1.1` only from a clean, reviewed, green commit.
 
 ---
 

@@ -50,9 +50,9 @@ export SYSTEM_PYTHON3
 export UPDATES_SELF_UPDATE=0
 # Referenced by heredoc-backed test bodies evaluated through run_test.
 # shellcheck disable=SC2034
-SELF_UPDATE_CURRENT_TEST_VERSION="2.1.0"
+SELF_UPDATE_CURRENT_TEST_VERSION="2.1.1"
 # shellcheck disable=SC2034
-SELF_UPDATE_NEXT_TEST_VERSION="2.1.1"
+SELF_UPDATE_NEXT_TEST_VERSION="2.1.2"
 
 write_stub_to_dir() {
 	local dir="$1"

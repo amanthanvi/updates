@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-07-25
+
+### Changed
+
+- Filter global npm upgrade plans with npm-check-updates `--enginesNode`, fall back only to capable adapters, and install compatible candidates independently so one package failure does not block later packages.
+- Preflight Git-backed `shell` and `repos` updates for branch, upstream, tracked worktree, and divergence state; skip ineligible repositories and use fast-forward-only pulls for eligible repositories.
+
+### Fixed
+
+- Treat `EBADENGINE` diagnostics as active-runtime incompatibilities even when npm exits successfully, while preserving bounded peer/install-script retries and final package diagnostics.
+- Fail development-repository pulls and post-pull actions without stopping remaining repository processing; aggregate mixed successful/skipped results consistently.
+
 ## [2.1.0] - 2026-07-12
 
 ### Added
