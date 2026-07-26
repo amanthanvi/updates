@@ -471,7 +471,10 @@ Purpose: upgrade global npm packages using `npm-check-updates`.
 - Adapter resolution order is `ncu`, `ncu.cmd`, then `npx npm-check-updates` on Bash and `ncu.cmd`, `ncu`, then `npx npm-check-updates` on native Windows.
   - Direct `ncu` adapters must advertise `--enginesNode`; incapable direct adapters are bypassed in favor of the next candidate.
   - If no engine-aware adapter is available, a default run warns and skips `node`; explicit `--only node` fails.
-- Non-dry-run: resolved updater command with `-g --enginesNode --jsonUpgraded` selects versions compatible with the active Node runtime, then each returned `<name@version>` is installed independently with `npm install -g [NODE_NPM_INSTALL_FLAGS...] -- <name@version>`.
+- Non-dry-run: the resolved updater command runs with `-g --enginesNode --jsonUpgraded` to plan candidate versions. Because npm-check-updates evaluates `--enginesNode` against package-file constraints rather than guaranteeing compatibility with the executing runtime, each returned `<name@version>` receives an authoritative `npm install -g [resolution flags...] --dry-run --ignore-scripts --engine-strict -- <name@version>` preflight before installation.
+- A preflight `EBADENGINE` warns and skips that candidate. Other preflight failures are inconclusive and preserve the existing real-install path and diagnostics.
+- Resolution-affecting `NODE_NPM_INSTALL_FLAGS` are retained for the preflight, while engine overrides such as `--force` are excluded. The real install still receives all configured flags unchanged.
+- Candidates that pass or receive an inconclusive preflight are installed independently with `npm install -g [NODE_NPM_INSTALL_FLAGS...] -- <name@version>`.
 - `NODE_NPM_INSTALL_FLAGS` defaults to empty, is split on whitespace, and is inserted before the `--` package separator on Bash and native Windows.
 - Per package, if npm fails with `ERESOLVE`, retries once with `--legacy-peer-deps`; configured npm flags are retained, duplicate configured `--legacy-peer-deps` is removed for the retry, and the forced retry flag is appended once.
 - Per package, if npm succeeds but reports pending global install scripts, retries once with npm's suggested one-shot `--allow-scripts=...` list while retaining configured npm flags.
@@ -479,7 +482,7 @@ Purpose: upgrade global npm packages using `npm-check-updates`.
 - Superseded first-attempt diagnostics are suppressed after a successful retry. Final failures retain raw npm diagnostics plus a concise package-specific error.
 - Side effects: upgrades global npm packages.
 
-The Git and Node hardening above is implemented behind private command-outcome seams. It does not add or change public v2 flags, configuration keys, exit codes, JSONL event types, or summary fields.
+The Git and Node hardening above is implemented behind private command-outcome seams. The authoritative Node engine preflight adds no runtime dependency. These mechanics do not add or change public v2 flags, configuration keys, exit codes, JSONL event types, or summary fields.
 
 ### 8.7 `bun`
 

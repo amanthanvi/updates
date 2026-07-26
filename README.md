@@ -92,7 +92,7 @@ Modules are auto-detected: if the underlying command isn’t installed, the modu
 - `repos`: update aman dev repos under `~/GitRepos` (auto-detected `aman-*-setup` dirs; only clean tracked branches are pulled)
 - `linux`: upgrade Linux system packages (auto-detects `apt-get`/`dnf`/`yum`/`pacman`/`zypper`/`apk`)
 - `winget`: upgrade installed Windows packages/apps via `winget` (Windows only)
-- `node`: upgrade engine-compatible global npm packages one at a time via resolved npm-check-updates + `npm` (sources NVM first when available on macOS/Linux)
+- `node`: plan global npm upgrades via npm-check-updates, verify each candidate against the active Node runtime with npm's engine-strict dry-run, then install compatible candidates one at a time (sources NVM first when available on macOS/Linux)
 - `bun`: upgrade Bun global packages everywhere; native Windows only self-updates the Bun CLI when it appears standalone-installed
 - `python`: upgrade global/user Python packages via a resolved launcher (`py -3`, `python`, then `python3`); externally-managed Bash environments use a guarded user-site path
 - `uv`: update uv-managed tools everywhere; native Windows only self-updates uv when it appears standalone-installed
@@ -153,7 +153,7 @@ Install what you actually use:
 
 - `brew` (Homebrew)
 - `git` (for the `shell` and `repos` modules)
-- NVM-managed `npm`/`ncu` are preferred when `$NVM_DIR/nvm.sh` or `~/.nvm/nvm.sh` exists; direct `ncu` must support `--enginesNode`, otherwise `updates` falls back to `npx npm-check-updates`
+- NVM-managed `npm`/`ncu` are preferred when `$NVM_DIR/nvm.sh` or `~/.nvm/nvm.sh` exists; direct `ncu` must support `--enginesNode`, otherwise `updates` falls back to `npx npm-check-updates`. Every returned candidate is also checked with npm's engine-strict dry-run; incompatible candidates warn and skip.
 - `pwsh` (PowerShell 7) for native Windows support
 - `winget` for the `winget` module on Windows
 - `bun` for the `bun` module
