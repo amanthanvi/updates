@@ -806,7 +806,7 @@ if (Should-RunTest 'native payload rejects an engine-incompatible candidate retu
                 '  echo npm error code EBADENGINE 1>&2',
                 '  exit /b 1',
                 ')',
-                'echo %* | "%SystemRoot%\System32\findstr.exe" /X /C:"install -g -- npm@12.0.1" >nul',
+                'echo %* | "%SystemRoot%\System32\findstr.exe" /C:"npm@12.0.1" >nul',
                 'if not errorlevel 1 (',
                 '  echo Engine-incompatible npm candidate must be rejected before install 1>&2',
                 '  exit /b 1',
