@@ -414,8 +414,11 @@ Purpose: update common shell customization tooling (Oh My Zsh) and its git-backe
   - Oh My Zsh directory: `$ZSH` (if set and exists) or `~/.oh-my-zsh`
   - Custom directory: `$ZSH_CUSTOM` (if set) or `<ZSH>/custom`
   - Plugin/theme repos detected in `<custom>/plugins/*` and `<custom>/themes/*` (directories with `.git`).
+- Git preflight skips with a warning when a detected repo is on a detached HEAD, has no upstream, or has uncommitted changes.
+- A clean repo whose local and upstream histories have diverged fails the module without merging, rebasing, resetting, or changing branches.
 - Non-dry-run: `git -C <dir> pull --ff-only` for each detected repo.
-- With `-n`: sets `GIT_TERMINAL_PROMPT=0`.
+- With `-n`: applies `GIT_TERMINAL_PROMPT=0` to Git commands without changing the caller's environment.
+- Result aggregation: any hard failure means `FAIL`; at least one successful eligible repo means `OK`; all detected repos skipped by preflight means `SKIP`.
 - Side effects: updates repos in-place.
 
 ### 8.3 `repos`
@@ -427,10 +430,11 @@ Purpose: update development git repos matching `aman-*-setup` under a base direc
   - Base directory from `REPOS_DIR` config key, or defaults to `~/GitRepos`.
   - Globs `${base}/aman-*-setup` for directories containing `.git`.
   - Skips non-existent or non-git directories silently.
+- Uses the same Git preflight and result aggregation as `shell`: detached HEAD, missing upstream, and dirty worktrees warn and skip; diverged histories fail without mutating history.
 - Non-dry-run: `git -C <dir> pull --ff-only` for each detected repo.
   - If `./scripts/update.sh` exists and is executable in the repo, runs it after a successful pull.
-  - Post-pull script failure emits a warning but does not fail the module.
-- With `-n`: sets `GIT_TERMINAL_PROMPT=0`.
+  - Post-pull script failure is a hard repo failure, but remaining repos are still processed.
+- With `-n`: applies `GIT_TERMINAL_PROMPT=0` to pulls and post-pull actions without changing the caller's environment.
 - Side effects: updates repos in-place; may run post-pull scripts.
 
 ### 8.4 `linux`
@@ -462,14 +466,20 @@ Purpose: upgrade installed Windows packages and applications via Windows Package
 
 Purpose: upgrade global npm packages using `npm-check-updates`.
 
-- Requires: `npm` plus one of `ncu.cmd`, `ncu`, or `npx npm-check-updates`.
+- Requires: `npm` plus an npm-check-updates adapter that supports `--enginesNode`.
 - On macOS/Linux, sources `$NVM_DIR/nvm.sh` or `~/.nvm/nvm.sh` when present before resolving `npm`, `ncu`, or `npx`.
-- On Windows, updater resolution order is `ncu.cmd`, then `ncu`, then `npx npm-check-updates`.
-- Non-dry-run: resolved updater command with `-g --jsonUpgraded` to detect upgrades, then `npm install -g [NODE_NPM_INSTALL_FLAGS...] -- <name@version>...`.
+- Adapter resolution order is `ncu`, `ncu.cmd`, then `npx npm-check-updates` on Bash and `ncu.cmd`, `ncu`, then `npx npm-check-updates` on native Windows.
+  - Direct `ncu` adapters must advertise `--enginesNode`; incapable direct adapters are bypassed in favor of the next candidate.
+  - If no engine-aware adapter is available, a default run warns and skips `node`; explicit `--only node` fails.
+- Non-dry-run: resolved updater command with `-g --enginesNode --jsonUpgraded` selects versions compatible with the active Node runtime, then each returned `<name@version>` is installed independently with `npm install -g [NODE_NPM_INSTALL_FLAGS...] -- <name@version>`.
 - `NODE_NPM_INSTALL_FLAGS` defaults to empty, is split on whitespace, and is inserted before the `--` package separator on Bash and native Windows.
-- If npm fails with `ERESOLVE`, retries once with `--legacy-peer-deps`; configured npm flags are retained, duplicate configured `--legacy-peer-deps` is removed for the retry, and the forced retry flag is appended once. The first-pass npm error details are only surfaced when no retry path applies.
-- If npm succeeds but reports pending global install scripts, retries once with npm's suggested one-shot `--allow-scripts=...` list while retaining configured npm flags.
+- Per package, if npm fails with `ERESOLVE`, retries once with `--legacy-peer-deps`; configured npm flags are retained, duplicate configured `--legacy-peer-deps` is removed for the retry, and the forced retry flag is appended once.
+- Per package, if npm succeeds but reports pending global install scripts, retries once with npm's suggested one-shot `--allow-scripts=...` list while retaining configured npm flags.
+- `EBADENGINE` and other fatal failures are not retried. Remaining compatible packages are still attempted; any final package failure makes the node module fail.
+- Superseded first-attempt diagnostics are suppressed after a successful retry. Final failures retain raw npm diagnostics plus a concise package-specific error.
 - Side effects: upgrades global npm packages.
+
+The Git and Node hardening above is implemented behind private command-outcome seams. It does not add or change public v2 flags, configuration keys, exit codes, JSONL event types, or summary fields.
 
 ### 8.7 `bun`
 

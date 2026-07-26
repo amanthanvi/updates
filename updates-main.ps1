@@ -60,6 +60,7 @@ $script:LogFile = $null
 $script:GoBinaries = ''
 $script:ReposDir = ''
 $script:NodeNpmInstallFlags = ''
+$script:NcuResolutionReason = ''
 $script:MasUpgrade = $false
 $script:MacosUpdates = $false
 
@@ -741,21 +742,31 @@ function Resolve-MissingDependency {
 }
 
 function Resolve-NcuRunner {
-    $path = Resolve-ApplicationCommand @('ncu.cmd', 'ncu')
-    if ($path) {
-        return [pscustomobject]@{
-            FilePath = $path
-            Prefix   = @('-g', '--jsonUpgraded')
-            Label    = ((Split-Path -Leaf $path) + ' -g --jsonUpgraded')
+    $script:NcuResolutionReason = 'missing'
+    foreach ($candidate in @('ncu.cmd', 'ncu')) {
+        $path = Resolve-ApplicationCommand @($candidate)
+        if (-not $path) {
+            continue
         }
+
+        $probe = Invoke-CapturedProcess -FilePath $path -ArgumentList @('--help', 'enginesNode')
+        if ($probe.ExitCode -eq 0 -and $probe.Output -match '--enginesNode') {
+            return [pscustomobject]@{
+                FilePath = $path
+                Prefix   = @('-g', '--enginesNode', '--jsonUpgraded')
+                Label    = ((Split-Path -Leaf $path) + ' -g --enginesNode --jsonUpgraded')
+            }
+        }
+        $script:NcuResolutionReason = 'incompatible'
+        Write-DebugLine ("node: {0} lacks --enginesNode; trying the next adapter" -f (Split-Path -Leaf $path))
     }
 
     $npx = Resolve-ApplicationCommand @('npx.cmd', 'npx')
     if ($npx) {
         return [pscustomobject]@{
             FilePath = $npx
-            Prefix   = @('--yes', 'npm-check-updates', '-g', '--jsonUpgraded')
-            Label    = 'npx --yes npm-check-updates -g --jsonUpgraded'
+            Prefix   = @('--yes', 'npm-check-updates', '-g', '--enginesNode', '--jsonUpgraded')
+            Label    = 'npx --yes npm-check-updates -g --enginesNode --jsonUpgraded'
         }
     }
 
@@ -812,33 +823,105 @@ function Test-NpmAllowScriptsWarning {
     return ($Output -match 'npm warn allow-scripts')
 }
 
-function Complete-NpmGlobalInstallSuccess {
+function ConvertTo-CommandOutcome {
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$Npm,
-        [AllowEmptyCollection()]
-        [string[]]$Options = @(),
-        [Parameter(Mandatory = $true)]
-        [string[]]$Packages,
+        [ValidateSet('ok', 'skip', 'retry', 'fail')]
+        [string]$Status,
+        [string]$Reason,
+        [string]$Message,
+        [string]$RetryArgument = ''
+    )
+
+    return [pscustomobject]@{
+        Status        = $Status
+        Reason        = $Reason
+        Message       = $Message
+        RetryArgument = $RetryArgument
+    }
+}
+
+function Resolve-NpmInstallOutcome {
+    param(
         [Parameter(Mandatory = $true)]
         $Result
     )
 
-    $allowScriptsArg = Get-NpmAllowScriptsArgument -Output $Result.Output
-    if ($allowScriptsArg) {
-        Write-WarnLine 'node: npm install scripts need approval; retrying once with npm-provided allow-scripts list'
-        $retryArgs = New-NpmInstallArguments -Options (@($allowScriptsArg) + @($Options)) -Packages @($Packages)
-        $retryResult = Invoke-LoggedProcess -FilePath $Npm -ArgumentList $retryArgs -Capture
-        Write-ProcessResultOutput -Result $retryResult
-        return [int]$retryResult.ExitCode
+    if ($Result.Output -match 'EBADENGINE') {
+        return (ConvertTo-CommandOutcome -Status fail -Reason incompatible-engine -Message 'package is incompatible with the active Node runtime')
     }
 
-    if (Test-NpmAllowScriptsWarning -Output $Result.Output) {
-        Write-WarnLine 'node: npm reported install scripts needing approval, but no allow-scripts list could be parsed'
+    if ($Result.ExitCode -eq 0) {
+        $allowScriptsArg = Get-NpmAllowScriptsArgument -Output $Result.Output
+        if ($allowScriptsArg) {
+            return (ConvertTo-CommandOutcome -Status retry -Reason install-scripts -Message 'npm install scripts need approval' -RetryArgument $allowScriptsArg)
+        }
+        return (ConvertTo-CommandOutcome -Status ok -Reason command-succeeded -Message '')
     }
 
-    Write-ProcessResultOutput -Result $Result
-    return 0
+    if ($Result.Output -match 'ERESOLVE') {
+        return (ConvertTo-CommandOutcome -Status retry -Reason peer-resolution -Message 'npm peer dependency resolution failed' -RetryArgument '--legacy-peer-deps')
+    }
+    return (ConvertTo-CommandOutcome -Status fail -Reason command-failed -Message 'npm install failed')
+}
+
+function Invoke-NpmGlobalInstallOne {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Npm,
+        [Parameter(Mandatory = $true)]
+        [string]$Package,
+        [AllowEmptyCollection()]
+        [string[]]$InitialOptions = @()
+    )
+
+    $options = @($InitialOptions)
+    $peerRetried = $false
+    $scriptsRetried = $false
+    while ($true) {
+        $installArgs = New-NpmInstallArguments -Options $options -Packages @($Package)
+        $result = Invoke-LoggedProcess -FilePath $Npm -ArgumentList $installArgs -Capture
+        $outcome = Resolve-NpmInstallOutcome -Result $result
+
+        if ($outcome.Status -eq 'ok') {
+            if (Test-NpmAllowScriptsWarning -Output $result.Output) {
+                Write-WarnLine ("node: npm reported install scripts needing approval for {0}, but no allow-scripts list could be parsed" -f $Package)
+            }
+            Write-ProcessResultOutput -Result $result
+            return 0
+        }
+
+        if ($outcome.Status -eq 'retry' -and $outcome.Reason -eq 'peer-resolution') {
+            if ($peerRetried) {
+                Write-ErrorLine ("node: npm install failed for {0} after peer dependency retry" -f $Package)
+                Write-ProcessResultOutput -Result $result
+                return 1
+            }
+            Write-WarnLine ("node: npm peer dependency resolution failed for {0}; retrying with --legacy-peer-deps" -f $Package)
+            $options = @(Get-NpmInstallRetryOptions -Options $options)
+            $peerRetried = $true
+            continue
+        }
+
+        if ($outcome.Status -eq 'retry' -and $outcome.Reason -eq 'install-scripts') {
+            if ($scriptsRetried) {
+                Write-WarnLine ("node: npm install completed for {0}, but npm still reports install scripts needing approval after retry" -f $Package)
+                Write-ProcessResultOutput -Result $result
+                return 0
+            }
+            Write-WarnLine ("node: npm install scripts need approval for {0}; retrying once with npm-provided allow-scripts list" -f $Package)
+            $options = @($outcome.RetryArgument) + @($options)
+            $scriptsRetried = $true
+            continue
+        }
+
+        if ($outcome.Reason -eq 'incompatible-engine') {
+            Write-ErrorLine ("node: {0} is incompatible with the active Node runtime" -f $Package)
+        } else {
+            Write-ErrorLine ("node: npm install failed for {0}" -f $Package)
+        }
+        Write-ProcessResultOutput -Result $result
+        return 1
+    }
 }
 
 function Invoke-NpmGlobalInstall {
@@ -850,26 +933,16 @@ function Invoke-NpmGlobalInstall {
     )
 
     $extraFlags = @(Get-NpmInstallExtraFlags)
-    $installArgs = New-NpmInstallArguments -Options $extraFlags -Packages @($Packages)
-    $installResult = Invoke-LoggedProcess -FilePath $Npm -ArgumentList $installArgs -Capture
-    if ($installResult.ExitCode -eq 0) {
-        return (Complete-NpmGlobalInstallSuccess -Npm $Npm -Options $extraFlags -Packages @($Packages) -Result $installResult)
-    }
-
-    if ($installResult.Output -match 'ERESOLVE') {
-        Write-WarnLine 'node: npm peer dependency resolution failed; retrying with --legacy-peer-deps'
-        $retryOptions = Get-NpmInstallRetryOptions -Options $extraFlags
-        $retryArgs = New-NpmInstallArguments -Options $retryOptions -Packages @($Packages)
-        $retryResult = Invoke-LoggedProcess -FilePath $Npm -ArgumentList $retryArgs -Capture
-        if ($retryResult.ExitCode -eq 0) {
-            return (Complete-NpmGlobalInstallSuccess -Npm $Npm -Options $retryOptions -Packages @($Packages) -Result $retryResult)
+    $failed = $false
+    foreach ($package in $Packages) {
+        if ((Invoke-NpmGlobalInstallOne -Npm $Npm -Package $package -InitialOptions $extraFlags) -ne 0) {
+            $failed = $true
         }
-        Write-ProcessResultOutput -Result $retryResult
-        return [int]$retryResult.ExitCode
     }
-
-    Write-ProcessResultOutput -Result $installResult
-    return [int]$installResult.ExitCode
+    if ($failed) {
+        return 1
+    }
+    return 0
 }
 
 function Test-BunStandaloneInstall {
@@ -941,7 +1014,16 @@ function Invoke-ModuleWinget {
 function Invoke-ModuleNode {
     $runner = Resolve-NcuRunner
     if (-not $runner) {
-        return (Resolve-MissingDependency -ModuleName 'node' -Detail 'npm-check-updates not available (need ncu or npx).')
+        $detail = 'npm-check-updates not available (need ncu or npx).'
+        if ($script:NcuResolutionReason -eq 'incompatible') {
+            $detail = 'no npm-check-updates adapter supports --enginesNode; upgrade ncu or install npx.'
+        }
+        if ($script:OnlyModules.Count -gt 0 -and $script:OnlyModules.Contains('node')) {
+            Write-ErrorLine ("node: {0}" -f $detail)
+            return 1
+        }
+        Write-WarnLine ("node: {0} Skipping." -f $detail)
+        return 2
     }
 
     $npm = Resolve-ApplicationCommand @('npm.cmd', 'npm')
@@ -976,7 +1058,7 @@ function Invoke-ModuleNode {
     }
 
     if ($packages.Count -eq 0) {
-        Write-LogLine 'All global npm packages are up-to-date.'
+        Write-LogLine 'All global npm packages are up-to-date for the active Node runtime.'
         return 0
     }
 

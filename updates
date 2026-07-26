@@ -117,7 +117,12 @@ PYTHON_CMD_LABEL=""
 NCU_RESOLVED=0
 NCU_MODE=""
 NCU_CMD=""
+NCU_RESOLUTION_REASON=""
 NVM_NODE_TOOLS_READY=0
+COMMAND_OUTCOME_STATUS=""
+COMMAND_OUTCOME_REASON=""
+COMMAND_OUTCOME_MESSAGE=""
+COMMAND_OUTCOME_RETRY_ARG=""
 
 ###############################################################################
 # SECTION: output — print, log, warn, err, emoji, JSON emission
@@ -691,12 +696,18 @@ run() {
 	fi
 }
 
+command_outcome_set() {
+	COMMAND_OUTCOME_STATUS="$1"
+	COMMAND_OUTCOME_REASON="$2"
+	COMMAND_OUTCOME_MESSAGE="$3"
+	COMMAND_OUTCOME_RETRY_ARG="${4:-}"
+}
+
 run_npm_global_install() {
 	init_nvm_node_tools
 
 	local -a packages=("$@")
 	local -a npm_extra_flags=()
-	local -a npm_install_options=(--)
 	local npm_extra_flags_count=0
 	if [ -n "$NODE_NPM_INSTALL_FLAGS" ]; then
 		local restore_glob=0
@@ -713,66 +724,26 @@ run_npm_global_install() {
 		npm_extra_flags_count=$#
 		if [ "$npm_extra_flags_count" -gt 0 ]; then
 			npm_extra_flags=("$@")
-			npm_install_options=("$@" --)
 		fi
 	fi
 	set -- "${packages[@]}"
 
 	if [ "$DRY_RUN" -eq 1 ]; then
-		run npm install -g "${npm_install_options[@]}" "$@"
-		return $?
+		local package
+		for package in "$@"; do
+			run npm install -g "${npm_extra_flags[@]}" -- "$package" || return $?
+		done
+		return 0
 	fi
 
-	local npm_err_log tmp_base
-	tmp_base="${TMPDIR:-/tmp}"
-	npm_err_log="$(mktemp "${tmp_base%/}/updates-npm.XXXXXX" 2>/dev/null || mktemp -t updates-npm.XXXXXX 2>/dev/null)" || {
-		run npm install -g "${npm_install_options[@]}" "$@"
-		return $?
-	}
-
-	run_npm_global_install_logged "$npm_err_log" "${npm_install_options[@]}" "$@"
-	local status=$?
-
-	if [ "$status" -eq 0 ]; then
-		handle_npm_global_install_success "$npm_err_log" "${npm_install_options[@]}" "$@"
-		return $?
-	fi
-
-	if grep -q 'ERESOLVE' "$npm_err_log"; then
-		warn "node: npm peer dependency resolution failed; retrying with --legacy-peer-deps"
-		rm -f "$npm_err_log"
-		local -a retry_flags=(--legacy-peer-deps)
-		local flag
-		if [ "$npm_extra_flags_count" -gt 0 ]; then
-			retry_flags=()
-			for flag in "${npm_extra_flags[@]}"; do
-				[ "$flag" = "--legacy-peer-deps" ] && continue
-				retry_flags+=("$flag")
-			done
-			retry_flags+=(--legacy-peer-deps)
+	local failed=0
+	local package
+	for package in "$@"; do
+		if ! run_npm_global_install_one "$package" "${npm_extra_flags[@]}"; then
+			failed=1
 		fi
-		npm_err_log="$(mktemp "${tmp_base%/}/updates-npm.XXXXXX" 2>/dev/null || mktemp -t updates-npm.XXXXXX 2>/dev/null)" || {
-			run npm install -g "${retry_flags[@]}" -- "$@"
-			return $?
-		}
-		run_npm_global_install_logged "$npm_err_log" "${retry_flags[@]}" -- "$@"
-		status=$?
-		if [ "$status" -eq 0 ]; then
-			handle_npm_global_install_success "$npm_err_log" "${retry_flags[@]}" -- "$@"
-			return $?
-		fi
-		if [ -s "$npm_err_log" ]; then
-			cat "$npm_err_log" >&2
-		fi
-		rm -f "$npm_err_log"
-		return "$status"
-	fi
-
-	if [ -s "$npm_err_log" ]; then
-		cat "$npm_err_log" >&2
-	fi
-	rm -f "$npm_err_log"
-	return "$status"
+	done
+	return "$failed"
 }
 
 run_npm_global_install_logged() {
@@ -797,41 +768,111 @@ npm_allow_scripts_warning_in_log() {
 	grep -q 'npm warn allow-scripts' "$npm_err_log"
 }
 
-handle_npm_global_install_success() {
-	local npm_err_log="$1"
-	shift
+npm_classify_install_outcome() {
+	local status="$1"
+	local npm_err_log="$2"
 
 	local allow_scripts_arg=""
 	allow_scripts_arg="$(npm_allow_scripts_arg_from_log "$npm_err_log")"
-	if [ -n "$allow_scripts_arg" ]; then
-		warn "node: npm install scripts need approval; retrying once with npm-provided allow-scripts list"
-		rm -f "$npm_err_log"
+	if grep -q 'EBADENGINE' "$npm_err_log"; then
+		command_outcome_set fail incompatible-engine "package is incompatible with the active Node runtime"
+		return 0
+	fi
+	if [ "$status" -eq 0 ]; then
+		if [ -n "$allow_scripts_arg" ]; then
+			command_outcome_set retry install-scripts "npm install scripts need approval" "$allow_scripts_arg"
+			return 0
+		fi
+		command_outcome_set ok command-succeeded ""
+		return 0
+	fi
 
-		local allow_err_log tmp_base
-		tmp_base="${TMPDIR:-/tmp}"
-		allow_err_log="$(mktemp "${tmp_base%/}/updates-npm.XXXXXX" 2>/dev/null || mktemp -t updates-npm.XXXXXX 2>/dev/null)" || {
-			run npm install -g "$allow_scripts_arg" "$@"
-			return $?
+	if grep -q 'ERESOLVE' "$npm_err_log"; then
+		command_outcome_set retry peer-resolution "npm peer dependency resolution failed" "--legacy-peer-deps"
+		return 0
+	fi
+	command_outcome_set fail command-failed "npm install failed"
+}
+
+run_npm_global_install_one() {
+	local package="$1"
+	shift
+
+	local -a install_options=("$@")
+	local peer_retried=0
+	local scripts_retried=0
+	local tmp_base="${TMPDIR:-/tmp}"
+
+	while :; do
+		local npm_err_log=""
+		npm_err_log="$(mktemp "${tmp_base%/}/updates-npm.XXXXXX" 2>/dev/null || mktemp -t updates-npm.XXXXXX 2>/dev/null)" || {
+			if run npm install -g "${install_options[@]}" -- "$package"; then
+				return 0
+			fi
+			err "node: npm install failed for ${package}"
+			return 1
 		}
 
-		run_npm_global_install_logged "$allow_err_log" "$allow_scripts_arg" "$@"
+		run_npm_global_install_logged "$npm_err_log" "${install_options[@]}" -- "$package"
 		local status=$?
-		if [ -s "$allow_err_log" ]; then
-			cat "$allow_err_log" >&2
-		fi
-		rm -f "$allow_err_log"
-		return "$status"
-	fi
+		npm_classify_install_outcome "$status" "$npm_err_log"
 
-	if npm_allow_scripts_warning_in_log "$npm_err_log"; then
-		warn "node: npm reported install scripts needing approval, but no allow-scripts list could be parsed"
-	fi
-
-	if [ -s "$npm_err_log" ]; then
-		cat "$npm_err_log" >&2
-	fi
-	rm -f "$npm_err_log"
-	return 0
+		case "$COMMAND_OUTCOME_STATUS:$COMMAND_OUTCOME_REASON" in
+		ok:*)
+			if npm_allow_scripts_warning_in_log "$npm_err_log"; then
+				warn "node: npm reported install scripts needing approval, but no allow-scripts list could be parsed"
+			fi
+			if [ -s "$npm_err_log" ]; then
+				cat "$npm_err_log" >&2
+			fi
+			rm -f "$npm_err_log"
+			return 0
+			;;
+		retry:peer-resolution)
+			if [ "$peer_retried" -eq 1 ]; then
+				err "node: npm install failed for ${package} after peer dependency retry"
+				[ ! -s "$npm_err_log" ] || cat "$npm_err_log" >&2
+				rm -f "$npm_err_log"
+				return 1
+			fi
+			warn "node: npm peer dependency resolution failed for ${package}; retrying with --legacy-peer-deps"
+			rm -f "$npm_err_log"
+			local -a retry_options=()
+			local flag
+			for flag in "${install_options[@]}"; do
+				[ "$flag" = "--legacy-peer-deps" ] && continue
+				retry_options+=("$flag")
+			done
+			retry_options+=(--legacy-peer-deps)
+			install_options=("${retry_options[@]}")
+			peer_retried=1
+			;;
+		retry:install-scripts)
+			if [ "$scripts_retried" -eq 1 ]; then
+				warn "node: npm install completed for ${package}, but npm still reports install scripts needing approval after retry"
+				[ ! -s "$npm_err_log" ] || cat "$npm_err_log" >&2
+				rm -f "$npm_err_log"
+				return 0
+			fi
+			warn "node: npm install scripts need approval for ${package}; retrying once with npm-provided allow-scripts list"
+			rm -f "$npm_err_log"
+			install_options=("$COMMAND_OUTCOME_RETRY_ARG" "${install_options[@]}")
+			scripts_retried=1
+			;;
+		fail:incompatible-engine)
+			err "node: ${package} is incompatible with the active Node runtime"
+			[ ! -s "$npm_err_log" ] || cat "$npm_err_log" >&2
+			rm -f "$npm_err_log"
+			return 1
+			;;
+		*)
+			err "node: npm install failed for ${package}"
+			[ ! -s "$npm_err_log" ] || cat "$npm_err_log" >&2
+			rm -f "$npm_err_log"
+			return 1
+			;;
+		esac
+	done
 }
 
 semver_is_valid() {
@@ -916,16 +957,25 @@ resolve_ncu_runner() {
 	NCU_RESOLVED=1
 	NCU_MODE=""
 	NCU_CMD=""
+	NCU_RESOLUTION_REASON="missing"
 
 	if cmd_exists ncu; then
-		NCU_MODE="cmd"
-		NCU_CMD="ncu"
-		return 0
+		if ncu_direct_supports_engines_node ncu; then
+			NCU_MODE="cmd"
+			NCU_CMD="ncu"
+			return 0
+		fi
+		NCU_RESOLUTION_REASON="incompatible"
+		debug "node: ncu lacks --enginesNode; trying the next adapter"
 	fi
 	if cmd_exists ncu.cmd; then
-		NCU_MODE="cmd"
-		NCU_CMD="ncu.cmd"
-		return 0
+		if ncu_direct_supports_engines_node ncu.cmd; then
+			NCU_MODE="cmd"
+			NCU_CMD="ncu.cmd"
+			return 0
+		fi
+		NCU_RESOLUTION_REASON="incompatible"
+		debug "node: ncu.cmd lacks --enginesNode; trying the next adapter"
 	fi
 	if cmd_exists npx; then
 		NCU_MODE="npx"
@@ -933,6 +983,11 @@ resolve_ncu_runner() {
 		return 0
 	fi
 	return 1
+}
+
+ncu_direct_supports_engines_node() {
+	local cmd="$1"
+	"$cmd" --help enginesNode 2>&1 | grep -q -- '--enginesNode'
 }
 
 init_nvm_node_tools() {
@@ -980,8 +1035,8 @@ ncu_command_label() {
 	fi
 
 	case "$NCU_MODE" in
-	cmd) stdout_print "${NCU_CMD} -g --jsonUpgraded" ;;
-	npx) stdout_print "npx --yes npm-check-updates -g --jsonUpgraded" ;;
+	cmd) stdout_print "${NCU_CMD} -g --enginesNode --jsonUpgraded" ;;
+	npx) stdout_print "npx --yes npm-check-updates -g --enginesNode --jsonUpgraded" ;;
 	*) return 1 ;;
 	esac
 }
@@ -992,8 +1047,8 @@ ncu_run_json_upgraded() {
 	fi
 
 	case "$NCU_MODE" in
-	cmd) "$NCU_CMD" -g --jsonUpgraded ;;
-	npx) npx --yes npm-check-updates -g --jsonUpgraded ;;
+	cmd) "$NCU_CMD" -g --enginesNode --jsonUpgraded ;;
+	npx) npx --yes npm-check-updates -g --enginesNode --jsonUpgraded ;;
 	*) return 1 ;;
 	esac
 }
@@ -2702,6 +2757,134 @@ shell_detect_omz_custom_dir() {
 	return 1
 }
 
+git_repo_preflight() {
+	local repo="$1"
+	local branch=""
+	if ! branch="$(git -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null)" || [ -z "$branch" ]; then
+		command_outcome_set skip detached-head "git: ${repo}: detached HEAD; skipping"
+		return 0
+	fi
+
+	local upstream=""
+	if ! upstream="$(git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)" || [ -z "$upstream" ]; then
+		command_outcome_set skip missing-upstream "git: ${repo}: branch ${branch} has no upstream; skipping"
+		return 0
+	fi
+
+	local worktree_status=""
+	if ! worktree_status="$(git -C "$repo" status --porcelain --untracked-files=no 2>/dev/null)"; then
+		command_outcome_set fail pull-failed "git: ${repo}: failed to inspect worktree state"
+		return 0
+	fi
+	if [ -n "$worktree_status" ]; then
+		command_outcome_set skip dirty-worktree "git: ${repo}: worktree has uncommitted changes; skipping"
+		return 0
+	fi
+
+	local counts=""
+	if ! counts="$(git -C "$repo" rev-list --left-right --count "HEAD...@{upstream}" 2>/dev/null)"; then
+		command_outcome_set fail pull-failed "git: ${repo}: failed to compare HEAD with ${upstream}"
+		return 0
+	fi
+
+	local ahead=0
+	local behind=0
+	read -r ahead behind <<<"$counts"
+	case "$ahead" in
+	'' | *[!0-9]*)
+		command_outcome_set fail pull-failed "git: ${repo}: invalid divergence result"
+		return 0
+		;;
+	esac
+	case "$behind" in
+	'' | *[!0-9]*)
+		command_outcome_set fail pull-failed "git: ${repo}: invalid divergence result"
+		return 0
+		;;
+	esac
+	if [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ]; then
+		command_outcome_set fail diverged "git: ${repo}: local and upstream histories have diverged; reconcile manually"
+		return 0
+	fi
+
+	command_outcome_set ok eligible ""
+}
+
+run_git_pull() {
+	local repo="$1"
+	if [ "$NON_INTERACTIVE" -eq 1 ]; then
+		run env GIT_TERMINAL_PROMPT=0 git -C "$repo" pull --ff-only
+		return $?
+	fi
+	run git -C "$repo" pull --ff-only
+}
+
+run_git_post_pull() {
+	local repo="$1"
+	if [ "$NON_INTERACTIVE" -eq 1 ]; then
+		(cd "$repo" && run env GIT_TERMINAL_PROMPT=0 ./scripts/update.sh)
+		return $?
+	fi
+	(cd "$repo" && run ./scripts/update.sh)
+}
+
+git_sync_repositories() {
+	local run_post_pull="$1"
+	shift
+
+	local eligible=0
+	local failed=0
+	local repo
+	for repo in "$@"; do
+		git_repo_preflight "$repo"
+		case "$COMMAND_OUTCOME_STATUS" in
+		skip)
+			warn "$COMMAND_OUTCOME_MESSAGE"
+			continue
+			;;
+		fail)
+			err "$COMMAND_OUTCOME_MESSAGE"
+			failed=1
+			continue
+			;;
+		esac
+
+		eligible=$((eligible + 1))
+		if [ "$DRY_RUN" -eq 1 ]; then
+			log "DRY RUN: git -C ${repo} pull --ff-only"
+			if [ "$run_post_pull" -eq 1 ] && [ -x "${repo}/scripts/update.sh" ]; then
+				log "DRY RUN: (cd ${repo} && ./scripts/update.sh)"
+			fi
+			continue
+		fi
+
+		log "Updating: ${repo}"
+		if ! run_git_pull "$repo"; then
+			command_outcome_set fail pull-failed "git: ${repo}: pull --ff-only failed"
+			err "$COMMAND_OUTCOME_MESSAGE"
+			failed=1
+			continue
+		fi
+
+		if [ "$run_post_pull" -eq 1 ] && [ -x "${repo}/scripts/update.sh" ]; then
+			log "Running post-pull: ./scripts/update.sh"
+			if ! run_git_post_pull "$repo"; then
+				command_outcome_set fail post-pull-failed "repos: post-pull action failed: ${repo}/scripts/update.sh"
+				err "$COMMAND_OUTCOME_MESSAGE"
+				failed=1
+			fi
+		fi
+	done
+
+	if [ "$failed" -eq 1 ]; then
+		return 1
+	fi
+	if [ "$eligible" -eq 0 ]; then
+		return 2
+	fi
+	return 0
+}
+
 module_shell() {
 	log "Shell customization $(emoji "🐚")"
 	ensure_cmd_or_skip git shell || return $?
@@ -2714,16 +2897,6 @@ module_shell() {
 
 	local custom_dir=""
 	custom_dir="$(shell_detect_omz_custom_dir "$omz_dir" || true)"
-
-	local git_terminal_prompt_prev=""
-	local git_terminal_prompt_was_set=0
-	if [ "$NON_INTERACTIVE" -eq 1 ]; then
-		if [ -n "${GIT_TERMINAL_PROMPT+x}" ]; then
-			git_terminal_prompt_was_set=1
-			git_terminal_prompt_prev="${GIT_TERMINAL_PROMPT}"
-		fi
-		export GIT_TERMINAL_PROMPT=0
-	fi
 
 	local -a repos=()
 	if shell_git_is_repo "$omz_dir"; then
@@ -2752,42 +2925,10 @@ module_shell() {
 
 	if [ "${#repos[@]}" -eq 0 ]; then
 		log "Skipping shell: no git repos detected."
-		if [ "$NON_INTERACTIVE" -eq 1 ]; then
-			if [ "$git_terminal_prompt_was_set" -eq 1 ]; then
-				export GIT_TERMINAL_PROMPT="$git_terminal_prompt_prev"
-			else
-				unset GIT_TERMINAL_PROMPT
-			fi
-		fi
 		return 2
 	fi
 
-	local failed=0
-	local repo
-	for repo in "${repos[@]}"; do
-		if [ "$DRY_RUN" -eq 1 ]; then
-			log "DRY RUN: git -C ${repo} pull --ff-only"
-			continue
-		fi
-
-		log "Updating: ${repo}"
-		if ! run git -C "$repo" pull --ff-only; then
-			failed=1
-		fi
-	done
-
-	if [ "$NON_INTERACTIVE" -eq 1 ]; then
-		if [ "$git_terminal_prompt_was_set" -eq 1 ]; then
-			export GIT_TERMINAL_PROMPT="$git_terminal_prompt_prev"
-		else
-			unset GIT_TERMINAL_PROMPT
-		fi
-	fi
-
-	if [ "$failed" -eq 1 ]; then
-		return 1
-	fi
-	return 0
+	git_sync_repositories 0 "${repos[@]}"
 }
 
 module_repos() {
@@ -2806,16 +2947,6 @@ module_repos() {
 		return 2
 	fi
 
-	local git_terminal_prompt_prev=""
-	local git_terminal_prompt_was_set=0
-	if [ "$NON_INTERACTIVE" -eq 1 ]; then
-		if [ -n "${GIT_TERMINAL_PROMPT+x}" ]; then
-			git_terminal_prompt_was_set=1
-			git_terminal_prompt_prev="${GIT_TERMINAL_PROMPT}"
-		fi
-		export GIT_TERMINAL_PROMPT=0
-	fi
-
 	local -a repos=()
 	local dir
 	for dir in "${base_dir}"/aman-*-setup; do
@@ -2828,52 +2959,10 @@ module_repos() {
 
 	if [ "${#repos[@]}" -eq 0 ]; then
 		log "Skipping repos: no aman-*-setup repos found in ${base_dir}."
-		if [ "$NON_INTERACTIVE" -eq 1 ]; then
-			if [ "$git_terminal_prompt_was_set" -eq 1 ]; then
-				export GIT_TERMINAL_PROMPT="$git_terminal_prompt_prev"
-			else
-				unset GIT_TERMINAL_PROMPT
-			fi
-		fi
 		return 2
 	fi
 
-	local failed=0
-	local repo
-	for repo in "${repos[@]}"; do
-		if [ "$DRY_RUN" -eq 1 ]; then
-			log "DRY RUN: git -C ${repo} pull --ff-only"
-			if [ -x "${repo}/scripts/update.sh" ]; then
-				log "DRY RUN: (cd ${repo} && ./scripts/update.sh)"
-			fi
-			continue
-		fi
-
-		log "Updating: ${repo}"
-		if run git -C "$repo" pull --ff-only; then
-			if [ -x "${repo}/scripts/update.sh" ]; then
-				log "Running post-pull: ./scripts/update.sh"
-				if ! (cd "$repo" && run ./scripts/update.sh); then
-					warn "repos: post-pull script failed: ${repo}/scripts/update.sh"
-				fi
-			fi
-		else
-			failed=1
-		fi
-	done
-
-	if [ "$NON_INTERACTIVE" -eq 1 ]; then
-		if [ "$git_terminal_prompt_was_set" -eq 1 ]; then
-			export GIT_TERMINAL_PROMPT="$git_terminal_prompt_prev"
-		else
-			unset GIT_TERMINAL_PROMPT
-		fi
-	fi
-
-	if [ "$failed" -eq 1 ]; then
-		return 1
-	fi
-	return 0
+	git_sync_repositories 1 "${repos[@]}"
 }
 
 module_linux() {
@@ -3029,11 +3118,15 @@ module_winget() {
 module_node() {
 	log "npm globals $(emoji "📦")"
 	if ! resolve_ncu_runner; then
+		local detail="npm-check-updates not available (need ncu or npx)"
+		if [ "$NCU_RESOLUTION_REASON" = "incompatible" ]; then
+			detail="no npm-check-updates adapter supports --enginesNode; upgrade ncu or install npx"
+		fi
 		if missing_dependency_is_error; then
-			err "node: required command not found: ncu or npx"
+			err "node: ${detail}"
 			return 1
 		fi
-		log "Skipping node: npm-check-updates not available (need ncu or npx)."
+		warn "node: ${detail}; skipping"
 		return 2
 	fi
 	ensure_cmd_or_skip npm node || return $?
@@ -3068,7 +3161,7 @@ module_node() {
 	done <<<"$pairs"
 
 	if [ "${#packages[@]}" -eq 0 ]; then
-		log "All global npm packages are up-to-date. $(emoji "✅")"
+		log "All global npm packages are up-to-date for the active Node runtime. $(emoji "✅")"
 		return 0
 	fi
 

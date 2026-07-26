@@ -23,6 +23,11 @@ mkdir -p "$stub_bin"
 # Referenced by heredoc-backed test bodies evaluated through run_test.
 # shellcheck disable=SC2034
 SYSTEM_NODE="$(command -v node 2>/dev/null || true)"
+SYSTEM_GIT="$(command -v git 2>/dev/null || true)"
+if [ -z "$SYSTEM_GIT" ]; then
+	echo "tests: git is required for Git fixture coverage" >&2
+	exit 1
+fi
 SYSTEM_PYTHON3="$(command -v python3 2>/dev/null || true)"
 if [ -z "$SYSTEM_PYTHON3" ]; then
 	echo "python3 is required for tests/test_cli.sh" >&2
@@ -65,6 +70,60 @@ EOF
 
 write_stub() {
 	write_stub_to_dir "$stub_bin" "$@"
+}
+
+write_ncu_stub() {
+	local json="$1"
+	cat >"${stub_bin}/ncu" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+echo "ncu \$*" >>"\$CALL_LOG"
+if [ "\${1:-}" = "--help" ]; then
+	echo "--enginesNode"
+	exit 0
+fi
+printf '%s\n' '${json}'
+EOF
+	chmod +x "${stub_bin}/ncu"
+}
+
+git_test_commit() {
+	local repo="$1"
+	local message="$2"
+	"$SYSTEM_GIT" -C "$repo" -c user.name=Updates-Test -c user.email=updates-test@example.invalid add -A
+	"$SYSTEM_GIT" -C "$repo" -c user.name=Updates-Test -c user.email=updates-test@example.invalid commit -q -m "$message"
+}
+
+create_tracked_git_repo() {
+	local target="$1"
+	local fixture_root="$2"
+	local name="$3"
+	local seed="${fixture_root}/${name}-seed"
+	local remote="${fixture_root}/${name}.git"
+
+	mkdir -p "$seed"
+	"$SYSTEM_GIT" init -q "$seed"
+	"$SYSTEM_GIT" -C "$seed" checkout -q -b main
+	printf 'initial\n' >"${seed}/tracked.txt"
+	git_test_commit "$seed" "initial"
+	"$SYSTEM_GIT" init -q --bare "$remote"
+	"$SYSTEM_GIT" --git-dir="$remote" symbolic-ref HEAD refs/heads/main
+	"$SYSTEM_GIT" -C "$seed" remote add origin "$remote"
+	"$SYSTEM_GIT" -C "$seed" push -q -u origin main
+	"$SYSTEM_GIT" clone -q "$remote" "$target"
+}
+
+write_git_ready_stub() {
+	# shellcheck disable=SC2016
+	write_stub git '
+echo "GIT_TERMINAL_PROMPT=${GIT_TERMINAL_PROMPT:-} git $*" >>"$CALL_LOG"
+case " $* " in
+*" symbolic-ref --quiet --short HEAD ") echo "main" ;;
+*" rev-parse --abbrev-ref --symbolic-full-name @{upstream} "*) echo "origin/main" ;;
+*" status --porcelain --untracked-files=no "*) ;;
+*" rev-list --left-right --count HEAD...@{upstream} "*) printf "0\t0\n" ;;
+esac
+'
 }
 
 sha256_file_test() {
@@ -289,15 +348,14 @@ export CALL_LOG
 write_stub uname 'echo Darwin'
 # shellcheck disable=SC2016
 write_stub brew 'echo "brew $*" >>"$CALL_LOG"'
-write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
+write_ncu_stub '{"npm":"11.7.0"}'
 # shellcheck disable=SC2016
 write_stub npm 'echo "npm $*" >>"$CALL_LOG"'
 # shellcheck disable=SC2016
 write_stub bun 'echo "bun $*" >>"$CALL_LOG"'
 # shellcheck disable=SC2016
 write_stub pipx 'echo "pipx $*" >>"$CALL_LOG"'
-# shellcheck disable=SC2016
-write_stub git 'echo "GIT_TERMINAL_PROMPT=${GIT_TERMINAL_PROMPT:-} git $*" >>"$CALL_LOG"'
+write_git_ready_stub
 # shellcheck disable=SC2016
 write_stub uv 'echo "uv $*" >>"$CALL_LOG"'
 # shellcheck disable=SC2016
@@ -1273,8 +1331,7 @@ mkdir -p "${repos_dir}/aman-claude-code-setup"
 mkdir -p "${repos_dir}/aman-codex-setup"
 mkdir -p "${repos_dir}/aman-claude-code-setup/.git"
 mkdir -p "${repos_dir}/aman-codex-setup/.git"
-# shellcheck disable=SC2016
-write_stub git 'echo "git $*" >>"$CALL_LOG"'
+write_git_ready_stub
 : >"$CALL_LOG"
 HOME="$repos_home" "$SCRIPT" --only repos --non-interactive --no-emoji --no-color >/dev/null 2>&1
 grep -q "git -C ${repos_dir}/aman-claude-code-setup pull --ff-only" "$CALL_LOG"
@@ -1290,8 +1347,7 @@ mkdir -p "${repos_config_dir}/aman-test-setup/.git"
 cat >"${repos_config_home}/.updatesrc" <<UPDATESRC
 REPOS_DIR=${repos_config_dir}
 UPDATESRC
-# shellcheck disable=SC2016
-write_stub git 'echo "git $*" >>"$CALL_LOG"'
+write_git_ready_stub
 : >"$CALL_LOG"
 HOME="$repos_config_home" "$SCRIPT" --only repos --non-interactive --no-emoji --no-color >/dev/null 2>&1
 grep -q "git -C ${repos_config_dir}/aman-test-setup pull --ff-only" "$CALL_LOG"
@@ -1316,6 +1372,144 @@ chmod +x "${repos_dry_dir}/aman-dry-setup/scripts/update.sh"
 out="$(HOME="$repos_dry_home" "$SCRIPT" --dry-run --only repos --no-emoji --no-color 2>&1)"
 echo "$out" | grep -q "DRY RUN: git -C ${repos_dry_dir}/aman-dry-setup pull --ff-only"
 echo "$out" | grep -q "DRY RUN: (cd ${repos_dry_dir}/aman-dry-setup && ./scripts/update.sh)"
+
+UPDATES_TEST_CASE
+
+run_test "repos module preflights Git state and updates only eligible repos" <<'UPDATES_TEST_CASE'
+git_sync_home="${tmp_dir}/home-repos-git-sync"
+git_sync_dir="${git_sync_home}/GitRepos"
+git_sync_fixtures="${tmp_dir}/repos-git-fixtures"
+mkdir -p "$git_sync_dir" "$git_sync_fixtures"
+create_tracked_git_repo "${git_sync_dir}/aman-clean-setup" "$git_sync_fixtures" clean
+mkdir -p "${git_sync_dir}/aman-clean-setup/scripts"
+cat >"${git_sync_dir}/aman-clean-setup/scripts/update.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'ran\n' >>"$POST_PULL_MARKER"
+EOF
+chmod +x "${git_sync_dir}/aman-clean-setup/scripts/update.sh"
+git_test_commit "${git_sync_dir}/aman-clean-setup" "add post-pull"
+"$SYSTEM_GIT" -C "${git_sync_dir}/aman-clean-setup" push -q
+printf 'untracked files do not make a tracked worktree dirty\n' >"${git_sync_dir}/aman-clean-setup/untracked.txt"
+
+mkdir -p "${git_sync_dir}/aman-local-only-setup"
+"$SYSTEM_GIT" init -q "${git_sync_dir}/aman-local-only-setup"
+"$SYSTEM_GIT" -C "${git_sync_dir}/aman-local-only-setup" checkout -q -b local-work
+printf 'local\n' >"${git_sync_dir}/aman-local-only-setup/tracked.txt"
+git_test_commit "${git_sync_dir}/aman-local-only-setup" "local only"
+
+create_tracked_git_repo "${git_sync_dir}/aman-dirty-setup" "$git_sync_fixtures" dirty
+printf 'dirty\n' >>"${git_sync_dir}/aman-dirty-setup/tracked.txt"
+
+create_tracked_git_repo "${git_sync_dir}/aman-detached-setup" "$git_sync_fixtures" detached
+"$SYSTEM_GIT" -C "${git_sync_dir}/aman-detached-setup" checkout -q --detach
+
+cat >"${git_sync_home}/.updatesrc" <<EOF
+REPOS_DIR=${git_sync_dir}
+EOF
+post_pull_marker="${tmp_dir}/post-pull-marker"
+git_sync_stderr="${tmp_dir}/repos-git-sync-stderr.log"
+out="$(PATH="$BASE_PATH" HOME="$git_sync_home" POST_PULL_MARKER="$post_pull_marker" "$SCRIPT" --only repos --non-interactive --no-emoji --no-color 2>"$git_sync_stderr")"
+echo "$out" | grep -q '^==> repos END (OK)'
+grep -q '^ran$' "$post_pull_marker"
+grep -q 'aman-local-only-setup.*no upstream' "$git_sync_stderr"
+grep -q 'aman-dirty-setup.*uncommitted changes' "$git_sync_stderr"
+grep -q 'aman-detached-setup.*detached HEAD' "$git_sync_stderr"
+
+UPDATES_TEST_CASE
+
+run_test "repos module skips when every Git repo is ineligible" <<'UPDATES_TEST_CASE'
+git_all_skip_home="${tmp_dir}/home-repos-all-skip"
+git_all_skip_dir="${git_all_skip_home}/GitRepos"
+mkdir -p "${git_all_skip_dir}/aman-local-only-setup"
+"$SYSTEM_GIT" init -q "${git_all_skip_dir}/aman-local-only-setup"
+"$SYSTEM_GIT" -C "${git_all_skip_dir}/aman-local-only-setup" checkout -q -b local-work
+printf 'local\n' >"${git_all_skip_dir}/aman-local-only-setup/tracked.txt"
+git_test_commit "${git_all_skip_dir}/aman-local-only-setup" "local only"
+cat >"${git_all_skip_home}/.updatesrc" <<EOF
+REPOS_DIR=${git_all_skip_dir}
+EOF
+out="$(PATH="$BASE_PATH" HOME="$git_all_skip_home" "$SCRIPT" --only repos --non-interactive --no-emoji --no-color 2>"${tmp_dir}/repos-all-skip-stderr.log")"
+echo "$out" | grep -q '^==> repos END (SKIP)'
+
+UPDATES_TEST_CASE
+
+run_test "repos module fails on diverged history" <<'UPDATES_TEST_CASE'
+git_diverged_home="${tmp_dir}/home-repos-diverged"
+git_diverged_dir="${git_diverged_home}/GitRepos"
+git_diverged_fixtures="${tmp_dir}/repos-diverged-fixtures"
+mkdir -p "$git_diverged_dir" "$git_diverged_fixtures"
+create_tracked_git_repo "${git_diverged_dir}/aman-diverged-setup" "$git_diverged_fixtures" diverged
+printf 'local\n' >>"${git_diverged_dir}/aman-diverged-setup/tracked.txt"
+git_test_commit "${git_diverged_dir}/aman-diverged-setup" "local commit"
+"$SYSTEM_GIT" clone -q "${git_diverged_fixtures}/diverged.git" "${git_diverged_fixtures}/diverged-other"
+printf 'remote\n' >>"${git_diverged_fixtures}/diverged-other/tracked.txt"
+git_test_commit "${git_diverged_fixtures}/diverged-other" "remote commit"
+"$SYSTEM_GIT" -C "${git_diverged_fixtures}/diverged-other" push -q
+"$SYSTEM_GIT" -C "${git_diverged_dir}/aman-diverged-setup" fetch -q origin
+cat >"${git_diverged_home}/.updatesrc" <<EOF
+REPOS_DIR=${git_diverged_dir}
+EOF
+set +e
+out="$(PATH="$BASE_PATH" HOME="$git_diverged_home" "$SCRIPT" --only repos --non-interactive --no-emoji --no-color 2>"${tmp_dir}/repos-diverged-stderr.log")"
+rc=$?
+set -e
+if [ "$rc" -ne 1 ]; then
+	echo "Expected diverged repos module to fail (got $rc)" >&2
+	exit 1
+fi
+echo "$out" | grep -q '^==> repos END (FAIL)'
+grep -q 'aman-diverged-setup.*diverged' "${tmp_dir}/repos-diverged-stderr.log"
+
+UPDATES_TEST_CASE
+
+run_test "repos module fails when an eligible Git pull fails" <<'UPDATES_TEST_CASE'
+git_pull_fail_home="${tmp_dir}/home-repos-pull-fail"
+git_pull_fail_dir="${git_pull_fail_home}/GitRepos"
+git_pull_fail_fixtures="${tmp_dir}/repos-pull-fail-fixtures"
+mkdir -p "$git_pull_fail_dir" "$git_pull_fail_fixtures"
+create_tracked_git_repo "${git_pull_fail_dir}/aman-pull-fail-setup" "$git_pull_fail_fixtures" pull-fail
+mv "${git_pull_fail_fixtures}/pull-fail.git" "${git_pull_fail_fixtures}/pull-fail.git.offline"
+cat >"${git_pull_fail_home}/.updatesrc" <<EOF
+REPOS_DIR=${git_pull_fail_dir}
+EOF
+set +e
+out="$(PATH="$BASE_PATH" HOME="$git_pull_fail_home" "$SCRIPT" --only repos --non-interactive --no-emoji --no-color 2>"${tmp_dir}/repos-pull-fail-stderr.log")"
+rc=$?
+set -e
+if [ "$rc" -ne 1 ]; then
+	echo "Expected failed Git pull to fail repos module (got $rc)" >&2
+	exit 1
+fi
+echo "$out" | grep -q '^==> repos END (FAIL)'
+grep -q 'aman-pull-fail-setup.*pull --ff-only failed' "${tmp_dir}/repos-pull-fail-stderr.log"
+
+UPDATES_TEST_CASE
+
+run_test "repos module fails when post-pull action fails" <<'UPDATES_TEST_CASE'
+git_post_fail_home="${tmp_dir}/home-repos-post-fail"
+git_post_fail_dir="${git_post_fail_home}/GitRepos"
+git_post_fail_fixtures="${tmp_dir}/repos-post-fail-fixtures"
+mkdir -p "$git_post_fail_dir" "$git_post_fail_fixtures"
+create_tracked_git_repo "${git_post_fail_dir}/aman-post-fail-setup" "$git_post_fail_fixtures" post-fail
+mkdir -p "${git_post_fail_dir}/aman-post-fail-setup/scripts"
+printf '#!/usr/bin/env bash\nexit 9\n' >"${git_post_fail_dir}/aman-post-fail-setup/scripts/update.sh"
+chmod +x "${git_post_fail_dir}/aman-post-fail-setup/scripts/update.sh"
+git_test_commit "${git_post_fail_dir}/aman-post-fail-setup" "add failing post-pull"
+"$SYSTEM_GIT" -C "${git_post_fail_dir}/aman-post-fail-setup" push -q
+cat >"${git_post_fail_home}/.updatesrc" <<EOF
+REPOS_DIR=${git_post_fail_dir}
+EOF
+set +e
+out="$(PATH="$BASE_PATH" HOME="$git_post_fail_home" "$SCRIPT" --only repos --non-interactive --no-emoji --no-color 2>"${tmp_dir}/repos-post-fail-stderr.log")"
+rc=$?
+set -e
+if [ "$rc" -ne 1 ]; then
+	echo "Expected failing post-pull action to fail repos module (got $rc)" >&2
+	exit 1
+fi
+echo "$out" | grep -q '^==> repos END (FAIL)'
+grep -q 'post-pull action failed.*aman-post-fail-setup' "${tmp_dir}/repos-post-fail-stderr.log"
 
 UPDATES_TEST_CASE
 
@@ -1515,8 +1709,7 @@ UPDATES_TEST_CASE
 
 run_test "pipx module logs correct commands" <<'UPDATES_TEST_CASE'
 write_stub uname 'echo Darwin'
-# shellcheck disable=SC2016
-write_stub git 'echo "GIT_TERMINAL_PROMPT=${GIT_TERMINAL_PROMPT:-} git $*" >>"$CALL_LOG"'
+write_git_ready_stub
 : >"$CALL_LOG"
 "$SCRIPT" --only pipx --no-emoji >/dev/null
 grep -q '^pipx upgrade-all$' "$CALL_LOG"
@@ -1546,15 +1739,118 @@ UPDATES_TEST_CASE
 
 run_test "empty ncu output means node module reports up-to-date" <<'UPDATES_TEST_CASE'
 rm -f "${stub_bin}/python" "${stub_bin}/python3"
-write_stub ncu 'echo "{}"'
+write_ncu_stub '{}'
 out="$("$SCRIPT" --only node --no-emoji --no-color)"
 echo "$out" | grep -q 'All global npm packages are up-to-date'
-write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
+write_ncu_stub '{"npm":"11.7.0"}'
+
+UPDATES_TEST_CASE
+
+run_test "node requests only upgrades compatible with the active Node engine" <<'UPDATES_TEST_CASE'
+: >"$CALL_LOG"
+out="$("$SCRIPT" --only node --no-emoji --no-color)"
+echo "$out" | grep -q '^==> node END (OK)'
+grep -q '^ncu -g --enginesNode --jsonUpgraded$' "$CALL_LOG"
+
+UPDATES_TEST_CASE
+
+run_test "node falls back from an incapable local ncu to engine-aware npx" <<'UPDATES_TEST_CASE'
+# shellcheck disable=SC2016
+write_stub ncu '
+echo "ncu $*" >>"$CALL_LOG"
+if [ "${1:-}" = "--help" ]; then
+	echo "legacy ncu help"
+	exit 0
+fi
+echo "incapable ncu query should not run" >&2
+exit 1
+'
+# shellcheck disable=SC2016
+write_stub npx '
+echo "npx $*" >>"$CALL_LOG"
+echo "{\"example-cli\":\"2.0.0\"}"
+'
+# shellcheck disable=SC2016
+write_stub npm 'echo "npm $*" >>"$CALL_LOG"'
+: >"$CALL_LOG"
+out="$("$SCRIPT" --dry-run --only node --no-emoji --no-color)"
+echo "$out" | grep -q 'DRY RUN: npx --yes npm-check-updates -g --enginesNode --jsonUpgraded'
+if grep -q '^npx ' "$CALL_LOG"; then
+	echo "Expected node dry-run not to execute the npx fallback" >&2
+	exit 1
+fi
+out="$("$SCRIPT" --only node --no-emoji --no-color)"
+echo "$out" | grep -q '^==> node END (OK)'
+grep -q '^npx --yes npm-check-updates -g --enginesNode --jsonUpgraded$' "$CALL_LOG"
+
+UPDATES_TEST_CASE
+
+run_test "node fails safe when no engine-aware updater is available" <<'UPDATES_TEST_CASE'
+# shellcheck disable=SC2016
+write_stub ncu '
+if [ "${1:-}" = "--help" ]; then
+	echo "legacy ncu help"
+	exit 0
+fi
+exit 1
+'
+rm -f "${stub_bin}/npx"
+node_skip_args=(--skip "brew,shell,repos,linux,winget,bun,python,uv,mas,pipx,rustup,claude,pi,mise,go,macos" --no-emoji --no-color)
+node_capability_stderr="${tmp_dir}/node-capability-stderr.log"
+out="$("$SCRIPT" "${node_skip_args[@]}" 2>"$node_capability_stderr")"
+echo "$out" | grep -q '^==> node END (SKIP)'
+grep -q 'node: no npm-check-updates adapter supports --enginesNode' "$node_capability_stderr"
+set +e
+out="$("$SCRIPT" --only node --no-emoji --no-color 2>"$node_capability_stderr")"
+rc=$?
+set -e
+if [ "$rc" -ne 1 ]; then
+	echo "Expected --only node to fail without an engine-aware updater (got $rc)" >&2
+	exit 1
+fi
+echo "$out" | grep -q '^==> node END (FAIL)'
+grep -q 'node: no npm-check-updates adapter supports --enginesNode' "$node_capability_stderr"
+
+UPDATES_TEST_CASE
+
+run_test "node isolates package installs and does not retry EBADENGINE" <<'UPDATES_TEST_CASE'
+write_ncu_stub '{"npm":"12.0.1","example-cli":"2.0.0"}'
+# shellcheck disable=SC2016
+write_stub npm '
+echo "npm $*" >>"$CALL_LOG"
+case " $* " in
+*" npm@12.0.1 "*)
+	echo "npm error code EBADENGINE" >&2
+	exit 0
+	;;
+*" example-cli@2.0.0 "*)
+	exit 0
+	;;
+esac
+exit 1
+'
+: >"$CALL_LOG"
+npm_engine_stderr="${tmp_dir}/npm-engine-stderr.log"
+set +e
+out="$("$SCRIPT" --only node --no-emoji --no-color 2>"$npm_engine_stderr")"
+rc=$?
+set -e
+if [ "$rc" -ne 1 ]; then
+	echo "Expected node to fail after one incompatible package (got $rc)" >&2
+	exit 1
+fi
+grep -q '^npm install -g -- npm@12.0.1$' "$CALL_LOG"
+grep -q '^npm install -g -- example-cli@2.0.0$' "$CALL_LOG"
+if [ "$(grep -c '^npm install -g -- npm@12.0.1$' "$CALL_LOG")" -ne 1 ]; then
+	echo "Expected EBADENGINE package to be attempted exactly once" >&2
+	exit 1
+fi
+grep -q 'node: npm@12.0.1 is incompatible with the active Node runtime' "$npm_engine_stderr"
 
 UPDATES_TEST_CASE
 
 run_test "node retries npm ERESOLVE with legacy peer deps" <<'UPDATES_TEST_CASE'
-write_stub ncu 'echo "{\"@tarquinen/opencode-dcp\":\"3.1.13\"}"'
+write_ncu_stub '{"@tarquinen/opencode-dcp":"3.1.13"}'
 # shellcheck disable=SC2016
 write_stub npm '
 echo "npm $*" >>"$CALL_LOG"
@@ -1591,7 +1887,7 @@ grep -q 'retrying once with npm-provided allow-scripts list' "$npm_eresolve_stde
 UPDATES_TEST_CASE
 
 run_test "node fails when npm ERESOLVE retry fails" <<'UPDATES_TEST_CASE'
-write_stub ncu 'echo "{\"@tarquinen/opencode-dcp\":\"3.1.13\"}"'
+write_ncu_stub '{"@tarquinen/opencode-dcp":"3.1.13"}'
 # shellcheck disable=SC2016
 write_stub npm '
 echo "npm $*" >>"$CALL_LOG"
@@ -1617,7 +1913,7 @@ grep -q 'retrying with --legacy-peer-deps' "$npm_eresolve_retry_stderr"
 UPDATES_TEST_CASE
 
 run_test "node retry keeps configured npm flags literal and dedupes legacy peer deps" <<'UPDATES_TEST_CASE'
-write_stub ncu 'echo "{\"@tarquinen/opencode-dcp\":\"3.1.13\"}"'
+write_ncu_stub '{"@tarquinen/opencode-dcp":"3.1.13"}'
 npm_eresolve_stderr="${tmp_dir}/npm-eresolve-stderr.log"
 touch "${tmp_dir}/--flag=literal-glob-target"
 config_home_npm_retry_flags="${tmp_dir}/home-npm-retry-flags"
@@ -1663,7 +1959,7 @@ fi
 UPDATES_TEST_CASE
 
 run_test "node reruns npm with allow-scripts when npm requests approval" <<'UPDATES_TEST_CASE'
-write_stub ncu 'echo "{\"opencode-ai\":\"1.17.8\"}"'
+write_ncu_stub '{"opencode-ai":"1.17.8"}'
 # shellcheck disable=SC2016
 write_stub npm '
 echo "npm $*" >>"$CALL_LOG"
@@ -1689,8 +1985,29 @@ grep -q 'retrying once with npm-provided allow-scripts list' "$npm_allow_scripts
 
 UPDATES_TEST_CASE
 
+run_test "node keeps a successful install after allow-scripts retry exhaustion" <<'UPDATES_TEST_CASE'
+write_ncu_stub '{"opencode-ai":"1.17.8"}'
+# shellcheck disable=SC2016
+write_stub npm '
+echo "npm $*" >>"$CALL_LOG"
+echo "npm warn allow-scripts approve with --allow-scripts=opencode-ai,koffi" >&2
+'
+: >"$CALL_LOG"
+npm_allow_scripts_exhausted_stderr="${tmp_dir}/npm-allow-scripts-exhausted-stderr.log"
+out="$("$SCRIPT" --only node --no-emoji --no-color 2>"$npm_allow_scripts_exhausted_stderr")"
+echo "$out" | grep -q '^==> node END (OK)'
+if [ "$(grep -c '^npm install -g ' "$CALL_LOG")" -ne 2 ]; then
+	echo "Expected one allow-scripts retry and no further attempts" >&2
+	exit 1
+fi
+grep -q '^npm install -g --allow-scripts=opencode-ai,koffi -- opencode-ai@1.17.8$' "$CALL_LOG"
+grep -q 'npm install completed for opencode-ai@1.17.8, but npm still reports install scripts needing approval after retry' "$npm_allow_scripts_exhausted_stderr"
+grep -q 'npm warn allow-scripts approve with --allow-scripts=opencode-ai,koffi' "$npm_allow_scripts_exhausted_stderr"
+
+UPDATES_TEST_CASE
+
 run_test "node extracts allow-scripts flag without npm command wording" <<'UPDATES_TEST_CASE'
-write_stub ncu 'echo "{\"opencode-ai\":\"1.17.8\"}"'
+write_ncu_stub '{"opencode-ai":"1.17.8"}'
 # shellcheck disable=SC2016
 write_stub npm '
 echo "npm $*" >>"$CALL_LOG"
@@ -1717,7 +2034,7 @@ grep -q 'retrying once with npm-provided allow-scripts list' "$npm_allow_scripts
 UPDATES_TEST_CASE
 
 run_test "node surfaces unparseable allow-scripts warnings without retrying" <<'UPDATES_TEST_CASE'
-write_stub ncu 'echo "{\"opencode-ai\":\"1.17.8\"}"'
+write_ncu_stub '{"opencode-ai":"1.17.8"}'
 # shellcheck disable=SC2016
 write_stub npm '
 echo "npm $*" >>"$CALL_LOG"
@@ -1738,7 +2055,7 @@ grep -q 'npm warn allow-scripts install scripts need approval' "$npm_allow_scrip
 UPDATES_TEST_CASE
 
 run_test "NODE_NPM_INSTALL_FLAGS appears in node dry-run output" <<'UPDATES_TEST_CASE'
-write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
+write_ncu_stub '{"npm":"11.7.0"}'
 # shellcheck disable=SC2016
 write_stub npm 'echo "npm $*" >>"$CALL_LOG"'
 config_home_npm_flags="${tmp_dir}/home-npm-flags"
@@ -1767,7 +2084,7 @@ mkdir -p "$config_home_no_npm_flags"
 out="$(HOME="$config_home_no_npm_flags" UPDATES_ALLOW_NON_DARWIN=1 bash -u "$SCRIPT" --dry-run --only node --no-emoji --no-color)"
 echo "$out" | grep -q 'DRY RUN: npm install -g -- <packages\.\.\.>'
 
-write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
+write_ncu_stub '{"npm":"11.7.0"}'
 # shellcheck disable=SC2016
 write_stub npm 'echo "npm $*" >>"$CALL_LOG"'
 
@@ -1778,7 +2095,13 @@ nvm_home="${tmp_dir}/home-nvm"
 nvm_root="${nvm_home}/.nvm"
 nvm_bin="${nvm_root}/versions/node/v99.0.0/bin"
 mkdir -p "$nvm_bin"
-write_stub_to_dir "$nvm_bin" ncu 'echo "{\"npm\":\"11.7.0\"}"'
+write_stub_to_dir "$nvm_bin" ncu '
+if [ "${1:-}" = "--help" ]; then
+	echo "--enginesNode"
+	exit 0
+fi
+echo "{\"npm\":\"11.7.0\"}"
+'
 # shellcheck disable=SC2016
 write_stub_to_dir "$nvm_bin" npm 'echo "nvm npm $*" >>"$CALL_LOG"'
 cat >"${nvm_root}/nvm.sh" <<EOF
@@ -1801,7 +2124,7 @@ cat >"${failing_nvm_root}/nvm.sh" <<'EOF'
 false
 return 1
 EOF
-write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
+write_ncu_stub '{"npm":"11.7.0"}'
 # shellcheck disable=SC2016
 write_stub npm 'echo "fallback npm $*" >>"$CALL_LOG"'
 : >"$CALL_LOG"
@@ -1827,10 +2150,10 @@ ln -sf "${stub_bin}/npx" "${node_fallback_bin}/npx"
 ln -sf "${stub_bin}/npm" "${node_fallback_bin}/npm"
 : >"$CALL_LOG"
 PATH="${node_fallback_bin}:${BASE_PATH}" "$SCRIPT" --only node --no-emoji --no-color >/dev/null
-grep -q '^npx --yes npm-check-updates -g --jsonUpgraded$' "$CALL_LOG"
+grep -q '^npx --yes npm-check-updates -g --enginesNode --jsonUpgraded$' "$CALL_LOG"
 grep -q '^npm install -g -- npm@11.8.0$' "$CALL_LOG"
 rm -f "${stub_bin}/npx"
-write_stub ncu 'echo "{\"npm\":\"11.7.0\"}"'
+write_ncu_stub '{"npm":"11.7.0"}'
 
 # Build a clean system PATH that excludes all Linux package managers so that
 # PM variant tests can control which manager is detected first.  This prevents

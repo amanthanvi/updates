@@ -88,11 +88,11 @@ updates --help
 Modules are auto-detected: if the underlying command isn’t installed, the module is skipped (unless you used `--only`, in which case it’s an error).
 
 - `brew`: update/upgrade Homebrew formulae (+ casks when enabled via `--brew-mode casks` / `--brew-mode greedy` / `--full`)
-- `shell`: update Oh My Zsh and custom git plugins/themes (auto-detected)
-- `repos`: update aman dev repos under `~/GitRepos` (auto-detected `aman-*-setup` dirs)
+- `shell`: update Oh My Zsh and custom git plugins/themes (auto-detected; detached, missing-upstream, or dirty tracked repos warn and skip)
+- `repos`: update aman dev repos under `~/GitRepos` (auto-detected `aman-*-setup` dirs; only clean tracked branches are pulled)
 - `linux`: upgrade Linux system packages (auto-detects `apt-get`/`dnf`/`yum`/`pacman`/`zypper`/`apk`)
 - `winget`: upgrade installed Windows packages/apps via `winget` (Windows only)
-- `node`: upgrade global npm packages via resolved npm-check-updates + `npm` (sources NVM first when available on macOS/Linux)
+- `node`: upgrade engine-compatible global npm packages one at a time via resolved npm-check-updates + `npm` (sources NVM first when available on macOS/Linux)
 - `bun`: upgrade Bun global packages everywhere; native Windows only self-updates the Bun CLI when it appears standalone-installed
 - `python`: upgrade global/user Python packages via a resolved launcher (`py -3`, `python`, then `python3`); externally-managed Bash environments use a guarded user-site path
 - `uv`: update uv-managed tools everywhere; native Windows only self-updates uv when it appears standalone-installed
@@ -153,7 +153,7 @@ Install what you actually use:
 
 - `brew` (Homebrew)
 - `git` (for the `shell` and `repos` modules)
-- NVM-managed `npm`/`ncu` are preferred when `$NVM_DIR/nvm.sh` or `~/.nvm/nvm.sh` exists; otherwise use `npm` plus `ncu` or `npx npm-check-updates` (for the `node` module)
+- NVM-managed `npm`/`ncu` are preferred when `$NVM_DIR/nvm.sh` or `~/.nvm/nvm.sh` exists; direct `ncu` must support `--enginesNode`, otherwise `updates` falls back to `npx npm-check-updates`
 - `pwsh` (PowerShell 7) for native Windows support
 - `winget` for the `winget` module on Windows
 - `bun` for the `bun` module
@@ -181,6 +181,9 @@ Tests require `python3` with either public `packaging` or pip's vendored packagi
 - This script updates _global_ environments (`npm -g`, `pip`), which can be disruptive.
 - Use `--dry-run` first, and consider `--only`/`--skip` to control scope.
 - For npm 11+ global installs, `updates` may retry once with npm's suggested one-shot `--allow-scripts=...` list so package postinstall steps can finish without changing persistent npm config.
+- Node updates are filtered against the active Node runtime and installed per package. An unexpected incompatible or otherwise failed package does not prevent later compatible packages from being attempted, but still fails the node module.
+- Git-backed `shell`/`repos` updates never infer tracking branches or alter local work. Detached HEADs, branches without upstreams, and dirty worktrees warn and skip; diverged histories and failed pulls/post-pull actions fail the module.
+- These resilience changes preserve the public v2 CLI and JSONL contracts.
 - Since `v2.0.0`, `updates` itself is distributed through GitHub Releases only. No third-party package manager channel is supported.
 - Since `v2.0.0`, self-update is fixed to the canonical GitHub repo `amanthanvi/updates`; `UPDATES_SELF_UPDATE_REPO` is removed and setting it is an error.
 - Official self-update artifacts for `v2.1.0` are `updates`, `updates-windows.zip`, `updates-release.json`, and `SHA256SUMS`.

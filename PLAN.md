@@ -1,3 +1,24 @@
+# Plan: Unreleased Node and Git resilience
+
+## Goal
+
+- Prevent persistent runtime-incompatible npm upgrades and unsafe Git pulls without changing the public v2 CLI or JSONL contracts.
+
+## Execution checklist
+
+- [x] Require npm-check-updates `--enginesNode` support and fall back from incapable direct adapters to `npx`.
+- [x] Skip by default or fail under `--only node` when no engine-aware updater exists.
+- [x] Install npm globals per package and normalize peer, install-script, incompatible-engine, and fatal outcomes.
+- [x] Preserve existing bounded peer/install-script retries; do not retry engine, network, auth, or permission failures.
+- [x] Share Git preflight and result aggregation across `shell` and `repos`.
+- [x] Warn and skip detached, missing-upstream, and dirty repos without mutating branch state.
+- [x] Fail diverged histories, pull failures, and post-pull action failures while continuing other repos.
+- [x] Add Bash real-repository coverage and native Windows Node parity fixtures.
+- [x] Keep flags, config keys, exit codes, JSONL event types, summaries, and runtime dependencies unchanged.
+- [x] Update README and SPEC contracts.
+
+---
+
 # Plan: v2.1.0
 
 ## Goal
