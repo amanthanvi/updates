@@ -13,7 +13,7 @@
 - [x] Retain resolution flags, exclude engine overrides from preflight, and preserve all configured flags for the real install.
 - [x] Cover warning/skip, later-package continuation, real-install `EBADENGINE`, configured flags, and JSONL purity.
 - [x] Complete clean bot reviews and squash-merge the hotfix.
-- [ ] Release `v2.1.2` from a clean, reviewed, green commit.
+- [x] Release `v2.1.2` from a clean, reviewed, green commit.
 
 ---
 
