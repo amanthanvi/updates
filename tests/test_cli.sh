@@ -1809,7 +1809,7 @@ write_ncu_stub '{"example-cli":"2.0.0"}'
 config_home_node_engine_flags="${tmp_dir}/home-node-engine-flags"
 mkdir -p "$config_home_node_engine_flags"
 cat >"${config_home_node_engine_flags}/.updatesrc" <<EOF
-NODE_NPM_INSTALL_FLAGS=--registry=https://registry.example.invalid --force
+NODE_NPM_INSTALL_FLAGS=--registry=https://registry.example.invalid --force false
 EOF
 # shellcheck disable=SC2016
 write_stub npm '
@@ -1818,18 +1818,22 @@ case " $* " in
 *" --dry-run "*)
 	[ "${NPM_CONFIG_FORCE:-}" = "false" ]
 	[ "${NPM_CONFIG_ENGINE_STRICT:-}" = "true" ]
+	[ "${npm_config_force:-}" = "false" ]
+	[ "${npm_config_engine_strict:-}" = "true" ]
 	;;
 *)
 	[ -z "${NPM_CONFIG_FORCE+x}" ]
 	[ -z "${NPM_CONFIG_ENGINE_STRICT+x}" ]
+	[ "${npm_config_force:-}" = "true" ]
+	[ -z "${npm_config_engine_strict+x}" ]
 	;;
 esac
 '
 : >"$CALL_LOG"
-out="$(HOME="$config_home_node_engine_flags" "$SCRIPT" --only node --no-emoji --no-color)"
+out="$(npm_config_force=true HOME="$config_home_node_engine_flags" "$SCRIPT" --only node --no-emoji --no-color)"
 echo "$out" | grep -q '^==> node END (OK)'
 grep -q '^npm install -g --registry=https://registry.example.invalid --dry-run --ignore-scripts --engine-strict -- example-cli@2.0.0$' "$CALL_LOG"
-grep -q '^npm install -g --registry=https://registry.example.invalid --force -- example-cli@2.0.0$' "$CALL_LOG"
+grep -q '^npm install -g --registry=https://registry.example.invalid --force false -- example-cli@2.0.0$' "$CALL_LOG"
 if grep -- '--dry-run' "$CALL_LOG" | grep -q -- '--force'; then
 	echo "Expected engine preflight to ignore --force" >&2
 	exit 1

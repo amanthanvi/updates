@@ -874,18 +874,27 @@ function Test-NpmCandidateEngine {
         [string[]]$Options = @()
     )
 
-    $preflightOptions = @($Options | Where-Object {
-        $_ -ne '-f' -and
-        $_ -ne '--force' -and
-        $_ -notlike '--force=*' -and
-        $_ -ne '--dry-run' -and
-        $_ -notlike '--dry-run=*' -and
-        $_ -ne '--ignore-scripts' -and
-        $_ -notlike '--ignore-scripts=*' -and
-        $_ -ne '--engine-strict' -and
-        $_ -notlike '--engine-strict=*' -and
-        $_ -ne '--no-engine-strict'
-    })
+    $preflightOptionList = [System.Collections.Generic.List[string]]::new()
+    for ($index = 0; $index -lt $Options.Count; $index++) {
+        $option = $Options[$index]
+        if ($option -in @('-f', '--force', '--dry-run', '--ignore-scripts', '--engine-strict')) {
+            if ($index + 1 -lt $Options.Count -and $Options[$index + 1] -match '^(?:0|1|true|false)$') {
+                $index++
+            }
+            continue
+        }
+        if (
+            $option -like '--force=*' -or
+            $option -like '--dry-run=*' -or
+            $option -like '--ignore-scripts=*' -or
+            $option -like '--engine-strict=*' -or
+            $option -eq '--no-engine-strict'
+        ) {
+            continue
+        }
+        $preflightOptionList.Add($option)
+    }
+    $preflightOptions = @($preflightOptionList)
     $preflightOptions += @('--dry-run', '--ignore-scripts', '--engine-strict')
     $preflightArgs = New-NpmInstallArguments -Options $preflightOptions -Packages @($Package)
     $forceWasSet = Test-Path Env:NPM_CONFIG_FORCE
