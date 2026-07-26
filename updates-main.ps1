@@ -864,6 +864,56 @@ function Resolve-NpmInstallOutcome {
     return (ConvertTo-CommandOutcome -Status fail -Reason command-failed -Message 'npm install failed')
 }
 
+function Test-NpmCandidateEngine {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Npm,
+        [Parameter(Mandatory = $true)]
+        [string]$Package,
+        [AllowEmptyCollection()]
+        [string[]]$Options = @()
+    )
+
+    $preflightOptions = @($Options | Where-Object {
+        $_ -ne '-f' -and
+        $_ -ne '--force' -and
+        $_ -notlike '--force=*' -and
+        $_ -ne '--dry-run' -and
+        $_ -notlike '--dry-run=*' -and
+        $_ -ne '--ignore-scripts' -and
+        $_ -notlike '--ignore-scripts=*' -and
+        $_ -ne '--engine-strict' -and
+        $_ -notlike '--engine-strict=*' -and
+        $_ -ne '--no-engine-strict'
+    })
+    $preflightOptions += @('--dry-run', '--ignore-scripts', '--engine-strict')
+    $preflightArgs = New-NpmInstallArguments -Options $preflightOptions -Packages @($Package)
+    $forceWasSet = Test-Path Env:NPM_CONFIG_FORCE
+    $engineStrictWasSet = Test-Path Env:NPM_CONFIG_ENGINE_STRICT
+    $previousForce = $env:NPM_CONFIG_FORCE
+    $previousEngineStrict = $env:NPM_CONFIG_ENGINE_STRICT
+    try {
+        $env:NPM_CONFIG_FORCE = 'false'
+        $env:NPM_CONFIG_ENGINE_STRICT = 'true'
+        $result = Invoke-LoggedProcess -FilePath $Npm -ArgumentList $preflightArgs -Capture
+    } finally {
+        if ($forceWasSet) {
+            $env:NPM_CONFIG_FORCE = $previousForce
+        } else {
+            Remove-Item Env:NPM_CONFIG_FORCE -ErrorAction SilentlyContinue
+        }
+        if ($engineStrictWasSet) {
+            $env:NPM_CONFIG_ENGINE_STRICT = $previousEngineStrict
+        } else {
+            Remove-Item Env:NPM_CONFIG_ENGINE_STRICT -ErrorAction SilentlyContinue
+        }
+    }
+    if ($result.Output -match 'EBADENGINE') {
+        return (ConvertTo-CommandOutcome -Status skip -Reason incompatible-engine -Message 'package is incompatible with the active Node runtime')
+    }
+    return (ConvertTo-CommandOutcome -Status ok -Reason command-succeeded -Message '')
+}
+
 function Invoke-NpmGlobalInstallOne {
     param(
         [Parameter(Mandatory = $true)]
@@ -875,6 +925,12 @@ function Invoke-NpmGlobalInstallOne {
     )
 
     $options = @($InitialOptions)
+    $preflightOutcome = Test-NpmCandidateEngine -Npm $Npm -Package $Package -Options $options
+    if ($preflightOutcome.Status -eq 'skip' -and $preflightOutcome.Reason -eq 'incompatible-engine') {
+        Write-WarnLine ("node: skipping {0} because it is incompatible with the active Node runtime" -f $Package)
+        return 0
+    }
+
     $peerRetried = $false
     $scriptsRetried = $false
     while ($true) {

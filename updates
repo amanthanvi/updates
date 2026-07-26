@@ -794,11 +794,48 @@ npm_classify_install_outcome() {
 	command_outcome_set fail command-failed "npm install failed"
 }
 
+npm_preflight_candidate_engine() {
+	local package="$1"
+	shift
+
+	local -a preflight_options=()
+	local flag
+	for flag in "$@"; do
+		case "$flag" in
+		-f | --force | --force=* | --dry-run | --dry-run=* | --ignore-scripts | --ignore-scripts=* | --engine-strict | --engine-strict=* | --no-engine-strict) continue ;;
+		esac
+		preflight_options+=("$flag")
+	done
+
+	local tmp_base="${TMPDIR:-/tmp}"
+	local npm_err_log=""
+	npm_err_log="$(mktemp "${tmp_base%/}/updates-npm-engine.XXXXXX" 2>/dev/null || mktemp -t updates-npm-engine.XXXXXX 2>/dev/null)" || {
+		command_outcome_set ok command-succeeded ""
+		return 0
+	}
+
+	debug "+ npm install -g ${preflight_options[*]} --dry-run --ignore-scripts --engine-strict -- ${package}"
+	NPM_CONFIG_FORCE=false NPM_CONFIG_ENGINE_STRICT=true \
+		npm install -g "${preflight_options[@]}" --dry-run --ignore-scripts --engine-strict -- "$package" >/dev/null 2>"$npm_err_log"
+	if grep -q 'EBADENGINE' "$npm_err_log"; then
+		command_outcome_set skip incompatible-engine "package is incompatible with the active Node runtime"
+	else
+		command_outcome_set ok command-succeeded ""
+	fi
+	rm -f "$npm_err_log"
+}
+
 run_npm_global_install_one() {
 	local package="$1"
 	shift
 
 	local -a install_options=("$@")
+	npm_preflight_candidate_engine "$package" "${install_options[@]}"
+	if [ "$COMMAND_OUTCOME_STATUS:$COMMAND_OUTCOME_REASON" = "skip:incompatible-engine" ]; then
+		warn "node: skipping ${package} because it is incompatible with the active Node runtime"
+		return 0
+	fi
+
 	local peer_retried=0
 	local scripts_retried=0
 	local tmp_base="${TMPDIR:-/tmp}"

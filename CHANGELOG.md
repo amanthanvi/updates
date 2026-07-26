@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Verify every npm-check-updates candidate with npm's engine-strict dry-run before installation, warning and skipping candidates that are incompatible with the active Node runtime even when npm-check-updates returns them.
+
 ## [2.1.1] - 2026-07-25
 
 ### Changed

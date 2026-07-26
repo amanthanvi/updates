@@ -1,3 +1,22 @@
+# Plan: v2.1.2 authoritative Node engine validation
+
+## Goal
+
+- Close the npm-check-updates `--enginesNode` acceptance gap without changing the public v2 CLI/JSONL contract or adding runtime dependencies.
+
+## Execution checklist
+
+- [x] Reproduce npm-check-updates returning `npm@12.0.1` under incompatible NVM Node `v24.13.0`.
+- [x] Confirm npm's engine-strict dry-run rejects the same candidate.
+- [x] Preflight each planned candidate before its mutating install on Bash and native Windows.
+- [x] Warn and skip only on `EBADENGINE`; preserve the real-install path for inconclusive preflight failures.
+- [x] Retain resolution flags, exclude engine overrides from preflight, and preserve all configured flags for the real install.
+- [x] Cover warning/skip, later-package continuation, real-install `EBADENGINE`, configured flags, and JSONL purity.
+- [ ] Complete clean bot reviews and squash-merge the hotfix.
+- [ ] Release `v2.1.2` from a clean, reviewed, green commit.
+
+---
+
 # Plan: v2.1.1 Node and Git resilience
 
 ## Goal

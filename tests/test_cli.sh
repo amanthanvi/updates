@@ -1754,6 +1754,89 @@ grep -q '^ncu -g --enginesNode --jsonUpgraded$' "$CALL_LOG"
 
 UPDATES_TEST_CASE
 
+run_test "node rejects an engine-incompatible candidate returned by ncu" <<'UPDATES_TEST_CASE'
+write_ncu_stub '{"npm":"12.0.1","example-cli":"2.0.0"}'
+# shellcheck disable=SC2016
+write_stub npm '
+echo "npm $*" >>"$CALL_LOG"
+case " $* " in
+*" --dry-run --ignore-scripts --engine-strict -- npm@12.0.1 "*)
+	echo "npm error code EBADENGINE" >&2
+	echo "npm error notsup Required: {\"node\":\"^24.15.0\"}" >&2
+	echo "npm error notsup Actual: {\"node\":\"v24.13.0\"}" >&2
+	exit 1
+	;;
+*" install -g -- npm@12.0.1 "*)
+	echo "Engine-incompatible npm candidate must be rejected before install" >&2
+	exit 1
+	;;
+esac
+'
+: >"$CALL_LOG"
+node_filter_stderr="${tmp_dir}/node-filter-stderr.log"
+out="$("$SCRIPT" --only node --no-emoji --no-color 2>"$node_filter_stderr")"
+echo "$out" | grep -q '^==> node END (OK)'
+grep -q '^npm install -g --dry-run --ignore-scripts --engine-strict -- npm@12.0.1$' "$CALL_LOG"
+grep -q '^npm install -g -- example-cli@2.0.0$' "$CALL_LOG"
+if grep -q '^npm install -g -- npm@12.0.1$' "$CALL_LOG"; then
+	echo "Expected engine-incompatible npm candidate to be skipped" >&2
+	exit 1
+fi
+grep -q 'node: skipping npm@12.0.1 because it is incompatible with the active Node runtime' "$node_filter_stderr"
+node_filter_json="${tmp_dir}/node-filter.jsonl"
+"$SCRIPT" --json --only node --no-emoji --no-color >"$node_filter_json" 2>"${tmp_dir}/node-filter-json.stderr"
+"$SYSTEM_PYTHON3" - "$node_filter_json" <<'PY'
+import json, sys
+
+events = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
+assert any(
+    event.get("event") == "warn"
+    and "skipping npm@12.0.1 because it is incompatible with the active Node runtime" in event.get("message", "")
+    for event in events
+)
+assert any(
+    event.get("event") == "module_end"
+    and event.get("module") == "node"
+    and event.get("status") == "ok"
+    for event in events
+)
+PY
+
+UPDATES_TEST_CASE
+
+run_test "node engine preflight preserves resolution flags but ignores force" <<'UPDATES_TEST_CASE'
+write_ncu_stub '{"example-cli":"2.0.0"}'
+config_home_node_engine_flags="${tmp_dir}/home-node-engine-flags"
+mkdir -p "$config_home_node_engine_flags"
+cat >"${config_home_node_engine_flags}/.updatesrc" <<EOF
+NODE_NPM_INSTALL_FLAGS=--registry=https://registry.example.invalid --force
+EOF
+# shellcheck disable=SC2016
+write_stub npm '
+echo "npm $*" >>"$CALL_LOG"
+case " $* " in
+*" --dry-run "*)
+	[ "${NPM_CONFIG_FORCE:-}" = "false" ]
+	[ "${NPM_CONFIG_ENGINE_STRICT:-}" = "true" ]
+	;;
+*)
+	[ -z "${NPM_CONFIG_FORCE+x}" ]
+	[ -z "${NPM_CONFIG_ENGINE_STRICT+x}" ]
+	;;
+esac
+'
+: >"$CALL_LOG"
+out="$(HOME="$config_home_node_engine_flags" "$SCRIPT" --only node --no-emoji --no-color)"
+echo "$out" | grep -q '^==> node END (OK)'
+grep -q '^npm install -g --registry=https://registry.example.invalid --dry-run --ignore-scripts --engine-strict -- example-cli@2.0.0$' "$CALL_LOG"
+grep -q '^npm install -g --registry=https://registry.example.invalid --force -- example-cli@2.0.0$' "$CALL_LOG"
+if grep -- '--dry-run' "$CALL_LOG" | grep -q -- '--force'; then
+	echo "Expected engine preflight to ignore --force" >&2
+	exit 1
+fi
+
+UPDATES_TEST_CASE
+
 run_test "node falls back from an incapable local ncu to engine-aware npx" <<'UPDATES_TEST_CASE'
 # shellcheck disable=SC2016
 write_stub ncu '
@@ -1819,6 +1902,9 @@ write_ncu_stub '{"npm":"12.0.1","example-cli":"2.0.0"}'
 write_stub npm '
 echo "npm $*" >>"$CALL_LOG"
 case " $* " in
+*" --dry-run "*" npm@12.0.1 "*)
+	exit 0
+	;;
 *" npm@12.0.1 "*)
 	echo "npm error code EBADENGINE" >&2
 	exit 0
@@ -1924,6 +2010,9 @@ EOF
 # shellcheck disable=SC2016
 write_stub npm '
 echo "npm $*" >>"$CALL_LOG"
+case " $* " in
+*" --dry-run "*) exit 0 ;;
+esac
 count=0
 if [ -s "$NPM_RETRY_COUNT_FILE" ]; then
 	count="$(cat "$NPM_RETRY_COUNT_FILE")"
@@ -1990,13 +2079,16 @@ write_ncu_stub '{"opencode-ai":"1.17.8"}'
 # shellcheck disable=SC2016
 write_stub npm '
 echo "npm $*" >>"$CALL_LOG"
+case " $* " in
+*" --dry-run "*) exit 0 ;;
+esac
 echo "npm warn allow-scripts approve with --allow-scripts=opencode-ai,koffi" >&2
 '
 : >"$CALL_LOG"
 npm_allow_scripts_exhausted_stderr="${tmp_dir}/npm-allow-scripts-exhausted-stderr.log"
 out="$("$SCRIPT" --only node --no-emoji --no-color 2>"$npm_allow_scripts_exhausted_stderr")"
 echo "$out" | grep -q '^==> node END (OK)'
-if [ "$(grep -c '^npm install -g ' "$CALL_LOG")" -ne 2 ]; then
+if [ "$(grep '^npm install -g ' "$CALL_LOG" | grep -vc -- '--dry-run')" -ne 2 ]; then
 	echo "Expected one allow-scripts retry and no further attempts" >&2
 	exit 1
 fi
