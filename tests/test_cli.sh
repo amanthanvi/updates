@@ -2234,6 +2234,60 @@ fi
 
 UPDATES_TEST_CASE
 
+run_test "node falls back to nvm when fnm default selection fails" <<'UPDATES_TEST_CASE'
+fnm_fallback_home="${tmp_dir}/home-fnm-fallback"
+fnm_fallback_root="${fnm_fallback_home}/.local/share/fnm"
+fnm_fallback_node_bin="${fnm_fallback_root}/node-versions/v99.0.0/installation/bin"
+fnm_fallback_nvm_root="${fnm_fallback_home}/.nvm"
+fnm_fallback_nvm_bin="${fnm_fallback_nvm_root}/versions/node/v98.0.0/bin"
+mkdir -p "$fnm_fallback_root" "$fnm_fallback_node_bin" "$fnm_fallback_nvm_bin"
+write_stub_to_dir "$fnm_fallback_node_bin" ncu '
+if [ "${1:-}" = "--help" ]; then
+	echo "--enginesNode"
+	exit 0
+fi
+echo "{\"npm\":\"11.7.0\"}"
+'
+# shellcheck disable=SC2016
+write_stub_to_dir "$fnm_fallback_node_bin" npm 'echo "fnm npm $*" >>"$CALL_LOG"'
+cat >"${fnm_fallback_root}/fnm" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = "env" ]; then
+	echo 'export PATH="${fnm_fallback_node_bin}:\$PATH"'
+	exit 0
+fi
+echo "fnm \$*" >>"\$CALL_LOG"
+exit 1
+EOF
+chmod +x "${fnm_fallback_root}/fnm"
+write_stub_to_dir "$fnm_fallback_nvm_bin" ncu '
+if [ "${1:-}" = "--help" ]; then
+	echo "--enginesNode"
+	exit 0
+fi
+echo "{\"npm\":\"11.7.0\"}"
+'
+# shellcheck disable=SC2016
+write_stub_to_dir "$fnm_fallback_nvm_bin" npm 'echo "nvm npm $*" >>"$CALL_LOG"'
+cat >"${fnm_fallback_nvm_root}/nvm.sh" <<EOF
+echo "nvm sourced" >>"\$CALL_LOG"
+export NVM_BIN="${fnm_fallback_nvm_bin}"
+export PATH="${fnm_fallback_nvm_bin}:\$PATH"
+nvm() { return 0; }
+EOF
+: >"$CALL_LOG"
+out="$(HOME="$fnm_fallback_home" NVM_DIR="$fnm_fallback_nvm_root" PATH="$BASE_PATH" "$SCRIPT" --only node --no-emoji --no-color)"
+echo "$out" | grep -q '^==> node END (OK)'
+grep -q '^fnm use --silent-if-unchanged default$' "$CALL_LOG"
+grep -q '^nvm sourced$' "$CALL_LOG"
+grep -q '^nvm npm install -g -- npm@11.7.0$' "$CALL_LOG"
+if grep -q '^fnm npm ' "$CALL_LOG"; then
+	echo "Expected NVM fallback after failed fnm default selection" >&2
+	exit 1
+fi
+
+UPDATES_TEST_CASE
+
 run_test "node sources nvm before resolving npm tools" <<'UPDATES_TEST_CASE'
 nvm_home="${tmp_dir}/home-nvm"
 nvm_root="${nvm_home}/.nvm"
