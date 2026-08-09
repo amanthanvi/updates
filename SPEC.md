@@ -361,7 +361,7 @@ Execution order: `brew`, `shell`, `repos`, `linux`, `winget`, `node`, `bun`, `py
 | `pipx`   |  Yes  |  Yes  | Yes |   Yes   | Requires `pipx` |
 | `rustup` |  Yes  |  Yes  | Yes |   Yes   | Requires `rustup` |
 | `claude` |  Yes  |  Yes  | Yes |   Yes   | Requires `claude`; runs `claude update` |
-| `pi`     |  Yes  |  Yes  | Yes |   Yes   | Requires `pi`; runs `pi update` |
+| `pi`     |  Yes  |  Yes  | Yes |   Yes   | Requires `pi`; runs `pi update --all` |
 | `mise`   |  Yes  |  Yes  | Yes |   No    | Requires `mise` |
 | `go`     |  Yes  |  Yes  | Yes |   Yes   | Requires `go`; binary list from config |
 | `macos`  |  Yes  |  No   | No  |   No    | Requires `softwareupdate` (opt-in) |
@@ -467,7 +467,7 @@ Purpose: upgrade installed Windows packages and applications via Windows Package
 Purpose: upgrade global npm packages using `npm-check-updates`.
 
 - Requires: `npm` plus an npm-check-updates adapter that supports `--enginesNode`.
-- On macOS/Linux, sources `$NVM_DIR/nvm.sh` or `~/.nvm/nvm.sh` when present before resolving `npm`, `ncu`, or `npx`.
+- On macOS/Linux, initializes fnm first when available from `PATH`, `$FNM_DIR`, or `~/.local/share/fnm`, then falls back to sourcing `$NVM_DIR/nvm.sh` or `~/.nvm/nvm.sh` before resolving `npm`, `ncu`, or `npx`.
 - Adapter resolution order is `ncu`, `ncu.cmd`, then `npx npm-check-updates` on Bash and `ncu.cmd`, `ncu`, then `npx npm-check-updates` on native Windows.
   - Direct `ncu` adapters must advertise `--enginesNode`; incapable direct adapters are bypassed in favor of the next candidate.
   - If no engine-aware adapter is available, a default run warns and skips `node`; explicit `--only node` fails.
@@ -555,11 +555,11 @@ Purpose: update the Claude Code CLI.
 
 ### 8.14 `pi`
 
-Purpose: update installed extensions of the `pi` AI coding CLI (pinned sources are skipped by `pi` itself).
+Purpose: update the `pi` AI coding CLI and its installed extensions (pinned sources are skipped by `pi` itself).
 
 - Requires: `pi`
-- Non-dry-run: `pi update`
-- Side effects: updates installed `pi` extensions to their latest versions.
+- Non-dry-run: `pi update --all`
+- Side effects: updates `pi` and installed extensions to their latest versions.
 
 ### 8.15 `mise`
 

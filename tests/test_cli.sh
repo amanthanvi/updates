@@ -16,6 +16,8 @@ export HOME="$HOME_DIR"
 export ZSH=""
 export ZSH_CUSTOM=""
 unset NVM_DIR
+unset FNM_DIR
+unset FNM_MULTISHELL_PATH
 
 stub_bin="${tmp_dir}/bin"
 mkdir -p "$stub_bin"
@@ -1733,7 +1735,7 @@ UPDATES_TEST_CASE
 run_test "pi module logs correct commands" <<'UPDATES_TEST_CASE'
 : >"$CALL_LOG"
 "$SCRIPT" --only pi --no-emoji >/dev/null
-grep -q '^pi update$' "$CALL_LOG"
+grep -q '^pi update --all$' "$CALL_LOG"
 
 UPDATES_TEST_CASE
 
@@ -2191,6 +2193,44 @@ echo "$out" | grep -q 'DRY RUN: npm install -g -- <packages\.\.\.>'
 write_ncu_stub '{"npm":"11.7.0"}'
 # shellcheck disable=SC2016
 write_stub npm 'echo "npm $*" >>"$CALL_LOG"'
+
+UPDATES_TEST_CASE
+
+run_test "node prefers fnm before resolving npm tools" <<'UPDATES_TEST_CASE'
+fnm_home="${tmp_dir}/home-fnm"
+fnm_root="${fnm_home}/.local/share/fnm"
+fnm_node_bin="${fnm_root}/node-versions/v99.0.0/installation/bin"
+mkdir -p "$fnm_root" "$fnm_node_bin" "${fnm_home}/.nvm"
+write_stub_to_dir "$fnm_node_bin" ncu '
+if [ "${1:-}" = "--help" ]; then
+	echo "--enginesNode"
+	exit 0
+fi
+echo "{\"npm\":\"11.7.0\"}"
+'
+# shellcheck disable=SC2016
+write_stub_to_dir "$fnm_node_bin" npm 'echo "fnm npm $*" >>"$CALL_LOG"'
+cat >"${fnm_root}/fnm" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = "env" ]; then
+	echo 'export PATH="${fnm_node_bin}:\$PATH"'
+	exit 0
+fi
+echo "fnm \$*" >>"$CALL_LOG"
+EOF
+chmod +x "${fnm_root}/fnm"
+cat >"${fnm_home}/.nvm/nvm.sh" <<'EOF'
+echo "nvm sourced" >>"$CALL_LOG"
+EOF
+: >"$CALL_LOG"
+out="$(HOME="$fnm_home" PATH="$BASE_PATH" "$SCRIPT" --only node --no-emoji --no-color)"
+echo "$out" | grep -q '^==> node END (OK)'
+grep -q '^fnm use --silent-if-unchanged default$' "$CALL_LOG"
+grep -q '^fnm npm install -g -- npm@11.7.0$' "$CALL_LOG"
+if grep -q '^nvm sourced$' "$CALL_LOG"; then
+	echo "Expected fnm to take precedence over NVM" >&2
+	exit 1
+fi
 
 UPDATES_TEST_CASE
 

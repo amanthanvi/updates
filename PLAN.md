@@ -1,3 +1,19 @@
+# Plan: fnm and complete pi updates
+
+## Goal
+
+- Keep global Node updates on the intended fnm runtime and make the pi module cover both the CLI and installed extensions.
+
+## Execution checklist
+
+- [x] Prefer fnm initialization from PATH, `$FNM_DIR`, or the standard Linux install path.
+- [x] Preserve NVM as the fallback manager.
+- [x] Run `pi update --all` on Bash and native Windows.
+- [x] Add manager-precedence and exact-command regression coverage.
+- [x] Pass lint and Bash tests; native-Windows tests unavailable on this Linux host.
+
+---
+
 # Plan: v2.1.2 authoritative Node engine validation
 
 ## Goal
