@@ -11,7 +11,7 @@
 - [x] Run `pi update --all` on Bash and native Windows.
 - [x] Add manager-precedence and exact-command regression coverage.
 - [x] Pass lint and Bash tests; native-Windows tests unavailable on this Linux host.
-- [ ] Release `v2.1.3` from a clean, reviewed, green commit.
+- [x] Release `v2.1.3` from a clean, reviewed, green commit.
 
 ---
 
