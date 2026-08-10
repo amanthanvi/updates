@@ -17,8 +17,8 @@ if (-not $IsWindows) {
 Remove-Item Env:CI -ErrorAction SilentlyContinue
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$currentReleaseVersion = '2.1.2'
-$previousReleaseVersion = '2.1.1'
+$currentReleaseVersion = '2.1.3'
+$previousReleaseVersion = '2.1.2'
 
 function Should-RunTest {
     param(

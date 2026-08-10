@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.1.3] - 2026-08-10
+
 ### Fixed
 
 - Prefer fnm-managed Node tools before the existing NVM fallback on macOS and Linux, preventing stale NVM installations from overriding an active fnm setup.
