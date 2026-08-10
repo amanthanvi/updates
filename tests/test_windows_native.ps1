@@ -2137,7 +2137,7 @@ if (Should-RunTest 'native payload runs Claude and Pi update modules') {
             Assert-Equal -Expected 0 -Actual $result.ExitCode -Message "Claude/Pi modules should succeed`n$($result.Output)"
             $calls = Get-Content -LiteralPath $log -Raw
             Assert-Match -Text $calls -Pattern '(?m)^claude:update\s*$' -Message 'Claude module should run claude update'
-            Assert-Match -Text $calls -Pattern '(?m)^pi:update\s*$' -Message 'Pi module should run pi update'
+            Assert-Match -Text $calls -Pattern '(?m)^pi:update --all\s*$' -Message 'Pi module should run pi update --all'
         }
     }
 }

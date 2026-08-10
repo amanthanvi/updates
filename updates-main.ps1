@@ -78,7 +78,7 @@ $script:ModuleRegistry = @(
     [ordered]@{ Name = 'pipx'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModulePipx'; Description = 'Upgrade pipx-managed apps via pipx' },
     [ordered]@{ Name = 'rustup'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModuleRustup'; Description = 'Update Rust toolchains via rustup' },
     [ordered]@{ Name = 'claude'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModuleClaude'; Description = 'Update Claude Code CLI' },
-    [ordered]@{ Name = 'pi'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModulePi'; Description = 'Update pi AI CLI extensions via pi update' },
+    [ordered]@{ Name = 'pi'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModulePi'; Description = 'Update pi AI CLI and extensions via pi update --all' },
     [ordered]@{ Name = 'mise';   Platforms = @('macos', 'linux'); Default = $true; Description = 'Update mise and upgrade installed tools' },
     [ordered]@{ Name = 'go'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModuleGo'; Description = 'Update Go binaries from GO_BINARIES config' },
     [ordered]@{ Name = 'macos';  Platforms = @('macos');          Default = $false; Description = 'List available macOS software updates (opt-in)' }
@@ -1365,7 +1365,7 @@ function Invoke-ModulePi {
     if (-not $pi) {
         return (Resolve-MissingDependency -ModuleName 'pi' -Detail 'pi not found.')
     }
-    $result = Invoke-LoggedProcess -FilePath $pi -ArgumentList @('update')
+    $result = Invoke-LoggedProcess -FilePath $pi -ArgumentList @('update', '--all')
     if ($result.ExitCode -ne 0) {
         Write-ErrorLine 'pi: update failed'
         return 1

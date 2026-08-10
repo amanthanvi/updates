@@ -77,7 +77,7 @@ mas|module_mas|macos|1|Upgrade Mac App Store apps via mas (opt-in)
 pipx|module_pipx|macos,linux|0|Upgrade pipx-managed apps via pipx
 rustup|module_rustup|macos,linux|0|Update Rust toolchains via rustup
 claude|module_claude|macos,linux|0|Update Claude Code CLI
-pi|module_pi|macos,linux|0|Update pi AI CLI extensions via pi update
+pi|module_pi|macos,linux|0|Update pi AI CLI and extensions via pi update --all
 mise|module_mise|macos,linux|0|Update mise and upgrade installed tools
 go|module_go|macos,linux|0|Update Go binaries from GO_BINARIES config
 macos|module_macos|macos|1|List available macOS software updates (opt-in)'
@@ -118,7 +118,7 @@ NCU_RESOLVED=0
 NCU_MODE=""
 NCU_CMD=""
 NCU_RESOLUTION_REASON=""
-NVM_NODE_TOOLS_READY=0
+NODE_TOOLS_READY=0
 COMMAND_OUTCOME_STATUS=""
 COMMAND_OUTCOME_REASON=""
 COMMAND_OUTCOME_MESSAGE=""
@@ -704,7 +704,7 @@ command_outcome_set() {
 }
 
 run_npm_global_install() {
-	init_nvm_node_tools
+	init_node_tools
 
 	local -a packages=("$@")
 	local -a npm_extra_flags=()
@@ -1007,7 +1007,7 @@ python_run_cmd() {
 }
 
 resolve_ncu_runner() {
-	init_nvm_node_tools
+	init_node_tools
 
 	if [ "$NCU_RESOLVED" -eq 1 ]; then
 		[ -n "$NCU_MODE" ]
@@ -1050,11 +1050,39 @@ ncu_direct_supports_engines_node() {
 	"$cmd" --help enginesNode 2>&1 | grep -q -- '--enginesNode'
 }
 
-init_nvm_node_tools() {
-	if [ "$NVM_NODE_TOOLS_READY" -eq 1 ]; then
+init_node_tools() {
+	if [ "$NODE_TOOLS_READY" -eq 1 ]; then
 		return 0
 	fi
-	NVM_NODE_TOOLS_READY=1
+	NODE_TOOLS_READY=1
+
+	if init_fnm_node_tools; then
+		return 0
+	fi
+	init_nvm_node_tools
+}
+
+init_fnm_node_tools() {
+	local fnm_cmd=""
+	local home_dir=""
+	if command -v fnm >/dev/null 2>&1; then
+		fnm_cmd="fnm"
+	elif [ -n "${FNM_DIR:-}" ] && [ -x "${FNM_DIR%/}/fnm" ]; then
+		fnm_cmd="${FNM_DIR%/}/fnm"
+	elif home_dir="$(updates_home_dir 2>/dev/null)" && [ -x "${home_dir}/.local/share/fnm/fnm" ]; then
+		fnm_cmd="${home_dir}/.local/share/fnm/fnm"
+	fi
+	[ -n "$fnm_cmd" ] || return 1
+
+	local fnm_env=""
+	fnm_env="$("$fnm_cmd" env --shell bash 2>/dev/null)" || return 1
+	[ -n "$fnm_env" ] || return 1
+	eval "$fnm_env" >/dev/null 2>&1 || return 1
+	"$fnm_cmd" use --silent-if-unchanged default >/dev/null 2>&1 || return 1
+	return 0
+}
+
+init_nvm_node_tools() {
 
 	local nvm_dir=""
 	local home_dir=""
@@ -1087,6 +1115,7 @@ init_nvm_node_tools() {
 	if command -v nvm >/dev/null 2>&1; then
 		nvm use --silent default >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1 || true
 	fi
+	return 0
 }
 
 ncu_command_label() {
@@ -3634,11 +3663,11 @@ module_pi() {
 	ensure_cmd_or_skip pi pi || return $?
 
 	if [ "$DRY_RUN" -eq 1 ]; then
-		log "DRY RUN: pi update"
+		log "DRY RUN: pi update --all"
 		return 0
 	fi
 
-	run pi update || return 1
+	run pi update --all || return 1
 	return 0
 }
 

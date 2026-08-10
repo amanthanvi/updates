@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Prefer fnm-managed Node tools before the existing NVM fallback on macOS and Linux, preventing stale NVM installations from overriding an active fnm setup.
+- Update both pi itself and its installed extensions with `pi update --all` on Bash and native Windows.
+
 ## [2.1.2] - 2026-07-25
 
 ### Fixed
