@@ -30,6 +30,9 @@ if [ -z "$SYSTEM_GIT" ]; then
 	echo "tests: git is required for Git fixture coverage" >&2
 	exit 1
 fi
+# Referenced by heredoc-backed test bodies evaluated through run_test.
+# shellcheck disable=SC2034
+SYSTEM_BASH="$(command -v bash)"
 SYSTEM_PYTHON3="$(command -v python3 2>/dev/null || true)"
 if [ -z "$SYSTEM_PYTHON3" ]; then
 	echo "python3 is required for tests/test_cli.sh" >&2
@@ -1791,21 +1794,38 @@ UPDATES_TEST_CASE
 
 run_test "skills module skips without skills or npx and errors under --only" <<'UPDATES_TEST_CASE'
 rm -f "${stub_bin}/skills" "${stub_bin}/npx"
+# Host tool directories can expose a real npx (system Node installs); isolate
+# PATH to fixture-controlled executables so neither command can leak in. Stubs
+# embed the interpreter path because `env bash` cannot resolve with this PATH.
+skills_iso_bin="${tmp_dir}/skills-isolated-bin"
+mkdir -p "$skills_iso_bin"
+{
+	printf '#!%s\n' "$SYSTEM_BASH"
+	printf 'echo Darwin\n'
+} >"${skills_iso_bin}/uname"
+{
+	printf '#!%s\n' "$SYSTEM_BASH"
+	printf 'echo updates\n'
+} >"${skills_iso_bin}/basename"
+chmod +x "${skills_iso_bin}/uname" "${skills_iso_bin}/basename"
+saved_path="$PATH"
+export PATH="$skills_iso_bin"
 skip_stderr="${tmp_dir}/skills-skip-stderr.log"
 : >"$skip_stderr"
 all_but_skills=(--skip "brew,shell,repos,linux,winget,node,bun,python,uv,mas,pipx,rustup,claude,pi,mise,go,macos" --no-emoji --no-color)
-out="$("$SCRIPT" "${all_but_skills[@]}" 2>"$skip_stderr")"
-echo "$out" | grep -q '^==> skills END (SKIP)'
-echo "$out" | grep -q '^Skipping skills: neither skills nor npx found\.$'
+out="$("$SYSTEM_BASH" "$SCRIPT" "${all_but_skills[@]}" 2>"$skip_stderr")"
 set +e
-out="$("$SCRIPT" --only skills --no-emoji --no-color 2>"$skip_stderr")"
+out_only="$("$SYSTEM_BASH" "$SCRIPT" --only skills --no-emoji --no-color 2>"$skip_stderr")"
 rc=$?
 set -e
+export PATH="$saved_path"
+echo "$out" | grep -q '^==> skills END (SKIP)'
+echo "$out" | grep -q '^Skipping skills: neither skills nor npx found\.$'
 if [ "$rc" -ne 1 ]; then
 	echo "Expected --only skills to fail without skills or npx (got $rc)" >&2
 	exit 1
 fi
-echo "$out" | grep -q '^==> skills END (FAIL)'
+echo "$out_only" | grep -q '^==> skills END (FAIL)'
 grep -q 'skills: required command not found' "$skip_stderr"
 # shellcheck disable=SC2016
 write_stub skills 'echo "skills $*" >>"$CALL_LOG"'
