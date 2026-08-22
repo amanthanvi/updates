@@ -78,6 +78,7 @@ pipx|module_pipx|macos,linux|0|Upgrade pipx-managed apps via pipx
 rustup|module_rustup|macos,linux|0|Update Rust toolchains via rustup
 claude|module_claude|macos,linux|0|Update Claude Code CLI
 pi|module_pi|macos,linux|0|Update pi AI CLI and extensions via pi update --all
+skills|module_skills|macos,linux|0|Update agent skills in project + global scopes
 mise|module_mise|macos,linux|0|Update mise and upgrade installed tools
 go|module_go|macos,linux|0|Update Go binaries from GO_BINARIES config
 macos|module_macos|macos|1|List available macOS software updates (opt-in)'
@@ -2530,7 +2531,7 @@ json_pairs() {
 
 ###############################################################################
 # SECTION: modules — brew, shell, linux, node, python, uv, mas, pipx,
-#                     rustup, claude, mise, go, macos
+#                     rustup, claude, pi, skills, mise, go, macos
 ###############################################################################
 
 python_externally_managed() {
@@ -3668,6 +3669,47 @@ module_pi() {
 	fi
 
 	run pi update --all || return 1
+	return 0
+}
+
+skills_update_argv() {
+	# Sets the global array SKILLS_UPDATE_ARGV to the invocation that updates
+	# both scopes without prompts. `skills update` with both --project and
+	# --global resolves to the interactive "Both" scope without a prompt.
+	SKILLS_UPDATE_ARGV=()
+	if cmd_exists skills; then
+		SKILLS_UPDATE_ARGV=(skills)
+	elif cmd_exists npx; then
+		SKILLS_UPDATE_ARGV=(npx --yes skills)
+	else
+		return 1
+	fi
+
+	SKILLS_UPDATE_ARGV+=(update --project --global)
+	if [ "$NON_INTERACTIVE" -eq 1 ]; then
+		SKILLS_UPDATE_ARGV+=(--yes)
+	fi
+	return 0
+}
+
+module_skills() {
+	log "Agent skills $(emoji "🧠")"
+
+	if ! skills_update_argv; then
+		if missing_dependency_is_error; then
+			err "skills: required command not found: skills (or npx)"
+			return 1
+		fi
+		log "Skipping skills: neither skills nor npx found."
+		return 2
+	fi
+
+	if [ "$DRY_RUN" -eq 1 ]; then
+		log "DRY RUN: ${SKILLS_UPDATE_ARGV[*]}"
+		return 0
+	fi
+
+	run "${SKILLS_UPDATE_ARGV[@]}" || return 1
 	return 0
 }
 

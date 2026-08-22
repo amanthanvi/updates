@@ -30,6 +30,9 @@ if [ -z "$SYSTEM_GIT" ]; then
 	echo "tests: git is required for Git fixture coverage" >&2
 	exit 1
 fi
+# Referenced by heredoc-backed test bodies evaluated through run_test.
+# shellcheck disable=SC2034
+SYSTEM_BASH="$(command -v bash)"
 SYSTEM_PYTHON3="$(command -v python3 2>/dev/null || true)"
 if [ -z "$SYSTEM_PYTHON3" ]; then
 	echo "python3 is required for tests/test_cli.sh" >&2
@@ -371,6 +374,8 @@ write_stub claude 'echo "claude $*" >>"$CALL_LOG"'
 # shellcheck disable=SC2016
 write_stub pi 'echo "pi $*" >>"$CALL_LOG"'
 # shellcheck disable=SC2016
+write_stub skills 'echo "skills $*" >>"$CALL_LOG"'
+# shellcheck disable=SC2016
 write_stub softwareupdate 'echo "softwareupdate $*" >>"$CALL_LOG"'
 
 test_selected() {
@@ -563,7 +568,7 @@ echo "$out" | grep -q '^brew'
 echo "$out" | grep -q '^shell'
 echo "$out" | grep -q '^linux'
 actual_modules="$(printf '%s\n' "$out" | awk '{print $1}' | paste -sd' ' -)"
-expected_modules='brew shell repos linux winget node bun python uv mas pipx rustup claude pi mise go macos'
+expected_modules='brew shell repos linux winget node bun python uv mas pipx rustup claude pi skills mise go macos'
 if [ "$actual_modules" != "$expected_modules" ]; then
 	echo "Expected module order: $expected_modules" >&2
 	echo "Actual module order:   $actual_modules" >&2
@@ -1187,7 +1192,7 @@ setup_python_guard_fixture
 : >"$CALL_LOG"
 python_no_report_skip_stderr="${tmp_dir}/python-no-report-skip-stderr.log"
 python_no_report_skip_out="$(
-	PYTHON_GUARD_NO_REPORT_HELP=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --skip brew,shell,linux,node,uv,mas,pipx,rustup,claude,mise,go,macos,repos,bun,pi --no-emoji --no-color 2>"$python_no_report_skip_stderr"
+	PYTHON_GUARD_NO_REPORT_HELP=1 PYTHONUSERBASE="$python_user_base" PYTHONPATH="$python_path" "$SCRIPT" --skip brew,shell,linux,node,uv,mas,pipx,rustup,claude,mise,go,macos,repos,bun,pi,skills --no-emoji --no-color 2>"$python_no_report_skip_stderr"
 )"
 echo "$python_no_report_skip_out" | grep -q '^==> python END (SKIP)'
 grep -q '^WARN: python: skipping guarded user-site upgrades: pip does not support --dry-run --report$' "$python_no_report_skip_stderr"
@@ -1739,6 +1744,94 @@ grep -q '^pi update --all$' "$CALL_LOG"
 
 UPDATES_TEST_CASE
 
+run_test "skills module updates project and global scopes" <<'UPDATES_TEST_CASE'
+: >"$CALL_LOG"
+out="$("$SCRIPT" --only skills --no-emoji --no-color)"
+echo "$out" | grep -q '^==> skills START$'
+echo "$out" | grep -q '^==> skills END (OK)'
+grep -q '^skills update --project --global$' "$CALL_LOG"
+
+UPDATES_TEST_CASE
+
+run_test "skills module dry-run shows the both-scope command without executing it" <<'UPDATES_TEST_CASE'
+: >"$CALL_LOG"
+out="$("$SCRIPT" --dry-run --only skills --no-emoji --no-color)"
+echo "$out" | grep -q '^DRY RUN: skills update --project --global$'
+if [ -s "$CALL_LOG" ]; then
+	echo "Expected skills dry-run not to execute any command" >&2
+	exit 1
+fi
+
+UPDATES_TEST_CASE
+
+run_test "skills module adds --yes in non-interactive mode" <<'UPDATES_TEST_CASE'
+: >"$CALL_LOG"
+"$SCRIPT" -n --only skills --no-emoji >/dev/null
+grep -q '^skills update --project --global --yes$' "$CALL_LOG"
+
+UPDATES_TEST_CASE
+
+run_test "skills module falls back to npx when the CLI is not installed" <<'UPDATES_TEST_CASE'
+rm -f "${stub_bin}/skills"
+# shellcheck disable=SC2016
+write_stub npx 'echo "npx $*" >>"$CALL_LOG"'
+: >"$CALL_LOG"
+out="$("$SCRIPT" --only skills --no-emoji --no-color)"
+echo "$out" | grep -q '^==> skills END (OK)'
+grep -q '^npx --yes skills update --project --global$' "$CALL_LOG"
+: >"$CALL_LOG"
+out="$("$SCRIPT" --dry-run --only skills --no-emoji --no-color)"
+echo "$out" | grep -q '^DRY RUN: npx --yes skills update --project --global$'
+if grep -q '^npx ' "$CALL_LOG"; then
+	echo "Expected skills dry-run not to execute the npx fallback" >&2
+	exit 1
+fi
+# shellcheck disable=SC2016
+write_stub skills 'echo "skills $*" >>"$CALL_LOG"'
+rm -f "${stub_bin}/npx"
+
+UPDATES_TEST_CASE
+
+run_test "skills module skips without skills or npx and errors under --only" <<'UPDATES_TEST_CASE'
+rm -f "${stub_bin}/skills" "${stub_bin}/npx"
+# Host tool directories can expose a real npx (system Node installs); isolate
+# PATH to fixture-controlled executables so neither command can leak in. Stubs
+# embed the interpreter path because `env bash` cannot resolve with this PATH.
+skills_iso_bin="${tmp_dir}/skills-isolated-bin"
+mkdir -p "$skills_iso_bin"
+{
+	printf '#!%s\n' "$SYSTEM_BASH"
+	printf 'echo Darwin\n'
+} >"${skills_iso_bin}/uname"
+{
+	printf '#!%s\n' "$SYSTEM_BASH"
+	printf 'echo updates\n'
+} >"${skills_iso_bin}/basename"
+chmod +x "${skills_iso_bin}/uname" "${skills_iso_bin}/basename"
+saved_path="$PATH"
+export PATH="$skills_iso_bin"
+skip_stderr="${tmp_dir}/skills-skip-stderr.log"
+: >"$skip_stderr"
+all_but_skills=(--skip "brew,shell,repos,linux,winget,node,bun,python,uv,mas,pipx,rustup,claude,pi,mise,go,macos" --no-emoji --no-color)
+out="$("$SYSTEM_BASH" "$SCRIPT" "${all_but_skills[@]}" 2>"$skip_stderr")"
+set +e
+out_only="$("$SYSTEM_BASH" "$SCRIPT" --only skills --no-emoji --no-color 2>"$skip_stderr")"
+rc=$?
+set -e
+export PATH="$saved_path"
+echo "$out" | grep -q '^==> skills END (SKIP)'
+echo "$out" | grep -q '^Skipping skills: neither skills nor npx found\.$'
+if [ "$rc" -ne 1 ]; then
+	echo "Expected --only skills to fail without skills or npx (got $rc)" >&2
+	exit 1
+fi
+echo "$out_only" | grep -q '^==> skills END (FAIL)'
+grep -q 'skills: required command not found' "$skip_stderr"
+# shellcheck disable=SC2016
+write_stub skills 'echo "skills $*" >>"$CALL_LOG"'
+
+UPDATES_TEST_CASE
+
 run_test "empty ncu output means node module reports up-to-date" <<'UPDATES_TEST_CASE'
 rm -f "${stub_bin}/python" "${stub_bin}/python3"
 write_ncu_stub '{}'
@@ -1892,7 +1985,7 @@ fi
 exit 1
 '
 rm -f "${stub_bin}/npx"
-node_skip_args=(--skip "brew,shell,repos,linux,winget,bun,python,uv,mas,pipx,rustup,claude,pi,mise,go,macos" --no-emoji --no-color)
+node_skip_args=(--skip "brew,shell,repos,linux,winget,bun,python,uv,mas,pipx,rustup,claude,pi,skills,mise,go,macos" --no-emoji --no-color)
 node_capability_stderr="${tmp_dir}/node-capability-stderr.log"
 out="$("$SCRIPT" "${node_skip_args[@]}" 2>"$node_capability_stderr")"
 echo "$out" | grep -q '^==> node END (SKIP)'

@@ -101,11 +101,12 @@ Modules are auto-detected: if the underlying command isn’t installed, the modu
 - `rustup`: update Rust toolchains via `rustup update`
 - `claude`: update Claude Code CLI via `claude update`
 - `pi`: update the pi AI CLI and installed extensions via `pi update --all`
+- `skills`: update agent skills in both project and global scopes via `skills update` (falls back to `npx --yes skills update`); passing both scopes matches the interactive "Both" option without prompting
 - `mise`: update mise and upgrade installed tools (`mise self-update`, `mise upgrade`)
 - `go`: update Go binaries from `GO_BINARIES` in `~/.updatesrc` (entries default to `@latest`)
 - `macos`: list available macOS software updates via `softwareupdate -l` (disabled by default; enable with `--macos-updates` or `--full`)
 
-Native Windows v2.1 default-on modules: `winget`, `node`, `bun`, `python`, `uv`, `pipx`, `rustup`, `claude`, `pi`, `go`.
+Native Windows v2.1 default-on modules: `winget`, `node`, `bun`, `python`, `uv`, `pipx`, `rustup`, `claude`, `pi`, `skills`, `go`.
 On native Windows, `--full` selects every supported Windows module even if `SKIP_MODULES` in config would otherwise omit one; explicit `--skip` still wins.
 
 Platform support summary:
@@ -115,7 +116,7 @@ Platform support summary:
 | brew, shell, repos | Yes | Yes | No |
 | linux | No | Yes | No |
 | winget | No | No | Yes |
-| node, bun, python, uv, pipx, rustup, claude, pi, go | Yes | Yes | Yes |
+| node, bun, python, uv, pipx, rustup, claude, pi, skills, go | Yes | Yes | Yes |
 | mas, macos | Yes | No | No |
 | mise | Yes | Yes | Deferred |
 
@@ -164,6 +165,7 @@ Install what you actually use:
 - `rustup`: from https://rustup.rs
 - `claude` (Claude Code CLI) for the `claude` module
 - `pi` (npm-installed AI coding CLI) for the `pi` module
+- `skills` CLI (or `npx`) for the `skills` module (`npx skills add ...`)
 - `go` (for the `go` module)
 - On Linux: a supported system package manager (`apt-get`, `dnf`, `yum`, `pacman`, `zypper`, or `apk`) and `sudo` (if not running as root)
 
