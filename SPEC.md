@@ -28,7 +28,7 @@ v2.1 preserves the stable v2 contract. Patch release v2.1.1 filters Node upgrade
 ### 1.3 Success metrics
 
 - **Primary KPIs:**
-  - All 17 modules pass lint + stub/contract tests across macOS, Linux, and Windows.
+  - All 18 modules pass lint + stub/contract tests across macOS, Linux, and Windows.
   - JSONL output is parseable by `jq` for all event types.
   - Config file (`~/.updatesrc`) correctly sets defaults overridden by CLI flags across `HOME`/`USERPROFILE` layouts.
 - **Guardrails:**
@@ -344,7 +344,7 @@ If `UPDATES_SELF_UPDATE_REPO` is set, the CLI **MUST** print an error and exit `
 
 ### 7.2 Module list & platform matrix
 
-Execution order: `brew`, `shell`, `repos`, `linux`, `winget`, `node`, `bun`, `python`, `uv`, `mas`, `pipx`, `rustup`, `claude`, `pi`, `mise`, `go`, `macos`.
+Execution order: `brew`, `shell`, `repos`, `linux`, `winget`, `node`, `bun`, `python`, `uv`, `mas`, `pipx`, `rustup`, `claude`, `pi`, `skills`, `mise`, `go`, `macos`.
 
 | Module   | macOS | Linux | WSL | Windows | Notes |
 | -------- | :---: | :---: | :-: | :-----: | ----- |
@@ -362,15 +362,16 @@ Execution order: `brew`, `shell`, `repos`, `linux`, `winget`, `node`, `bun`, `py
 | `rustup` |  Yes  |  Yes  | Yes |   Yes   | Requires `rustup` |
 | `claude` |  Yes  |  Yes  | Yes |   Yes   | Requires `claude`; runs `claude update` |
 | `pi`     |  Yes  |  Yes  | Yes |   Yes   | Requires `pi`; runs `pi update --all` |
+| `skills` |  Yes  |  Yes  | Yes |   Yes   | Requires `skills` or `npx`; runs `skills update` for project + global scopes |
 | `mise`   |  Yes  |  Yes  | Yes |   No    | Requires `mise` |
 | `go`     |  Yes  |  Yes  | Yes |   Yes   | Requires `go`; binary list from config |
 | `macos`  |  Yes  |  No   | No  |   No    | Requires `softwareupdate` (opt-in) |
 
-Native Windows default runs auto-select `winget`, `node`, `bun`, `python`, `uv`, `pipx`, `rustup`, `claude`, `pi`, and `go` when their backing commands or config are present. `mise` remains deferred on native Windows until installer ownership can be handled safely.
+Native Windows default runs auto-select `winget`, `node`, `bun`, `python`, `uv`, `pipx`, `rustup`, `claude`, `pi`, `skills`, and `go` when their backing commands or config are present. `mise` remains deferred on native Windows until installer ownership can be handled safely.
 
 ### 7.3 Module execution order
 
-Fixed: `brew` > `shell` > `repos` > `linux` > `winget` > `node` > `bun` > `python` > `uv` > `mas` > `pipx` > `rustup` > `claude` > `pi` > `mise` > `go` > `macos`.
+Fixed: `brew` > `shell` > `repos` > `linux` > `winget` > `node` > `bun` > `python` > `uv` > `mas` > `pipx` > `rustup` > `claude` > `pi` > `skills` > `mise` > `go` > `macos`.
 
 Rationale: platform package managers first (`brew`, `linux`, `winget`), then git-backed local repos, then language/runtime tools, then opt-in system modules last.
 
@@ -561,7 +562,22 @@ Purpose: update the `pi` AI coding CLI and its installed extensions (pinned sour
 - Non-dry-run: `pi update --all`
 - Side effects: updates `pi` and installed extensions to their latest versions.
 
-### 8.15 `mise`
+### 8.15 `skills`
+
+Purpose: update agent skills installed on the machine in both project and global scopes.
+
+- Requires: the `skills` CLI (`npx skills`), or `npx` as a fallback adapter.
+  - Resolution order: a direct `skills` command on `PATH` first, then `npx --yes skills`.
+  - If neither is available, default runs warn and skip; explicit `--only skills` fails.
+- Scope: runs `skills update --project --global`, which the skills CLI resolves to its interactive "Both" scope without prompting.
+- Non-dry-run:
+  - Bash: `<skills|npx --yes skills> update --project --global [--yes]`
+  - Native Windows: `skills update --project --global` or `npx --yes skills update --project --global`
+- With `-n` / `--non-interactive`: appends `--yes` so upstream-deletion prompts inside the skills CLI are skipped gracefully.
+- Dry run: prints the resolved command; executes nothing.
+- Side effects: refreshes project-scoped and globally tracked skills from their recorded sources (local/node_modules-sourced skills are skipped by the skills CLI itself).
+
+### 8.16 `mise`
 
 Purpose: update mise itself and upgrade all installed tool versions.
 
@@ -572,7 +588,7 @@ Purpose: update mise itself and upgrade all installed tool versions.
 - Side effects: updates mise binary and installed tool versions to latest matching constraints.
 - Native Windows remains deferred: the official Windows installation paths are Scoop and winget, while `mise self-update` is unavailable for package-managed installs. `updates` has no reliable ownership signal that would distinguish those installs from a manually downloaded binary without adding manager-specific coupling.
 
-### 8.16 `go`
+### 8.17 `go`
 
 Purpose: update Go binaries from a user-specified list.
 
@@ -585,7 +601,7 @@ Purpose: update Go binaries from a user-specified list.
   - `--only go`: error (return `1`)
 - Side effects: rebuilds and installs Go binaries to `$GOBIN` or `$GOPATH/bin`.
 
-### 8.17 `macos`
+### 8.18 `macos`
 
 Purpose: list available macOS software updates.
 

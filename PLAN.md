@@ -1,3 +1,20 @@
+# Plan: skills module updates
+
+## Goal
+
+- Add a `skills` module that updates agent skills in both project and global scopes by default, matching `npx skills update`'s interactive "Both" option without prompting.
+
+## Execution checklist
+
+- [ ] Register a default-on `skills` module between `pi` and `mise` on Bash and native Windows.
+- [ ] Resolve the backing command as the `skills` CLI first, then `npx --yes skills`; skip gracefully when neither exists and fail under `--only`.
+- [ ] Run `skills update --project --global`, appending `--yes` under `--non-interactive`; dry-run prints the resolved command without executing.
+- [ ] Cover direct, npx-fallback, non-interactive, dry-run, and missing-dependency behavior in Bash tests; mirror success, fallback, and missing-dependency coverage in native Windows tests.
+- [ ] Update README, SPEC (module matrix, execution order, §8.15), CHANGELOG, and this plan.
+- [ ] Pass lint and tests before opening the PR.
+
+---
+
 # Plan: v2.1.3 fnm and complete pi updates
 
 ## Goal

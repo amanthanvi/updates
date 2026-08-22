@@ -79,6 +79,7 @@ $script:ModuleRegistry = @(
     [ordered]@{ Name = 'rustup'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModuleRustup'; Description = 'Update Rust toolchains via rustup' },
     [ordered]@{ Name = 'claude'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModuleClaude'; Description = 'Update Claude Code CLI' },
     [ordered]@{ Name = 'pi'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModulePi'; Description = 'Update pi AI CLI and extensions via pi update --all' },
+    [ordered]@{ Name = 'skills'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModuleSkills'; Description = 'Update agent skills in project + global scopes' },
     [ordered]@{ Name = 'mise';   Platforms = @('macos', 'linux'); Default = $true; Description = 'Update mise and upgrade installed tools' },
     [ordered]@{ Name = 'go'; Platforms = @('macos', 'linux', 'windows'); Default = $true; Handler = 'Invoke-ModuleGo'; Description = 'Update Go binaries from GO_BINARIES config' },
     [ordered]@{ Name = 'macos';  Platforms = @('macos');          Default = $false; Description = 'List available macOS software updates (opt-in)' }
@@ -1368,6 +1369,38 @@ function Invoke-ModulePi {
     $result = Invoke-LoggedProcess -FilePath $pi -ArgumentList @('update', '--all')
     if ($result.ExitCode -ne 0) {
         Write-ErrorLine 'pi: update failed'
+        return 1
+    }
+    return 0
+}
+
+function Invoke-ModuleSkills {
+    # `skills update` with both --project and --global resolves to the
+    # interactive "Both" scope without a prompt.
+    $arguments = New-Object System.Collections.Generic.List[string]
+    $skills = Resolve-ApplicationCommand @('skills.exe', 'skills.cmd', 'skills')
+    if ($skills) {
+        $filePath = $skills
+        $arguments.Add('update')
+    } else {
+        $npx = Resolve-ApplicationCommand @('npx.exe', 'npx.cmd', 'npx')
+        if (-not $npx) {
+            return (Resolve-MissingDependency -ModuleName 'skills' -Detail 'skills not found (need skills or npx).')
+        }
+        $filePath = $npx
+        $arguments.Add('--yes')
+        $arguments.Add('skills')
+        $arguments.Add('update')
+    }
+    $arguments.Add('--project')
+    $arguments.Add('--global')
+    if ($script:NonInteractive) {
+        $arguments.Add('--yes')
+    }
+
+    $result = Invoke-LoggedProcess -FilePath $filePath -ArgumentList $arguments.ToArray()
+    if ($result.ExitCode -ne 0) {
+        Write-ErrorLine 'skills: update failed'
         return 1
     }
     return 0

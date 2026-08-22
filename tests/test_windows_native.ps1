@@ -2186,6 +2186,37 @@ if (Should-RunTest 'native Claude and Pi modules cover missing dry-run failure s
     }
 }
 
+if (Should-RunTest 'native payload runs Skills update module') {
+    Invoke-TestCase 'native payload runs Skills update module' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $currentReleaseVersion
+            $stubDir = Join-Path $installRoot 'stubs'
+            $log = Join-Path $installRoot 'skills-module.log'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'skills.cmd') -Lines @(('echo skills:%*>>"{0}"' -f $log))
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', 'skills', '--no-emoji', '--no-color') -Environment @{ PATH = $stubDir }
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message "Skills module should succeed`n$($result.Output)"
+            $calls = Get-Content -LiteralPath $log -Raw
+            Assert-Match -Text $calls -Pattern '(?m)^skills:update --project --global\s*$' -Message 'Skills module should update project and global scopes without prompting'
+
+            $emptyPath = Join-Path $installRoot 'empty-skills-path'
+            $null = New-Item -ItemType Directory -Path $emptyPath -Force
+            $missing = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', 'skills', '--no-emoji') -Environment @{ PATH = $emptyPath }
+            Assert-Equal -Expected 1 -Actual $missing.ExitCode -Message 'explicit missing Skills dependency should fail the run'
+            Assert-Match -Text $missing.Output -Pattern '(?i)skills not found' -Message 'missing Skills dependency should be explicit'
+
+            $npxLog = Join-Path $installRoot 'skills-npx.log'
+            Write-CmdStub -Path (Join-Path $stubDir 'npx.cmd') -Lines @(('echo npx:%*>>"{0}"' -f $npxLog))
+            Remove-Item -LiteralPath (Join-Path $stubDir 'skills.cmd') -Force
+            $fallback = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', 'skills', '--non-interactive', '--no-emoji', '--no-color') -Environment @{ PATH = $stubDir }
+            Assert-Equal -Expected 0 -Actual $fallback.ExitCode -Message "Skills npx fallback should succeed`n$($fallback.Output)"
+            $npxCalls = Get-Content -LiteralPath $npxLog -Raw
+            Assert-Match -Text $npxCalls -Pattern '(?m)^npx:--yes skills update --project --global --yes\s*$' -Message 'npx fallback should update both scopes non-interactively'
+        }
+    }
+}
+
 if (Should-RunTest 'native payload rejects duplicate or noncanonical version assignments') {
     Invoke-TestCase 'native payload rejects duplicate or noncanonical version assignments' {
         Invoke-WithTempInstall {
