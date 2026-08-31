@@ -99,7 +99,7 @@ Modules are auto-detected: if the underlying command isn’t installed, the modu
 - `mas`: upgrade Mac App Store apps via `mas` (disabled by default; enable with `--mas-upgrade` or `--full`)
 - `pipx`: upgrade pipx-managed apps via `pipx upgrade-all`
 - `rustup`: update Rust toolchains via `rustup update`
-- `claude`: update Claude Code CLI via `claude update`
+- `claude`: update Claude Code CLI to the latest channel via `claude update latest`
 - `pi`: update the pi AI CLI and installed extensions via `pi update --all`
 - `skills`: update agent skills in both project and global scopes via `skills update` (falls back to `npx --yes skills update`); passing both scopes matches the interactive "Both" option without prompting
 - `mise`: update mise and upgrade installed tools (`mise self-update`, `mise upgrade`)

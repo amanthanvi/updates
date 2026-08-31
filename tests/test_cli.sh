@@ -1733,7 +1733,9 @@ UPDATES_TEST_CASE
 run_test "claude module logs correct commands" <<'UPDATES_TEST_CASE'
 : >"$CALL_LOG"
 "$SCRIPT" --only claude --no-emoji >/dev/null
-grep -q '^claude update$' "$CALL_LOG"
+grep -q '^claude update latest$' "$CALL_LOG"
+out="$("$SCRIPT" --only claude --dry-run --no-emoji)"
+echo "$out" | grep -q '^DRY RUN: claude update latest$'
 
 UPDATES_TEST_CASE
 

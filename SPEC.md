@@ -360,7 +360,7 @@ Execution order: `brew`, `shell`, `repos`, `linux`, `winget`, `node`, `bun`, `py
 | `mas`    |  Yes  |  No   | No  |   No    | Requires `mas` (opt-in) |
 | `pipx`   |  Yes  |  Yes  | Yes |   Yes   | Requires `pipx` |
 | `rustup` |  Yes  |  Yes  | Yes |   Yes   | Requires `rustup` |
-| `claude` |  Yes  |  Yes  | Yes |   Yes   | Requires `claude`; runs `claude update` |
+| `claude` |  Yes  |  Yes  | Yes |   Yes   | Requires `claude`; runs `claude update latest` |
 | `pi`     |  Yes  |  Yes  | Yes |   Yes   | Requires `pi`; runs `pi update --all` |
 | `skills` |  Yes  |  Yes  | Yes |   Yes   | Requires `skills` or `npx`; runs `skills update` for project + global scopes |
 | `mise`   |  Yes  |  Yes  | Yes |   No    | Requires `mise` |
@@ -551,7 +551,7 @@ Purpose: update Rust toolchains.
 Purpose: update the Claude Code CLI.
 
 - Requires: `claude`
-- Non-dry-run: `claude update`
+- Non-dry-run: `claude update latest`
 - Side effects: updates the Claude Code CLI.
 
 ### 8.14 `pi`
