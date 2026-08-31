@@ -2136,7 +2136,7 @@ if (Should-RunTest 'native payload runs Claude and Pi update modules') {
             $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', 'claude,pi', '--no-emoji', '--no-color') -Environment @{ PATH = $stubDir }
             Assert-Equal -Expected 0 -Actual $result.ExitCode -Message "Claude/Pi modules should succeed`n$($result.Output)"
             $calls = Get-Content -LiteralPath $log -Raw
-            Assert-Match -Text $calls -Pattern '(?m)^claude:update\s*$' -Message 'Claude module should run claude update'
+            Assert-Match -Text $calls -Pattern '(?m)^claude:update latest\s*$' -Message 'Claude module should run claude update latest'
             Assert-Match -Text $calls -Pattern '(?m)^pi:update --all\s*$' -Message 'Pi module should run pi update --all'
         }
     }
@@ -2163,7 +2163,7 @@ if (Should-RunTest 'native Claude and Pi modules cover missing dry-run failure s
             $dry = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', 'claude,pi', '--dry-run', '--no-emoji') -Environment @{ PATH = $stubDir }
             Assert-Equal -Expected 0 -Actual $dry.ExitCode -Message 'Claude/Pi dry-run should succeed'
             Assert-True -Condition (-not (Test-Path -LiteralPath $log)) -Message 'Claude/Pi dry-run must not invoke commands'
-            Assert-Match -Text $dry.Output -Pattern '(?i)DRY RUN: .*claude(\.cmd)? update' -Message 'Claude dry-run command should be visible'
+            Assert-Match -Text $dry.Output -Pattern '(?i)DRY RUN: .*claude(\.cmd)? update latest' -Message 'Claude dry-run command should target the latest channel'
             Assert-Match -Text $dry.Output -Pattern '(?i)DRY RUN: .*pi(\.cmd)? update' -Message 'Pi dry-run command should be visible'
 
             Write-Utf8NoBom -Path (Join-Path $stubDir 'claude.cmd') -Content "@echo off`r`necho claude-failed`r`nexit /b 7`r`n"

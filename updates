@@ -3651,11 +3651,11 @@ module_claude() {
 	ensure_cmd_or_skip claude claude || return $?
 
 	if [ "$DRY_RUN" -eq 1 ]; then
-		log "DRY RUN: claude update"
+		log "DRY RUN: claude update latest"
 		return 0
 	fi
 
-	run claude update || return 1
+	run claude update latest || return 1
 	return 0
 }
 
