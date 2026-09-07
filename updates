@@ -53,6 +53,8 @@ skipped_count=0
 failures_count=0
 
 CURRENT_MODULE="main"
+COMMAND_PIDS=()
+COMMAND_TEMPS=()
 
 COLOR_STDOUT=0
 COLOR_STDERR=0
@@ -685,15 +687,155 @@ validate_only_modules_supported() {
 # SECTION: utilities — run wrapper, semver comparison
 ###############################################################################
 
+# Keep progress separate from command stdout/stderr captures. FD 4 is opened
+# after log redirection in main; these messages never enter the JSONL stream.
+command_progress() {
+	[ "$LOG_LEVEL_NUM" -ge 2 ] || return 0
+	printf '%s\n' "$*" >&4
+}
+
+command_forget_pid() {
+	local target="$1" pid
+	local -a remaining=()
+	for pid in ${COMMAND_PIDS[@]+"${COMMAND_PIDS[@]}"}; do
+		[ "$pid" = "$target" ] || remaining+=("$pid")
+	done
+	COMMAND_PIDS=(${remaining[@]+"${remaining[@]}"})
+}
+
+command_temp_dir() {
+	local target="$1" created
+	created="$(mktemp -d "${TMPDIR:-/tmp}/updates-command.XXXXXX")" || return 1
+	COMMAND_TEMPS+=("$created")
+	printf -v "$target" '%s' "$created"
+}
+
+command_remove_temp() {
+	local target="$1" path
+	local -a remaining=()
+	rm -rf -- "$target"
+	for path in ${COMMAND_TEMPS[@]+"${COMMAND_TEMPS[@]}"}; do
+		[ "$path" = "$target" ] || remaining+=("$path")
+	done
+	COMMAND_TEMPS=(${remaining[@]+"${remaining[@]}"})
+}
+
+command_heartbeat() {
+	local label="$1" started="$SECONDS" timer=""
+	trap - EXIT
+	# An interruptible wait lets the parent reap this helper immediately.
+	trap '[ -z "$timer" ] || { kill "$timer" 2>/dev/null; wait "$timer" 2>/dev/null; }; exit 0' TERM INT
+	while :; do
+		sleep 30 &
+		timer=$!
+		wait "$timer" || return 0
+		timer=""
+		command_progress "$label: still running ($((SECONDS - started))s elapsed; Ctrl+C to cancel)"
+	done
+}
+
+command_wait() {
+	local child="$1" label="$2" heartbeat="" status=0
+	if [ "$LOG_LEVEL_NUM" -ge 2 ]; then
+		command_heartbeat "$label" &
+		heartbeat=$!
+		COMMAND_PIDS+=("$heartbeat")
+	fi
+	wait "$child" || status=$?
+	command_forget_pid "$child"
+	if [ -n "$heartbeat" ]; then
+		kill "$heartbeat" 2>/dev/null || true
+		wait "$heartbeat" 2>/dev/null || true
+		command_forget_pid "$heartbeat"
+	fi
+	# Some tools consume Ctrl+C and return its status instead of leaving a
+	# pending signal for Bash. Do not mistake that for an ordinary failure.
+	case "$status" in
+	130) on_interrupt 130 SIGINT ;;
+	143) on_interrupt 143 SIGTERM ;;
+	esac
+	return "$status"
+}
+
+command_execute() {
+	local label="$1" child
+	shift
+	command_progress "$label"
+	# Explicit stdin redirection prevents Bash from substituting /dev/null
+	# for an asynchronous command. Leave job control off to retain the TTY.
+	"$@" <&0 &
+	child=$!
+	COMMAND_PIDS+=("$child")
+	command_wait "$child" "$label"
+}
+
+command_capture() {
+	local destination="$1" label="$2" capture_dir="" status=0 captured
+	shift 2
+	command_temp_dir capture_dir || return 1
+	command_execute "$label" "$@" >"$capture_dir/stdout" || status=$?
+	captured="$(cat "$capture_dir/stdout")"
+	command_remove_temp "$capture_dir"
+	printf -v "$destination" '%s' "$captured"
+	return "$status"
+}
+
+# Follow a regular file so a detached install-script child cannot hold a
+# logging pipe open after the command we launched has finished.
+command_follow_log() {
+	local log_path="$1" done_path="$2" timer="" line="" finished=0
+	trap - EXIT
+	trap '[ -z "$timer" ] || { kill "$timer" 2>/dev/null; wait "$timer" 2>/dev/null; }; exit 0' TERM INT
+	exec 7<"$log_path" || return 1
+	while :; do
+		[ ! -e "$done_path" ] || finished=1
+		line=""
+		while IFS= read -r -u7 line; do
+			printf '%s\n' "$line" >&2
+			line=""
+		done
+		# EOF can occur halfway through a prompt without a trailing newline.
+		[ -z "$line" ] || printf '%s' "$line" >&2
+		[ "$finished" -eq 0 ] || return 0
+		sleep 0.1 &
+		timer=$!
+		wait "$timer" || return 0
+		timer=""
+	done
+}
+
+command_logged() {
+	local label="$1" log_path="$2" stream="$3" stream_dir="" reader status=0
+	shift 3
+	command_temp_dir stream_dir || return 1
+	: >"$log_path" || {
+		command_remove_temp "$stream_dir"
+		return 1
+	}
+	command_follow_log "$log_path" "$stream_dir/done" &
+	reader=$!
+	COMMAND_PIDS+=("$reader")
+	if [ "$stream" = stderr ]; then
+		command_execute "$label" "$@" 2>"$log_path" || status=$?
+	else
+		command_execute "$label" "$@" >"$log_path" 2>&1 || status=$?
+	fi
+	: >"$stream_dir/done"
+	wait "$reader" || { [ "$status" -ne 0 ] || status=1; }
+	command_forget_pid "$reader"
+	command_remove_temp "$stream_dir"
+	return "$status"
+}
+
 run() {
 	debug "+ $*"
 	if [ "$DRY_RUN" -eq 1 ]; then
 		return 0
 	fi
 	if [ "$JSON" -eq 1 ]; then
-		"$@" 1>&2
+		command_execute "$CURRENT_MODULE: $*" "$@" 1>&2
 	else
-		"$@"
+		command_execute "$CURRENT_MODULE: $*" "$@"
 	fi
 }
 
@@ -753,9 +895,9 @@ run_npm_global_install_logged() {
 
 	debug "+ npm install -g $*"
 	if [ "$JSON" -eq 1 ]; then
-		npm install -g "$@" 1>&2 2>"$npm_err_log"
+		command_logged "node: installing ${*: -1}" "$npm_err_log" stderr npm install -g "$@" 1>&2
 	else
-		npm install -g "$@" 2>"$npm_err_log"
+		command_logged "node: installing ${*: -1}" "$npm_err_log" stderr npm install -g "$@"
 	fi
 }
 
@@ -830,23 +972,23 @@ npm_preflight_candidate_engine() {
 		preflight_options+=("$flag")
 	done
 
-	local tmp_base="${TMPDIR:-/tmp}"
-	local npm_err_log=""
-	npm_err_log="$(mktemp "${tmp_base%/}/updates-npm-engine.XXXXXX" 2>/dev/null || mktemp -t updates-npm-engine.XXXXXX 2>/dev/null)" || {
+	local npm_log_dir="" npm_err_log=""
+	command_temp_dir npm_log_dir || {
 		command_outcome_set ok command-succeeded ""
 		return 0
 	}
 
+	npm_err_log="$npm_log_dir/stderr"
 	debug "+ npm install -g ${preflight_options[*]} --dry-run --ignore-scripts --engine-strict --loglevel=error -- ${package}"
 	npm_config_force=false npm_config_engine_strict=true npm_config_loglevel=error \
 		NPM_CONFIG_FORCE=false NPM_CONFIG_ENGINE_STRICT=true NPM_CONFIG_LOGLEVEL=error \
-		npm install -g "${preflight_options[@]}" --dry-run --ignore-scripts --engine-strict --loglevel=error -- "$package" >/dev/null 2>"$npm_err_log"
+		command_execute "node: checking engine compatibility for ${package}" npm install -g "${preflight_options[@]}" --dry-run --ignore-scripts --engine-strict --loglevel=error -- "$package" >/dev/null 2>"$npm_err_log"
 	if grep -q 'EBADENGINE' "$npm_err_log"; then
 		command_outcome_set skip incompatible-engine "package is incompatible with the active Node runtime"
 	else
 		command_outcome_set ok command-succeeded ""
 	fi
-	rm -f "$npm_err_log"
+	command_remove_temp "$npm_log_dir"
 }
 
 run_npm_global_install_one() {
@@ -862,11 +1004,10 @@ run_npm_global_install_one() {
 
 	local peer_retried=0
 	local scripts_retried=0
-	local tmp_base="${TMPDIR:-/tmp}"
 
 	while :; do
-		local npm_err_log=""
-		npm_err_log="$(mktemp "${tmp_base%/}/updates-npm.XXXXXX" 2>/dev/null || mktemp -t updates-npm.XXXXXX 2>/dev/null)" || {
+		local npm_log_dir="" npm_err_log=""
+		command_temp_dir npm_log_dir || {
 			if run npm install -g "${install_options[@]}" -- "$package"; then
 				return 0
 			fi
@@ -874,6 +1015,7 @@ run_npm_global_install_one() {
 			return 1
 		}
 
+		npm_err_log="$npm_log_dir/stderr"
 		run_npm_global_install_logged "$npm_err_log" "${install_options[@]}" -- "$package"
 		local status=$?
 		npm_classify_install_outcome "$status" "$npm_err_log"
@@ -883,21 +1025,17 @@ run_npm_global_install_one() {
 			if npm_allow_scripts_warning_in_log "$npm_err_log"; then
 				warn "node: npm reported install scripts needing approval, but no allow-scripts list could be parsed"
 			fi
-			if [ -s "$npm_err_log" ]; then
-				cat "$npm_err_log" >&2
-			fi
-			rm -f "$npm_err_log"
+			command_remove_temp "$npm_log_dir"
 			return 0
 			;;
 		retry:peer-resolution)
 			if [ "$peer_retried" -eq 1 ]; then
 				err "node: npm install failed for ${package} after peer dependency retry"
-				[ ! -s "$npm_err_log" ] || cat "$npm_err_log" >&2
-				rm -f "$npm_err_log"
+				command_remove_temp "$npm_log_dir"
 				return 1
 			fi
 			warn "node: npm peer dependency resolution failed for ${package}; retrying with --legacy-peer-deps"
-			rm -f "$npm_err_log"
+			command_remove_temp "$npm_log_dir"
 			local -a retry_options=()
 			local flag
 			for flag in "${install_options[@]}"; do
@@ -911,25 +1049,22 @@ run_npm_global_install_one() {
 		retry:install-scripts)
 			if [ "$scripts_retried" -eq 1 ]; then
 				warn "node: npm install completed for ${package}, but npm still reports install scripts needing approval after retry"
-				[ ! -s "$npm_err_log" ] || cat "$npm_err_log" >&2
-				rm -f "$npm_err_log"
+				command_remove_temp "$npm_log_dir"
 				return 0
 			fi
 			warn "node: npm install scripts need approval for ${package}; retrying once with npm-provided allow-scripts list"
-			rm -f "$npm_err_log"
+			command_remove_temp "$npm_log_dir"
 			install_options=("$COMMAND_OUTCOME_RETRY_ARG" "${install_options[@]}")
 			scripts_retried=1
 			;;
 		fail:incompatible-engine)
 			err "node: ${package} is incompatible with the active Node runtime"
-			[ ! -s "$npm_err_log" ] || cat "$npm_err_log" >&2
-			rm -f "$npm_err_log"
+			command_remove_temp "$npm_log_dir"
 			return 1
 			;;
 		*)
 			err "node: npm install failed for ${package}"
-			[ ! -s "$npm_err_log" ] || cat "$npm_err_log" >&2
-			rm -f "$npm_err_log"
+			command_remove_temp "$npm_log_dir"
 			return 1
 			;;
 		esac
@@ -970,6 +1105,14 @@ python_launcher_reset() {
 	PYTHON_CMD_LABEL=""
 }
 
+python_launcher_probe() {
+	if [ "$DOCTOR" -eq 1 ]; then
+		"$@" -c 'import sys' >/dev/null 2>&1
+	else
+		command_execute "python: checking interpreter $*" "$@" -c 'import sys' >/dev/null 2>&1
+	fi
+}
+
 python_launcher_resolve() {
 	if [ "$PYTHON_LAUNCHER_READY" -eq 1 ]; then
 		[ -n "$PYTHON_CMD" ]
@@ -978,14 +1121,14 @@ python_launcher_resolve() {
 
 	python_launcher_reset
 
-	if cmd_exists py && py -3 -c 'import sys' >/dev/null 2>&1; then
+	if cmd_exists py && python_launcher_probe py -3; then
 		PYTHON_CMD="py"
 		PYTHON_CMD_ARG="-3"
 		PYTHON_CMD_LABEL="py -3"
-	elif cmd_exists python && python -c 'import sys' >/dev/null 2>&1; then
+	elif cmd_exists python && python_launcher_probe python; then
 		PYTHON_CMD="python"
 		PYTHON_CMD_LABEL="python"
-	elif cmd_exists python3 && python3 -c 'import sys' >/dev/null 2>&1; then
+	elif cmd_exists python3 && python_launcher_probe python3; then
 		PYTHON_CMD="python3"
 		PYTHON_CMD_LABEL="python3"
 	fi
@@ -1005,6 +1148,15 @@ python_run_cmd() {
 	fi
 
 	"$PYTHON_CMD" "$@"
+}
+
+python_capture() {
+	local destination="$1" label="$2"
+	shift 2
+	python_launcher_resolve || return 1
+	local -a interpreter=("$PYTHON_CMD")
+	[ -z "$PYTHON_CMD_ARG" ] || interpreter+=("$PYTHON_CMD_ARG")
+	command_capture "$destination" "$label" "${interpreter[@]}" "$@"
 }
 
 resolve_ncu_runner() {
@@ -1048,7 +1200,9 @@ resolve_ncu_runner() {
 
 ncu_direct_supports_engines_node() {
 	local cmd="$1"
-	"$cmd" --help enginesNode 2>&1 | grep -q -- '--enginesNode'
+	local help=""
+	command_capture help "node: checking npm-check-updates capabilities" "$cmd" --help enginesNode 2>/dev/null || return 1
+	[[ "$help" = *--enginesNode* ]]
 }
 
 init_node_tools() {
@@ -1076,10 +1230,10 @@ init_fnm_node_tools() {
 	[ -n "$fnm_cmd" ] || return 1
 
 	local fnm_env=""
-	fnm_env="$("$fnm_cmd" env --shell bash 2>/dev/null)" || return 1
+	command_capture fnm_env "node: initializing fnm" "$fnm_cmd" env --shell bash 2>/dev/null || return 1
 	[ -n "$fnm_env" ] || return 1
 	eval "$fnm_env" >/dev/null 2>&1 || return 1
-	"$fnm_cmd" use --silent-if-unchanged default >/dev/null 2>&1 || return 1
+	command_execute "node: selecting default fnm runtime" "$fnm_cmd" use --silent-if-unchanged default >/dev/null 2>&1 || return 1
 	return 0
 }
 
@@ -1127,18 +1281,6 @@ ncu_command_label() {
 	case "$NCU_MODE" in
 	cmd) stdout_print "${NCU_CMD} -g --enginesNode --jsonUpgraded" ;;
 	npx) stdout_print "npx --yes npm-check-updates -g --enginesNode --jsonUpgraded" ;;
-	*) return 1 ;;
-	esac
-}
-
-ncu_run_json_upgraded() {
-	if ! resolve_ncu_runner; then
-		return 1
-	fi
-
-	case "$NCU_MODE" in
-	cmd) "$NCU_CMD" -g --enginesNode --jsonUpgraded ;;
-	npx) npx --yes npm-check-updates -g --enginesNode --jsonUpgraded ;;
 	*) return 1 ;;
 	esac
 }
@@ -2517,13 +2659,14 @@ ensure_cmd_or_skip() {
 }
 
 json_pairs() {
-	# Prints tab-delimited key/value pairs from a JSON object on stdin.
+	local destination="$1"
+	# Capture tab-delimited key/value pairs from a JSON object on stdin.
 	if python_launcher_resolve; then
-		python_run_cmd -c 'import sys, json; obj=json.load(sys.stdin); [print("%s\t%s" % (k, v)) for k, v in obj.items()]'
+		python_capture "$destination" "node: reading upgrade plan" -c 'import sys, json; obj=json.load(sys.stdin); [print("%s\t%s" % (k, v)) for k, v in obj.items()]'
 		return $?
 	fi
 	if cmd_exists node; then
-		node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{const o=JSON.parse(d||"{}");for(const k of Object.keys(o)){process.stdout.write(k+"\t"+o[k]+"\n");}});'
+		command_capture "$destination" "node: reading upgrade plan" node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{const o=JSON.parse(d||"{}");for(const k of Object.keys(o)){process.stdout.write(k+"\t"+o[k]+"\n");}});'
 		return $?
 	fi
 	return 1
@@ -2540,21 +2683,21 @@ python_externally_managed() {
 	fi
 
 	local out
-	if ! out="$(
-		python_run_cmd -c 'import sysconfig, pathlib; paths=sysconfig.get_paths(); c=[pathlib.Path(paths[k])/"EXTERNALLY-MANAGED" for k in ("stdlib","platstdlib","purelib","platlib") if paths.get(k)]; print("1" if any(p.exists() for p in c) else "0")' 2>/dev/null
-	)"; then
+	if ! python_capture out "python: checking environment" -c 'import sysconfig, pathlib; paths=sysconfig.get_paths(); c=[pathlib.Path(paths[k])/"EXTERNALLY-MANAGED" for k in ("stdlib","platstdlib","purelib","platlib") if paths.get(k)]; print("1" if any(p.exists() for p in c) else "0")' 2>/dev/null; then
 		return 1
 	fi
 	[ "$out" = "1" ]
 }
 
 python_pip_supports_break_system_packages() {
-	python_run_cmd -m pip install --help 2>/dev/null | grep -q -- '--break-system-packages'
+	local help=""
+	python_capture help "python: checking pip capabilities" -m pip install --help 2>/dev/null || return 1
+	[[ "$help" = *--break-system-packages* ]]
 }
 
 python_pip_supports_guard_reports() {
 	local help
-	if ! help="$(python_run_cmd -m pip install --help 2>/dev/null)"; then
+	if ! python_capture help "python: checking pip report support" -m pip install --help 2>/dev/null; then
 		return 1
 	fi
 	printf '%s\n' "$help" | grep -q -- '--dry-run' || return 1
@@ -2584,10 +2727,10 @@ file_lines_subset_of() {
 }
 
 python_guard_plan_decision() {
-	local report_path="$1"
-	shift
+	local destination="$1" report_path="$2"
+	shift 2
 
-	python_run_cmd - "$report_path" "$@" <<'PY'
+	python_capture "$destination" "python: inspecting dependency plan" - "$report_path" "$@" <<'PY'
 import json
 import os
 import site
@@ -2781,33 +2924,40 @@ module_brew() {
 		warn "If you see a system notification like \"<Terminal App> tried modifying your system but was stopped/prevented\", enable App Management for your terminal app (e.g. Ghostty), or rerun with --brew-mode formula."
 	fi
 
+	local -a brew_command=(brew)
+	if [ "$NON_INTERACTIVE" -eq 1 ]; then
+		brew_command=(env HOMEBREW_NO_ASK=1 brew)
+	elif [ -t 0 ]; then
+		log "Homebrew may ask for confirmation after the upgrade table. Answer its prompt, or use --non-interactive to proceed without confirmation."
+	fi
+
 	if [ "$DRY_RUN" -eq 1 ]; then
-		log "DRY RUN: brew update"
+		log "DRY RUN: ${brew_command[*]} update"
 		if [ "$BREW_CASKS" -eq 0 ]; then
-			log "DRY RUN: brew upgrade --formula"
+			log "DRY RUN: ${brew_command[*]} upgrade --formula"
 		elif [ "$BREW_GREEDY" -eq 1 ]; then
-			log "DRY RUN: brew upgrade --greedy"
+			log "DRY RUN: ${brew_command[*]} upgrade --greedy"
 		else
-			log "DRY RUN: brew upgrade"
+			log "DRY RUN: ${brew_command[*]} upgrade"
 		fi
 		if [ "$BREW_CLEANUP" -eq 1 ]; then
-			log "DRY RUN: brew cleanup"
+			log "DRY RUN: ${brew_command[*]} cleanup"
 		fi
 		return 0
 	fi
 
-	run brew update || return 1
+	run "${brew_command[@]}" update || return 1
 
 	if [ "$BREW_CASKS" -eq 0 ]; then
-		run brew upgrade --formula || return 1
+		run "${brew_command[@]}" upgrade --formula || return 1
 	elif [ "$BREW_GREEDY" -eq 1 ]; then
-		run brew upgrade --greedy || return 1
+		run "${brew_command[@]}" upgrade --greedy || return 1
 	else
-		run brew upgrade || return 1
+		run "${brew_command[@]}" upgrade || return 1
 	fi
 
 	if [ "$BREW_CLEANUP" -eq 1 ]; then
-		run brew cleanup || return 1
+		run "${brew_command[@]}" cleanup || return 1
 	fi
 
 	return 0
@@ -2850,19 +3000,19 @@ shell_detect_omz_custom_dir() {
 git_repo_preflight() {
 	local repo="$1"
 	local branch=""
-	if ! branch="$(git -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null)" || [ -z "$branch" ]; then
+	if ! command_capture branch "git: inspecting $repo (branch)" git -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null || [ -z "$branch" ]; then
 		command_outcome_set skip detached-head "git: ${repo}: detached HEAD; skipping"
 		return 0
 	fi
 
 	local upstream=""
-	if ! upstream="$(git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)" || [ -z "$upstream" ]; then
+	if ! command_capture upstream "git: inspecting $repo (upstream)" git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || [ -z "$upstream" ]; then
 		command_outcome_set skip missing-upstream "git: ${repo}: branch ${branch} has no upstream; skipping"
 		return 0
 	fi
 
 	local worktree_status=""
-	if ! worktree_status="$(git -C "$repo" status --porcelain --untracked-files=no 2>/dev/null)"; then
+	if ! command_capture worktree_status "git: inspecting $repo (worktree_status)" git -C "$repo" status --porcelain --untracked-files=no 2>/dev/null; then
 		command_outcome_set fail pull-failed "git: ${repo}: failed to inspect worktree state"
 		return 0
 	fi
@@ -2872,7 +3022,7 @@ git_repo_preflight() {
 	fi
 
 	local counts=""
-	if ! counts="$(git -C "$repo" rev-list --left-right --count "HEAD...@{upstream}" 2>/dev/null)"; then
+	if ! command_capture counts "git: inspecting $repo (counts)" git -C "$repo" rev-list --left-right --count "HEAD...@{upstream}" 2>/dev/null; then
 		command_outcome_set fail pull-failed "git: ${repo}: failed to compare HEAD with ${upstream}"
 		return 0
 	fi
@@ -2910,12 +3060,15 @@ run_git_pull() {
 }
 
 run_git_post_pull() {
-	local repo="$1"
+	local repo="$1" previous="$PWD" status=0
+	cd "$repo" || return 1
 	if [ "$NON_INTERACTIVE" -eq 1 ]; then
-		(cd "$repo" && run env GIT_TERMINAL_PROMPT=0 ./scripts/update.sh)
-		return $?
+		run env GIT_TERMINAL_PROMPT=0 ./scripts/update.sh || status=$?
+	else
+		run ./scripts/update.sh || status=$?
 	fi
-	(cd "$repo" && run ./scripts/update.sh)
+	cd "$previous" || return 1
+	return "$status"
 }
 
 git_sync_repositories() {
@@ -3232,13 +3385,15 @@ module_node() {
 	fi
 
 	local json
-	if ! json="$(ncu_run_json_upgraded)"; then
+	local -a ncu_args=("$NCU_CMD")
+	if [ "$NCU_MODE" = npx ]; then ncu_args+=(--yes npm-check-updates); fi
+	if ! command_capture json "node: checking global package updates" "${ncu_args[@]}" -g --enginesNode --jsonUpgraded; then
 		err "node: ncu failed"
 		return 1
 	fi
 
 	local pairs
-	if ! pairs="$(printf '%s' "$json" | json_pairs)"; then
+	if ! json_pairs pairs <<<"$json"; then
 		err "node: failed to parse ncu JSON output"
 		return 1
 	fi
@@ -3299,7 +3454,10 @@ module_python() {
 		return 2
 	fi
 
-	if ! python_run_cmd -m pip --version >/dev/null 2>&1; then
+	# Captured only to discard version output while retaining the exit status.
+	# shellcheck disable=SC2034
+	local pip_version=""
+	if ! python_capture pip_version "python: checking pip version" -m pip --version 2>/dev/null; then
 		if missing_dependency_is_error; then
 			err "python: required module not found: pip (${PYTHON_CMD_LABEL} -m pip)"
 			return 1
@@ -3326,6 +3484,7 @@ module_python() {
 	local -a pip_install_args=("${python_args[@]}" -m pip --disable-pip-version-check install -U)
 	if [ "$NON_INTERACTIVE" -eq 1 ]; then
 		pip_install_args+=(--no-input)
+		pip_list_args+=(--no-input)
 	fi
 	if [ "$use_user" -eq 1 ]; then
 		pip_list_args+=(--user)
@@ -3367,13 +3526,13 @@ module_python() {
 	fi
 
 	local outdated_json
-	if ! outdated_json="$("${pip_list_args[@]}")"; then
+	if ! command_capture outdated_json "python: checking outdated packages" "${pip_list_args[@]}"; then
 		err "python: failed to query outdated packages"
 		return 1
 	fi
 
 	local names
-	if ! names="$(printf '%s' "$outdated_json" | python_run_cmd -c 'import sys, json; data=json.load(sys.stdin); print("\n".join([p.get("name","") for p in data if p.get("name")]))' 2>/dev/null)"; then
+	if ! python_capture names "python: reading outdated package list" -c 'import sys, json; data=json.load(sys.stdin); print("\n".join([p.get("name","") for p in data if p.get("name")]))' <<<"$outdated_json" 2>/dev/null; then
 		err "python: failed to parse pip output"
 		return 1
 	fi
@@ -3398,7 +3557,7 @@ module_python() {
 		log "python: guarded user-site mode; dry-running wheel-only plans before installing."
 
 		local guard_log_dir=""
-		guard_log_dir="$(mktemp -d 2>/dev/null || mktemp -d -t updates-pip-guard)" || {
+		command_temp_dir guard_log_dir || {
 			err "python: failed to create temp dir for pip guard logs"
 			return 1
 		}
@@ -3412,7 +3571,7 @@ module_python() {
 			report_path="${guard_log_dir}/${pkg}.json"
 			plan_log="${guard_log_dir}/${pkg}.log"
 			debug "+ ${pip_guard_install_args[*]} --dry-run --report $report_path $pkg"
-			if ! "${pip_guard_install_args[@]}" --dry-run --report "$report_path" "$pkg" >"$plan_log" 2>&1; then
+			if ! command_execute "python: planning $pkg" "${pip_guard_install_args[@]}" --dry-run --report "$report_path" "$pkg" >"$plan_log" 2>&1; then
 				warn "python: skipping $pkg: pip dry-run failed"
 				if [ -s "$plan_log" ]; then
 					cat "$plan_log" >&"$HUMAN_FD"
@@ -3420,9 +3579,9 @@ module_python() {
 				continue
 			fi
 
-			if ! decision="$(python_guard_plan_decision "$report_path" "$pkg")"; then
+			if ! python_guard_plan_decision decision "$report_path" "$pkg"; then
 				err "python: failed to inspect pip dry-run report for $pkg"
-				rm -rf "$guard_log_dir"
+				command_remove_temp "$guard_log_dir"
 				return 1
 			fi
 			old_ifs="$IFS"
@@ -3439,7 +3598,7 @@ module_python() {
 				;;
 			*)
 				err "python: unexpected pip guard response for $pkg: $decision"
-				rm -rf "$guard_log_dir"
+				command_remove_temp "$guard_log_dir"
 				return 1
 				;;
 			esac
@@ -3447,24 +3606,24 @@ module_python() {
 
 		if [ "${#safe_packages[@]}" -eq 0 ]; then
 			log "python: no guarded user-site packages are safe to upgrade."
-			rm -rf "$guard_log_dir"
+			command_remove_temp "$guard_log_dir"
 			return 0
 		fi
 
 		report_path="${guard_log_dir}/safe-set.json"
 		plan_log="${guard_log_dir}/safe-set.log"
 		debug "+ ${pip_guard_install_args[*]} --dry-run --report $report_path ${safe_packages[*]}"
-		if ! "${pip_guard_install_args[@]}" --dry-run --report "$report_path" "${safe_packages[@]}" >"$plan_log" 2>&1; then
+		if ! command_execute "python: planning combined package set" "${pip_guard_install_args[@]}" --dry-run --report "$report_path" "${safe_packages[@]}" >"$plan_log" 2>&1; then
 			warn "python: skipping guarded user-site install: combined pip dry-run failed"
 			if [ -s "$plan_log" ]; then
 				cat "$plan_log" >&"$HUMAN_FD"
 			fi
-			rm -rf "$guard_log_dir"
+			command_remove_temp "$guard_log_dir"
 			return 0
 		fi
-		if ! decision="$(python_guard_plan_decision "$report_path" "${safe_packages[@]}")"; then
+		if ! python_guard_plan_decision decision "$report_path" "${safe_packages[@]}"; then
 			err "python: failed to inspect combined pip dry-run report"
-			rm -rf "$guard_log_dir"
+			command_remove_temp "$guard_log_dir"
 			return 1
 		fi
 		old_ifs="$IFS"
@@ -3473,7 +3632,7 @@ module_python() {
 		IFS="$old_ifs"
 		if [ "$status" != "ok" ]; then
 			warn "python: skipping guarded user-site install: $detail"
-			rm -rf "$guard_log_dir"
+			command_remove_temp "$guard_log_dir"
 			return 0
 		fi
 
@@ -3481,29 +3640,23 @@ module_python() {
 		check_baseline_err="${guard_log_dir}/pip-check-before.err"
 		check_baseline_failed=0
 		debug "+ ${pip_check_args[*]}"
-		if ! "${pip_check_args[@]}" >"$check_baseline_log" 2>"$check_baseline_err"; then
+		if ! command_execute "python: checking installed dependencies" "${pip_check_args[@]}" >"$check_baseline_log" 2>"$check_baseline_err"; then
 			check_baseline_failed=1
 		fi
 
 		log "Upgrading ${#safe_packages[@]} guarded Python packages..."
 		install_log="${guard_log_dir}/safe-set-install.log"
 		debug "+ ${pip_guard_install_args[*]} ${safe_packages[*]}"
-		if ! "${pip_guard_install_args[@]}" "${safe_packages[@]}" >"$install_log" 2>&1; then
+		if ! command_logged "python: installing guarded package set" "$install_log" combined "${pip_guard_install_args[@]}" "${safe_packages[@]}"; then
 			err "python: pip upgrade failed: guarded user-site package set"
-			if [ -s "$install_log" ]; then
-				cat "$install_log" >&"$HUMAN_FD"
-			fi
-			rm -rf "$guard_log_dir"
+			command_remove_temp "$guard_log_dir"
 			return 1
-		fi
-		if [ -s "$install_log" ]; then
-			cat "$install_log" >&"$HUMAN_FD"
 		fi
 
 		check_log="${guard_log_dir}/pip-check.log"
 		check_err="${guard_log_dir}/pip-check.err"
 		debug "+ ${pip_check_args[*]}"
-		if ! "${pip_check_args[@]}" >"$check_log" 2>"$check_err"; then
+		if ! command_execute "python: checking installed dependencies" "${pip_check_args[@]}" >"$check_log" 2>"$check_err"; then
 			if [ "$check_baseline_failed" -eq 1 ] && file_lines_subset_of "$check_log" "$check_baseline_log"; then
 				warn "python: pip check still reports pre-existing issues after guarded upgrade"
 				if [ -s "$check_log" ]; then
@@ -3512,7 +3665,7 @@ module_python() {
 				if [ -s "$check_err" ]; then
 					cat "$check_err" >&"$HUMAN_FD"
 				fi
-				rm -rf "$guard_log_dir"
+				command_remove_temp "$guard_log_dir"
 				return 0
 			fi
 			err "python: pip check failed after guarded upgrade"
@@ -3522,7 +3675,7 @@ module_python() {
 			if [ -s "$check_err" ]; then
 				cat "$check_err" >&"$HUMAN_FD"
 			fi
-			rm -rf "$guard_log_dir"
+			command_remove_temp "$guard_log_dir"
 			return 1
 		fi
 		if [ -s "$check_log" ]; then
@@ -3532,7 +3685,7 @@ module_python() {
 			cat "$check_err" >&"$HUMAN_FD"
 		fi
 
-		rm -rf "$guard_log_dir"
+		command_remove_temp "$guard_log_dir"
 		return 0
 	fi
 
@@ -3543,48 +3696,63 @@ module_python() {
 	log "Upgrading ${#packages[@]} Python packages (parallel: ${PARALLEL})..."
 
 	local pip_log_dir=""
-	pip_log_dir="$(mktemp -d 2>/dev/null || mktemp -d -t updates-pip)" || {
+	command_temp_dir pip_log_dir || {
 		err "python: failed to create temp dir for pip logs"
 		return 1
 	}
 
-	local -a pids=()
-	local -a pid_pkgs=()
-	local failed=0
-
-	for pkg in "${packages[@]}"; do
-		debug "+ ${pip_install_args[*]} $pkg"
-		"${pip_install_args[@]}" "$pkg" >"${pip_log_dir}/${pkg}.log" 2>&1 &
-		pids+=("$!")
-		pid_pkgs+=("$pkg")
-
-		if [ "${#pids[@]}" -ge "$PARALLEL" ]; then
-			local pid="${pids[0]}"
-			local pid_pkg="${pid_pkgs[0]}"
-			if ! wait "$pid"; then
-				err "python: pip upgrade failed: $pid_pkg"
+	# Background workers cannot safely share prompts on stdin.
+	if [ "$NON_INTERACTIVE" -eq 0 ]; then pip_install_args+=(--no-input); fi
+	local -a pids=() pid_pkgs=()
+	local failed=0 next=0 i child status started="$SECONDS" last_progress="$SECONDS"
+	while [ "$next" -lt "${#packages[@]}" ] || [ "${#pids[@]}" -gt 0 ]; do
+		while [ "$next" -lt "${#packages[@]}" ] && [ "${#pids[@]}" -lt "$PARALLEL" ]; do
+			pkg="${packages[$next]}"
+			command_progress "python: installing $pkg"
+			"${pip_install_args[@]}" "$pkg" </dev/null >"${pip_log_dir}/${pkg}.log" 2>&1 &
+			child=$!
+			COMMAND_PIDS+=("$child")
+			pids+=("$child")
+			pid_pkgs+=("$pkg")
+			next=$((next + 1))
+		done
+		local -a pending=() pending_pkgs=()
+		for i in "${!pids[@]}"; do
+			child="${pids[$i]}"
+			pkg="${pid_pkgs[$i]}"
+			if kill -0 "$child" 2>/dev/null; then
+				pending+=("$child")
+				pending_pkgs+=("$pkg")
+				continue
+			fi
+			status=0
+			wait "$child" || status=$?
+			command_forget_pid "$child"
+			case "$status" in 130) on_interrupt 130 SIGINT ;; 143) on_interrupt 143 SIGTERM ;; esac
+			if [ "$status" -ne 0 ]; then
+				err "python: pip upgrade failed: $pkg"
 				failed=1
+			else
+				command_progress "python: finished $pkg"
 			fi
-			if [ -s "${pip_log_dir}/${pid_pkg}.log" ]; then
-				cat "${pip_log_dir}/${pid_pkg}.log" >&"$HUMAN_FD"
+			[ ! -s "${pip_log_dir}/${pkg}.log" ] || cat "${pip_log_dir}/${pkg}.log" >&"$HUMAN_FD"
+		done
+		pids=("${pending[@]}")
+		pid_pkgs=("${pending_pkgs[@]}")
+		if [ "${#pids[@]}" -gt 0 ]; then
+			if [ "$((SECONDS - last_progress))" -ge 30 ]; then
+				command_progress "python: still running ($((SECONDS - started))s elapsed): ${pid_pkgs[*]}; Ctrl+C to cancel"
+				last_progress="$SECONDS"
 			fi
-			pids=("${pids[@]:1}")
-			pid_pkgs=("${pid_pkgs[@]:1}")
+			sleep 0.1 &
+			child=$!
+			COMMAND_PIDS+=("$child")
+			wait "$child" || true
+			command_forget_pid "$child"
 		fi
 	done
 
-	local i
-	for i in "${!pids[@]}"; do
-		if ! wait "${pids[$i]}"; then
-			err "python: pip upgrade failed: ${pid_pkgs[$i]}"
-			failed=1
-		fi
-		if [ -s "${pip_log_dir}/${pid_pkgs[$i]}.log" ]; then
-			cat "${pip_log_dir}/${pid_pkgs[$i]}.log" >&"$HUMAN_FD"
-		fi
-	done
-
-	rm -rf "$pip_log_dir"
+	command_remove_temp "$pip_log_dir"
 
 	if [ "$failed" -ne 0 ]; then
 		return 1
@@ -3886,14 +4054,32 @@ run_selected_modules() {
 	return 0
 }
 
-on_interrupt() {
-	local code="$1"
-	local sig="$2"
-	local pid
-	for pid in $(jobs -pr); do
+command_cleanup() {
+	local pid path
+	for pid in ${COMMAND_PIDS[@]+"${COMMAND_PIDS[@]}"}; do
 		kill "$pid" 2>/dev/null || true
 	done
-	err "Interrupted ($sig)."
+	if [ "${#COMMAND_PIDS[@]}" -gt 0 ]; then
+		# Give helpers time to reap their timer before escalating.
+		sleep 0.1 &
+		local grace=$!
+		wait "$grace" 2>/dev/null || true
+	fi
+	# Cancellation must not wait indefinitely for a tool ignoring SIGTERM.
+	for pid in ${COMMAND_PIDS[@]+"${COMMAND_PIDS[@]}"}; do
+		kill -KILL "$pid" 2>/dev/null || true
+		wait "$pid" 2>/dev/null || true
+	done
+	COMMAND_PIDS=()
+	for path in ${COMMAND_TEMPS[@]+"${COMMAND_TEMPS[@]}"}; do rm -rf -- "$path"; done
+	COMMAND_TEMPS=()
+}
+
+on_interrupt() {
+	local code="$1" sig="$2"
+	trap '' INT TERM
+	command_cleanup
+	err "Interrupted ($sig)." 1>&5 2>&6
 	exit "$code"
 }
 
@@ -3925,6 +4111,7 @@ main() {
 		fi
 	fi
 
+	exec 4>&"$HUMAN_FD" 5>&1 6>&2
 	init_platform_cache
 	init_colors
 	apply_platform_defaults
@@ -3934,6 +4121,7 @@ main() {
 
 	trap 'on_interrupt 130 SIGINT' INT
 	trap 'on_interrupt 143 SIGTERM' TERM
+	trap command_cleanup EXIT
 
 	maybe_self_update "$@"
 

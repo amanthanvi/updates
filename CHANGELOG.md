@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - `skills` module on Bash and native Windows: updates agent skills in both project and global scopes via `skills update --project --global` (matching the interactive "Both" option without prompting), falling back to `npx --yes skills update` when the `skills` CLI is not installed; `--non-interactive` appends `--yes` to skip upstream-deletion prompts.
 
+### Changed
+
+- Show Unix command phases and elapsed progress every 30 seconds at info/debug log levels, preserving JSONL stdout and allowing long installations to continue until cancelled.
+- Stream Unix npm installation stderr and guarded pip installation output; report parallel pip workers as they finish while retaining separate package logs.
+
+### Fixed
+
+- Make Unix command and capture waits interruptible, preserve interactive stdin and exit statuses, and clean owned children, output helpers, and temporary resources on SIGINT/SIGTERM.
+- Disable prompts for background pip installations and for discovery/planning under `--non-interactive`.
+- Honor `--non-interactive` for Homebrew upgrade-table confirmation with command-scoped `HOMEBREW_NO_ASK=1`; explain the confirmation prompt during interactive runs.
+
 ## [2.1.3] - 2026-08-10
 
 ### Fixed

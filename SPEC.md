@@ -283,6 +283,7 @@ When passed, `~/.updatesrc` is not read. Useful for CI, testing, and debugging.
 Output is intended to be stable and easy to grep.
 
 - Normal progress goes to **stdout** (or **stderr** when `--json` is active).
+- On Unix, managed commands and potentially blocking npm, pip, and Git captures announce their module/package and phase before waiting. While waiting, human progress messages include elapsed time every 30 seconds at `info`/`debug` log levels. They add no JSONL event types or fields.
 - Warnings and errors go to **stderr** and are prefixed:
   - `WARN: ...`
   - `ERROR: ...`
@@ -312,7 +313,13 @@ See [Section 3.8](#38---json-jsonl-streaming-output) for the full event type tab
 
 When `--json` is active, the log file receives the human-readable stderr output, not the JSONL stream.
 
-### 5.4 Color / emoji
+### 5.4 Unix command execution and cancellation
+
+- Shared Bash 3.2-compatible execution and capture helpers preserve command exit statuses and foreground interactive stdin.
+- SIGINT/SIGTERM interrupt waits, terminate and reap owned children and output helpers, clean temporary resources, and exit `130`/`143`, respectively. No later module runs after cancellation; cleanup never uses broad process-name kills.
+- Long installations continue until completion or cancellation; no automatic installation timeout is added. Cancellation does not roll back changes already made by an underlying tool.
+
+### 5.5 Color / emoji
 
 - ANSI colors are enabled when stderr/stdout are TTYs and `NO_COLOR` is not set.
 - `--no-color` or `NO_COLOR=1` disables colors globally.
@@ -404,6 +411,7 @@ Purpose: update and upgrade Homebrew formulae (and optionally casks).
   - `--brew-mode casks`: `brew upgrade`
   - `--brew-mode greedy`: `brew upgrade --greedy`
   - If `--brew-cleanup` (default): `brew cleanup`
+- On Unix, `-n` / `--non-interactive` sets `HOMEBREW_NO_ASK=1` only for brew commands to disable Homebrew upgrade-table confirmation. Interactive runs retain Homebrew prompts and print an info-level hint before upgrading. No persistent environment or Homebrew configuration changes are made.
 - Side effects: upgrades Homebrew-managed packages.
 
 ### 8.2 `shell`
@@ -480,7 +488,7 @@ Purpose: upgrade global npm packages using `npm-check-updates`.
 - Per package, if npm fails with `ERESOLVE`, retries once with `--legacy-peer-deps`; configured npm flags are retained, duplicate configured `--legacy-peer-deps` is removed for the retry, and the forced retry flag is appended once.
 - Per package, if npm succeeds but reports pending global install scripts, retries once with npm's suggested one-shot `--allow-scripts=...` list while retaining configured npm flags.
 - `EBADENGINE` and other fatal failures are not retried. Remaining compatible packages are still attempted; any final package failure makes the node module fail.
-- Superseded first-attempt diagnostics are suppressed after a successful retry. Final failures retain raw npm diagnostics plus a concise package-specific error.
+- On Unix, installation stderr streams live while being retained for engine checks and bounded retries; earlier attempt diagnostics therefore remain visible even after a successful retry. Native Windows suppresses superseded first-attempt diagnostics after a successful retry. Final failures retain raw npm diagnostics plus a concise package-specific error.
 - Side effects: upgrades global npm packages.
 
 The Git and Node hardening above is implemented behind private command-outcome seams. The authoritative Node engine preflight adds no runtime dependency. These mechanics do not add or change public v2 flags, configuration keys, exit codes, JSONL event types, or summary fields.
@@ -507,7 +515,8 @@ Purpose: upgrade global Python packages with `pip`.
   - Bash implementation, normal or `--pip-force`: `<launcher> -m pip list --outdated --format=json [--user]`, then `<launcher> -m pip install -U <pkg>` in parallel batches of `--parallel <N>`.
   - Bash implementation, externally-managed default: `<launcher> -m pip list --outdated --format=json --user`, then per-package `pip install -U --user [--break-system-packages if supported] --only-binary=:all: --dry-run --report <report> <pkg>` guard checks. If pip lacks `--dry-run --report`, this path errors under `--only` and skips otherwise. Packages are skipped if the report would install packages absent from the user site, use source distributions, or violate installed/planned dependency requirements. The safe subset is checked again in one combined dry-run, installed in one wheel-only user-site transaction only if that combined plan is safe, then `pip check` runs. If post-install `pip check` failures were already present before install, the guarded path warns instead of failing on the pre-existing environment issue.
   - Native Windows PowerShell implementation: same discovery/install flow as the normal path, but upgrades run sequentially and `--parallel <N>` is rejected.
-- With `-n`: adds `--no-input` to pip calls.
+- With `-n`: disables pip input, including Unix discovery and planning calls. Unix background pip installations always disable input, even without `-n`; foreground interactive commands retain input otherwise.
+- On Unix, guarded pip installation output streams live. Parallel workers retain separate package logs, identify active packages, and replay each package log when that worker completes, preserving its exit status.
 - Side effects: upgrades Python packages; does not upgrade the Python interpreter itself.
 
 ### 8.9 `uv`
@@ -691,7 +700,7 @@ Purpose: list available macOS software updates.
 - **PII:** No user data is collected or transmitted.
 - **Abuse cases:**
   - Malicious or tampered GitHub release asset: mitigated by immutable releases, GitHub asset digests, `SHA256SUMS`, manifest validation, and HTTPS.
-  - pip parallel upgrades: stderr interleaving is cosmetic, not a security issue.
+  - pip parallel upgrades retain separate package logs; replay happens as each worker completes.
   - `--pip-force` is explicitly opt-in and documented as unsafe.
 - **Privilege escalation:** `sudo` is only used for Linux system package upgrades. Native Windows self-update never elevates; unknown or non-writable layouts warn and skip.
 
