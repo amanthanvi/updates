@@ -182,6 +182,10 @@ Tests require `python3` with either public `packaging` or pip's vendored packagi
 
 - This script updates _global_ environments (`npm -g`, `pip`), which can be disruptive.
 - Use `--dry-run` first, and consider `--only`/`--skip` to control scope.
+- Homebrew can pause after its upgrade table to request confirmation. Interactive runs retain this prompt and show a reminder; `updates -n` scopes `HOMEBREW_NO_ASK=1` to brew commands so unattended upgrades proceed without changing your shell or Homebrew configuration.
+- On macOS/Linux, slow commands and discovery steps show their current phase and a progress message every 30 seconds with elapsed time. These messages follow `--log-level` (`info` or `debug`) and go to stderr with `--json`. Long updates have no automatic installation timeout; use Ctrl+C to cancel.
+- Unix cancellation stops owned commands and output helpers, cleans temporary resources, and exits `130` for SIGINT or `143` for SIGTERM. Foreground interactive commands retain terminal input. An interrupted package installation may be incomplete.
+- Unix npm installation stderr and guarded pip installation output appear while commands run. Parallel pip packages keep separate logs and report completion as workers finish; background pip installations always disable prompts. `-n` also disables pip discovery and planning prompts.
 - For npm 11+ global installs, `updates` may retry once with npm's suggested one-shot `--allow-scripts=...` list so package postinstall steps can finish without changing persistent npm config.
 - Node updates are filtered against the active Node runtime and installed per package. An unexpected incompatible or otherwise failed package does not prevent later compatible packages from being attempted, but still fails the node module.
 - Git-backed `shell`/`repos` updates never infer tracking branches or alter local work. Detached HEADs, branches without upstreams, and dirty worktrees warn and skip; diverged histories and failed pulls/post-pull actions fail the module.
