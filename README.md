@@ -2,7 +2,7 @@
 
 A small, modular CLI to update common macOS, Linux, WSL, and Windows tooling.
 
-The v2 contract uses Bash on macOS/Linux/WSL and PowerShell 7 via `updates.cmd`/`updates.ps1` on native Windows. The v2.1 release adds offline diagnosis and safer Windows activation without changing existing v2 interfaces.
+The v2 contract uses Bash on macOS/Linux/WSL and PowerShell 7 via `updates.cmd`/`updates.ps1` on native Windows. The v2.2 release adds project/global skill updates and cancellable Unix commands with live progress, preserving existing v2 interfaces.
 
 This script can be disruptive (it updates global environments). Use `--dry-run` and scope with `--only` / `--skip`.
 
@@ -29,10 +29,10 @@ sudo mkdir -p /usr/local/bin
 sudo install -m 0755 ./updates /usr/local/bin/updates
 ```
 
-Native Windows (`v2.1.3`, PowerShell 7):
+Native Windows (`v2.2.0`, PowerShell 7):
 
 ```powershell
-$version = '2.1.3'
+$version = '2.2.0'
 $installer = Join-Path $env:TEMP 'install-updates-windows.ps1'
 
 Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/amanthanvi/updates/v$version/install-windows.ps1" -OutFile $installer
@@ -107,7 +107,7 @@ Modules are auto-detected: if the underlying command isn’t installed, the modu
 - `go`: update Go binaries from `GO_BINARIES` in `~/.updatesrc` (entries default to `@latest`)
 - `macos`: list available macOS software updates via `softwareupdate -l` (disabled by default; enable with `--macos-updates` or `--full`)
 
-Native Windows v2.1 default-on modules: `winget`, `node`, `bun`, `python`, `uv`, `pipx`, `rustup`, `claude`, `pi`, `skills`, `go`.
+Native Windows v2.2 default-on modules: `winget`, `node`, `bun`, `python`, `uv`, `pipx`, `rustup`, `claude`, `pi`, `skills`, `go`.
 On native Windows, `--full` selects every supported Windows module even if `SKIP_MODULES` in config would otherwise omit one; explicit `--skip` still wins.
 
 Platform support summary:
@@ -193,7 +193,7 @@ Tests require `python3` with either public `packaging` or pip's vendored packagi
 - These resilience changes preserve the public v2 CLI and JSONL contracts.
 - Since `v2.0.0`, `updates` itself is distributed through GitHub Releases only. No third-party package manager channel is supported.
 - Since `v2.0.0`, self-update is fixed to the canonical GitHub repo `amanthanvi/updates`; `UPDATES_SELF_UPDATE_REPO` is removed and setting it is an error.
-- Official self-update artifacts for `v2.1.3` are `updates`, `updates-windows.zip`, `updates-release.json`, and `SHA256SUMS`.
+- Official self-update artifacts for `v2.2.0` are `updates`, `updates-windows.zip`, `updates-release.json`, and `SHA256SUMS`.
 - Normal runs throttle GitHub release checks to about once every 24 hours using a small local cache under `XDG_CACHE_HOME`, `~/Library/Caches`, `~/.cache`, or `%LOCALAPPDATA%\\updates`; explicit `--self-update` forces a live check. Cached tags are untrusted hints and never replace live release, digest, checksum, or manifest verification before applying an update.
 - Native Windows self-update works only for official standalone installs rooted at `%LOCALAPPDATA%\\Programs\\updates` with a valid `install-source.json` receipt. Manual file copies warn and skip instead of being overwritten.
 - On macOS, Homebrew casks are disabled by default; enable with `--brew-mode casks` or `--brew-mode greedy` (or `--full`). On macOS 26+, cask upgrades may be blocked unless your terminal app is allowed under **Privacy & Security → App Management** (e.g. Ghostty). If you see a system notification like “\<Terminal App\> tried modifying your system…”, enable App Management or rerun with `--brew-mode formula`.

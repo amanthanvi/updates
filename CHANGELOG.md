@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-09-07
+
 ### Added
 
 - `skills` module on Bash and native Windows: updates agent skills in both project and global scopes via `skills update --project --global` (matching the interactive "Both" option without prompting), falling back to `npx --yes skills update` when the `skills` CLI is not installed; `--non-interactive` appends `--yes` to skip upstream-deletion prompts.

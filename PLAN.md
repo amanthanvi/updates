@@ -1,3 +1,11 @@
+# Release preparation: v2.2.0
+
+- [x] Include merged project/global skill support, the Windows project-directory fix, and Unix cancellation/progress improvements.
+- [x] Align Unix/Windows versions, installer defaults, self-update test fixtures, README, SPEC, and the dated changelog for v2.2.0.
+- Release gates: `./scripts/release.sh 2.2.0`, green cross-platform CI, and the existing GitHub release workflow's artifact and attestation verification.
+
+---
+
 # Plan: macOS stalls and visible update progress
 
 ## Goal
