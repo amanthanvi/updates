@@ -53,6 +53,7 @@ updates --dry-run
 updates --only brew,node --brew-mode formula
 updates --only linux -n
 updates --only winget,node,bun
+updates --only skills -n
 updates --full
 updates --skip python --log-file ./updates.log
 updates --json -n --no-self-update --log-level warn
@@ -101,7 +102,7 @@ Modules are auto-detected: if the underlying command isn’t installed, the modu
 - `rustup`: update Rust toolchains via `rustup update`
 - `claude`: update Claude Code CLI via `claude update`
 - `pi`: update the pi AI CLI and installed extensions via `pi update --all`
-- `skills`: update agent skills in both project and global scopes via `skills update` (falls back to `npx --yes skills update`); passing both scopes matches the interactive "Both" option without prompting
+- `skills`: update agent skills in both project and global scopes via `skills update --project --global` (falls back to `npx --yes skills update --project --global`); project scope uses the directory where you run `updates`, not all projects on the machine
 - `mise`: update mise and upgrade installed tools (`mise self-update`, `mise upgrade`)
 - `go`: update Go binaries from `GO_BINARIES` in `~/.updatesrc` (entries default to `@latest`)
 - `macos`: list available macOS software updates via `softwareupdate -l` (disabled by default; enable with `--macos-updates` or `--full`)

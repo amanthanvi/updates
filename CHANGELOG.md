@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Run native Windows skill updates from the caller's project directory instead of the `updates` installation directory, for both direct and `npx` execution.
 - Make Unix command and capture waits interruptible, preserve interactive stdin and exit statuses, and clean owned children, output helpers, and temporary resources on SIGINT/SIGTERM.
 - Disable prompts for background pip installations and for discovery/planning under `--non-interactive`.
 - Honor `--non-interactive` for Homebrew upgrade-table confirmation with command-scoped `HOMEBREW_NO_ASK=1`; explain the confirmation prompt during interactive runs.

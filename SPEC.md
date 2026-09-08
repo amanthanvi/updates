@@ -573,12 +573,13 @@ Purpose: update the `pi` AI coding CLI and its installed extensions (pinned sour
 
 ### 8.15 `skills`
 
-Purpose: update agent skills installed on the machine in both project and global scopes.
+Purpose: update agent skills in the caller's current project directory and global scope. This does not scan other projects on the machine.
 
 - Requires: the `skills` CLI (`npx skills`), or `npx` as a fallback adapter.
   - Resolution order: a direct `skills` command on `PATH` first, then `npx --yes skills`.
-  - If neither is available, default runs warn and skip; explicit `--only skills` fails.
+  - If neither is available, default runs log and skip; explicit `--only skills` fails.
 - Scope: runs `skills update --project --global`, which the skills CLI resolves to its interactive "Both" scope without prompting.
+- Working directory: preserve the caller's directory on Bash and native Windows, including when using the `npx` fallback; never substitute the `updates` installation directory.
 - Non-dry-run:
   - Bash: `<skills|npx --yes skills> update --project --global [--yes]`
   - Native Windows: `skills update --project --global` or `npx --yes skills update --project --global`
