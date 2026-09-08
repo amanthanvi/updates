@@ -33,12 +33,15 @@
 
 ## Execution checklist
 
-- [ ] Register a default-on `skills` module between `pi` and `mise` on Bash and native Windows.
-- [ ] Resolve the backing command as the `skills` CLI first, then `npx --yes skills`; skip gracefully when neither exists and fail under `--only`.
-- [ ] Run `skills update --project --global`, appending `--yes` under `--non-interactive`; dry-run prints the resolved command without executing.
-- [ ] Cover direct, npx-fallback, non-interactive, dry-run, and missing-dependency behavior in Bash tests; mirror success, fallback, and missing-dependency coverage in native Windows tests.
-- [ ] Update README, SPEC (module matrix, execution order, §8.15), CHANGELOG, and this plan.
-- [ ] Pass lint and tests before opening the PR.
+- [x] Register a default-on `skills` module between `pi` and `mise` on Bash and native Windows.
+- [x] Resolve the backing command as the `skills` CLI first, then `npx --yes skills`; skip gracefully when neither exists and fail under `--only`.
+- [x] Run `skills update --project --global`, appending `--yes` under `--non-interactive`; dry-run prints the resolved command without executing.
+- [x] Cover direct, npx-fallback, non-interactive, dry-run, and missing-dependency behavior in Bash tests; mirror success, fallback, and missing-dependency coverage in native Windows tests.
+- [x] Preserve the caller's project directory on native Windows and cover project paths containing spaces on both platforms.
+- [x] Update README, SPEC (module matrix, execution order, §8.15), CHANGELOG, and this plan.
+- [x] Pass lint and full local tests; record native Windows validation availability.
+
+Validation: `./scripts/lint.sh`, `./scripts/test.sh`, and the focused skills tests under `/bin/bash` passed on macOS. An isolated PowerShell handler check reproduced the wrong working directory before the fix and passed for direct/npx adapters afterward. Native Windows execution remains unverified on this host; all skill update commands were stubbed.
 
 ---
 

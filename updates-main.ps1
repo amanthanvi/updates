@@ -1398,7 +1398,7 @@ function Invoke-ModuleSkills {
         $arguments.Add('--yes')
     }
 
-    $result = Invoke-LoggedProcess -FilePath $filePath -ArgumentList $arguments.ToArray()
+    $result = Invoke-LoggedProcess -FilePath $filePath -ArgumentList $arguments.ToArray() -WorkingDirectory (Get-Location).Path
     if ($result.ExitCode -ne 0) {
         Write-ErrorLine 'skills: update failed'
         return 1

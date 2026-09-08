@@ -1779,6 +1779,15 @@ write_stub npx 'echo "npx $*" >>"$CALL_LOG"'
 out="$("$SCRIPT" --only skills --no-emoji --no-color)"
 echo "$out" | grep -q '^==> skills END (OK)'
 grep -q '^npx --yes skills update --project --global$' "$CALL_LOG"
+skills_project="${tmp_dir}/skills project"
+mkdir -p "$skills_project"
+# shellcheck disable=SC2016
+write_stub npx 'echo "npx $*" >>"$CALL_LOG"; pwd -P >>"$CALL_LOG"'
+: >"$CALL_LOG"
+out="$(cd "$skills_project" && "$SCRIPT" -n --only skills --no-emoji --no-color)"
+echo "$out" | grep -q '^==> skills END (OK)'
+grep -q '^npx --yes skills update --project --global --yes$' "$CALL_LOG"
+grep -Fxq "$(cd "$skills_project" && pwd -P)" "$CALL_LOG"
 : >"$CALL_LOG"
 out="$("$SCRIPT" --dry-run --only skills --no-emoji --no-color)"
 echo "$out" | grep -q '^DRY RUN: npx --yes skills update --project --global$'
