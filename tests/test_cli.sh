@@ -38,12 +38,12 @@ if [ -z "$SYSTEM_PYTHON3" ]; then
 	echo "python3 is required for tests/test_cli.sh" >&2
 	exit 1
 fi
-if ! "$SYSTEM_PYTHON3" - <<'PY' >/dev/null 2>&1; then
+if ! "$SYSTEM_PYTHON3" -c '
 try:
     import packaging.requirements
 except Exception:
     import pip._vendor.packaging.requirements
-PY
+' >/dev/null 2>&1; then
 	echo "python3 with packaging or pip vendored packaging is required for guard helper tests" >&2
 	exit 1
 fi
@@ -55,9 +55,9 @@ export SYSTEM_PYTHON3
 export UPDATES_SELF_UPDATE=0
 # Referenced by heredoc-backed test bodies evaluated through run_test.
 # shellcheck disable=SC2034
-SELF_UPDATE_CURRENT_TEST_VERSION="2.1.3"
+SELF_UPDATE_CURRENT_TEST_VERSION="2.2.0"
 # shellcheck disable=SC2034
-SELF_UPDATE_NEXT_TEST_VERSION="2.1.4"
+SELF_UPDATE_NEXT_TEST_VERSION="2.2.1"
 
 write_stub_to_dir() {
 	local dir="$1"
@@ -1241,9 +1241,9 @@ setup_python_guard_fixture
 : >"$CALL_LOG"
 "$SCRIPT" --only python --pip-force --no-emoji >/dev/null
 grep -q '^python -m pip list --outdated --format=json$' "$CALL_LOG"
-grep -q '^python -m pip install -U --break-system-packages idna$' "$CALL_LOG"
-grep -q '^python -m pip install -U --break-system-packages pyelftools$' "$CALL_LOG"
-grep -q '^python -m pip install -U --break-system-packages unicorn$' "$CALL_LOG"
+grep -q '^python -m pip install -U --break-system-packages --no-input idna$' "$CALL_LOG"
+grep -q '^python -m pip install -U --break-system-packages --no-input pyelftools$' "$CALL_LOG"
+grep -q '^python -m pip install -U --break-system-packages --no-input unicorn$' "$CALL_LOG"
 
 UPDATES_TEST_CASE
 
@@ -1733,9 +1733,9 @@ UPDATES_TEST_CASE
 run_test "claude module logs correct commands" <<'UPDATES_TEST_CASE'
 : >"$CALL_LOG"
 "$SCRIPT" --only claude --no-emoji >/dev/null
-grep -q '^claude update latest$' "$CALL_LOG"
+grep -q '^claude install latest$' "$CALL_LOG"
 out="$("$SCRIPT" --only claude --dry-run --no-emoji)"
-echo "$out" | grep -q '^DRY RUN: claude update latest$'
+echo "$out" | grep -q '^DRY RUN: claude install latest$'
 
 UPDATES_TEST_CASE
 
@@ -1781,6 +1781,15 @@ write_stub npx 'echo "npx $*" >>"$CALL_LOG"'
 out="$("$SCRIPT" --only skills --no-emoji --no-color)"
 echo "$out" | grep -q '^==> skills END (OK)'
 grep -q '^npx --yes skills update --project --global$' "$CALL_LOG"
+skills_project="${tmp_dir}/skills project"
+mkdir -p "$skills_project"
+# shellcheck disable=SC2016
+write_stub npx 'echo "npx $*" >>"$CALL_LOG"; pwd -P >>"$CALL_LOG"'
+: >"$CALL_LOG"
+out="$(cd "$skills_project" && "$SCRIPT" -n --only skills --no-emoji --no-color)"
+echo "$out" | grep -q '^==> skills END (OK)'
+grep -q '^npx --yes skills update --project --global --yes$' "$CALL_LOG"
+grep -Fxq "$(cd "$skills_project" && pwd -P)" "$CALL_LOG"
 : >"$CALL_LOG"
 out="$("$SCRIPT" --dry-run --only skills --no-emoji --no-color)"
 echo "$out" | grep -q '^DRY RUN: npx --yes skills update --project --global$'
@@ -2068,14 +2077,8 @@ echo "$out" | grep -q '^==> node END (OK)'
 grep -q '^npm install -g -- @tarquinen/opencode-dcp@3.1.13$' "$CALL_LOG"
 grep -q '^npm install -g --legacy-peer-deps -- @tarquinen/opencode-dcp@3.1.13$' "$CALL_LOG"
 grep -q '^npm install -g --allow-scripts=opencode-ai,koffi --legacy-peer-deps -- @tarquinen/opencode-dcp@3.1.13$' "$CALL_LOG"
-if grep -q 'npm error code ERESOLVE' "$npm_eresolve_stderr"; then
-	echo "Expected successful ERESOLVE retry to suppress first-pass npm error details" >&2
-	exit 1
-fi
-if grep -q 'npm warn allow-scripts' "$npm_eresolve_stderr"; then
-	echo "Expected successful allow-scripts retry to suppress first-pass npm warning details" >&2
-	exit 1
-fi
+grep -q 'npm error code ERESOLVE' "$npm_eresolve_stderr"
+grep -q 'npm warn allow-scripts' "$npm_eresolve_stderr"
 grep -q 'retrying with --legacy-peer-deps' "$npm_eresolve_stderr"
 grep -q 'retrying once with npm-provided allow-scripts list' "$npm_eresolve_stderr"
 
@@ -2175,10 +2178,7 @@ out="$("$SCRIPT" --only node --no-emoji --no-color 2>"$npm_allow_scripts_stderr"
 echo "$out" | grep -q '^==> node END (OK)'
 grep -q '^npm install -g -- opencode-ai@1.17.8$' "$CALL_LOG"
 grep -q '^npm install -g --allow-scripts=opencode-ai,koffi -- opencode-ai@1.17.8$' "$CALL_LOG"
-if grep -q 'npm warn allow-scripts' "$npm_allow_scripts_stderr"; then
-	echo "Expected successful allow-scripts retry to suppress npm warning details" >&2
-	exit 1
-fi
+grep -q 'npm warn allow-scripts' "$npm_allow_scripts_stderr"
 grep -q 'retrying once with npm-provided allow-scripts list' "$npm_allow_scripts_stderr"
 
 UPDATES_TEST_CASE
@@ -2226,10 +2226,7 @@ out="$("$SCRIPT" --only node --no-emoji --no-color 2>"$npm_allow_scripts_flag_on
 echo "$out" | grep -q '^==> node END (OK)'
 grep -q '^npm install -g -- opencode-ai@1.17.8$' "$CALL_LOG"
 grep -q '^npm install -g --allow-scripts=opencode-ai,koffi -- opencode-ai@1.17.8$' "$CALL_LOG"
-if grep -q 'npm warn allow-scripts' "$npm_allow_scripts_flag_only_stderr"; then
-	echo "Expected successful flag-only allow-scripts retry to suppress npm warning details" >&2
-	exit 1
-fi
+grep -q 'npm warn allow-scripts' "$npm_allow_scripts_flag_only_stderr"
 grep -q 'retrying once with npm-provided allow-scripts list' "$npm_allow_scripts_flag_only_stderr"
 
 UPDATES_TEST_CASE

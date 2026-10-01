@@ -1,3 +1,38 @@
+# Release preparation: v2.2.0
+
+- [x] Include merged project/global skill support, the Windows project-directory fix, and Unix cancellation/progress improvements.
+- [x] Align Unix/Windows versions, installer defaults, self-update test fixtures, README, SPEC, and the dated changelog for v2.2.0.
+- Release gates: `./scripts/release.sh 2.2.0`, green cross-platform CI, and the existing GitHub release workflow's artifact and attestation verification.
+
+---
+
+# Plan: macOS stalls and visible update progress
+
+## Goal
+
+- Make Unix updates cancellable and expose the active phase without automatic installation timeouts or changes to public flags and JSONL events.
+
+## Live diagnosis
+
+- Reproduced the apparent stall after Homebrew 6.0.22's upgrade table: its default ask mode was waiting for confirmation, rather than a frozen command.
+- The initial diagnostic run updated Homebrew itself, shell repositories, and one npm package. The first Ctrl+C failed the brew module but allowed later modules to run; the second stopped the run at npm preflight. The identified pause is covered by isolated Homebrew prompt regressions; no additional live upgrade is needed for validation.
+
+## Execution checklist
+
+- [x] Introduce Bash 3.2-compatible managed execution/capture helpers with interruptible waits, owned-child cleanup, preserved stdin, and accurate exit statuses.
+- [x] Announce slow phases and emit elapsed human progress every 30 seconds at info/debug log levels, routing human output to stderr with JSON.
+- [x] Stream npm stderr and guarded pip installation diagnostics; report parallel pip completion with separate package logs.
+- [x] Disable background pip prompts and discovery/planning prompts under `-n`.
+- [x] Scope `HOMEBREW_NO_ASK=1` to brew commands under `-n`; preserve interactive confirmation with a clear hint.
+- [x] Document cancellation, progress, and diagnostics in README, SPEC, and CHANGELOG without a release/version bump.
+- [x] Verify synchronized SIGINT/SIGTERM cleanup for commands, captures, npm preflights, and parallel pip workers, plus interactive stdin under a pseudo-terminal.
+- [x] Verify live diagnostics, failure propagation, JSONL purity with logging, and existing npm/Python safety behavior.
+- [x] Run lint and full tests on macOS Bash 3.2 and shared-runner coverage on Linux; use isolated homes and stub commands for installed-copy checks.
+- [x] Reproduce the table pause in a real update run and identify Homebrew confirmation as the cause.
+- [x] Validate Homebrew non-interactive environment scoping and interactive prompt behavior.
+
+---
+
 # Plan: skills module updates
 
 ## Goal
@@ -6,12 +41,15 @@
 
 ## Execution checklist
 
-- [ ] Register a default-on `skills` module between `pi` and `mise` on Bash and native Windows.
-- [ ] Resolve the backing command as the `skills` CLI first, then `npx --yes skills`; skip gracefully when neither exists and fail under `--only`.
-- [ ] Run `skills update --project --global`, appending `--yes` under `--non-interactive`; dry-run prints the resolved command without executing.
-- [ ] Cover direct, npx-fallback, non-interactive, dry-run, and missing-dependency behavior in Bash tests; mirror success, fallback, and missing-dependency coverage in native Windows tests.
-- [ ] Update README, SPEC (module matrix, execution order, §8.15), CHANGELOG, and this plan.
-- [ ] Pass lint and tests before opening the PR.
+- [x] Register a default-on `skills` module between `pi` and `mise` on Bash and native Windows.
+- [x] Resolve the backing command as the `skills` CLI first, then `npx --yes skills`; skip gracefully when neither exists and fail under `--only`.
+- [x] Run `skills update --project --global`, appending `--yes` under `--non-interactive`; dry-run prints the resolved command without executing.
+- [x] Cover direct, npx-fallback, non-interactive, dry-run, and missing-dependency behavior in Bash tests; mirror success, fallback, and missing-dependency coverage in native Windows tests.
+- [x] Preserve the caller's project directory on native Windows and cover project paths containing spaces on both platforms.
+- [x] Update README, SPEC (module matrix, execution order, §8.15), CHANGELOG, and this plan.
+- [x] Pass lint and full local tests; record native Windows validation availability.
+
+Validation: `./scripts/lint.sh`, `./scripts/test.sh`, and the focused skills tests under `/bin/bash` passed on macOS. An isolated PowerShell handler check reproduced the wrong working directory before the fix and passed for direct/npx adapters afterward. Native Windows execution remains unverified on this host; all skill update commands were stubbed.
 
 ---
 

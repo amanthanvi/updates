@@ -17,8 +17,8 @@ if (-not $IsWindows) {
 Remove-Item Env:CI -ErrorAction SilentlyContinue
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$currentReleaseVersion = '2.1.3'
-$previousReleaseVersion = '2.1.2'
+$currentReleaseVersion = '2.2.0'
+$previousReleaseVersion = '2.1.3'
 
 function Should-RunTest {
     param(
@@ -2136,7 +2136,7 @@ if (Should-RunTest 'native payload runs Claude and Pi update modules') {
             $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', 'claude,pi', '--no-emoji', '--no-color') -Environment @{ PATH = $stubDir }
             Assert-Equal -Expected 0 -Actual $result.ExitCode -Message "Claude/Pi modules should succeed`n$($result.Output)"
             $calls = Get-Content -LiteralPath $log -Raw
-            Assert-Match -Text $calls -Pattern '(?m)^claude:update latest\s*$' -Message 'Claude module should run claude update latest'
+            Assert-Match -Text $calls -Pattern '(?m)^claude:install latest\s*$' -Message 'Claude module should run claude install latest'
             Assert-Match -Text $calls -Pattern '(?m)^pi:update --all\s*$' -Message 'Pi module should run pi update --all'
         }
     }
@@ -2163,7 +2163,7 @@ if (Should-RunTest 'native Claude and Pi modules cover missing dry-run failure s
             $dry = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', 'claude,pi', '--dry-run', '--no-emoji') -Environment @{ PATH = $stubDir }
             Assert-Equal -Expected 0 -Actual $dry.ExitCode -Message 'Claude/Pi dry-run should succeed'
             Assert-True -Condition (-not (Test-Path -LiteralPath $log)) -Message 'Claude/Pi dry-run must not invoke commands'
-            Assert-Match -Text $dry.Output -Pattern '(?i)DRY RUN: .*claude(\.cmd)? update latest' -Message 'Claude dry-run command should target the latest channel'
+            Assert-Match -Text $dry.Output -Pattern '(?i)DRY RUN: .*claude(\.cmd)? install latest' -Message 'Claude dry-run command should target the latest channel'
             Assert-Match -Text $dry.Output -Pattern '(?i)DRY RUN: .*pi(\.cmd)? update' -Message 'Pi dry-run command should be visible'
 
             Write-Utf8NoBom -Path (Join-Path $stubDir 'claude.cmd') -Content "@echo off`r`necho claude-failed`r`nexit /b 7`r`n"
@@ -2193,12 +2193,19 @@ if (Should-RunTest 'native payload runs Skills update module') {
             Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot -Version $currentReleaseVersion
             $stubDir = Join-Path $installRoot 'stubs'
             $log = Join-Path $installRoot 'skills-module.log'
+            $projectDir = Join-Path $installRoot 'project with spaces'
+            $cwdLog = Join-Path $installRoot 'skills-cwd.log'
             $null = New-Item -ItemType Directory -Path $stubDir -Force
-            Write-CmdStub -Path (Join-Path $stubDir 'skills.cmd') -Lines @(('echo skills:%*>>"{0}"' -f $log))
-            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', 'skills', '--no-emoji', '--no-color') -Environment @{ PATH = $stubDir }
+            $null = New-Item -ItemType Directory -Path $projectDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'skills.cmd') -Lines @(
+                ('echo skills:%*>>"{0}"' -f $log),
+                ('cd >"{0}"' -f $cwdLog)
+            )
+            $result = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', (Join-Path $installRoot 'updates.ps1'), '--no-self-update', '--only', 'skills', '--no-emoji', '--no-color') -WorkingDirectory $projectDir -Environment @{ PATH = $stubDir }
             Assert-Equal -Expected 0 -Actual $result.ExitCode -Message "Skills module should succeed`n$($result.Output)"
             $calls = Get-Content -LiteralPath $log -Raw
             Assert-Match -Text $calls -Pattern '(?m)^skills:update --project --global\s*$' -Message 'Skills module should update project and global scopes without prompting'
+            Assert-Equal -Expected $projectDir -Actual (Get-Content -LiteralPath $cwdLog -Raw).Trim() -Message 'Skills should run from the caller project, not the updates installation'
 
             $emptyPath = Join-Path $installRoot 'empty-skills-path'
             $null = New-Item -ItemType Directory -Path $emptyPath -Force
@@ -2207,12 +2214,16 @@ if (Should-RunTest 'native payload runs Skills update module') {
             Assert-Match -Text $missing.Output -Pattern '(?i)skills not found' -Message 'missing Skills dependency should be explicit'
 
             $npxLog = Join-Path $installRoot 'skills-npx.log'
-            Write-CmdStub -Path (Join-Path $stubDir 'npx.cmd') -Lines @(('echo npx:%*>>"{0}"' -f $npxLog))
+            Write-CmdStub -Path (Join-Path $stubDir 'npx.cmd') -Lines @(
+                ('echo npx:%*>>"{0}"' -f $npxLog),
+                ('cd >"{0}"' -f $cwdLog)
+            )
             Remove-Item -LiteralPath (Join-Path $stubDir 'skills.cmd') -Force
-            $fallback = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', 'skills', '--non-interactive', '--no-emoji', '--no-color') -Environment @{ PATH = $stubDir }
+            $fallback = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', (Join-Path $installRoot 'updates.ps1'), '--no-self-update', '--only', 'skills', '--non-interactive', '--no-emoji', '--no-color') -WorkingDirectory $projectDir -Environment @{ PATH = $stubDir }
             Assert-Equal -Expected 0 -Actual $fallback.ExitCode -Message "Skills npx fallback should succeed`n$($fallback.Output)"
             $npxCalls = Get-Content -LiteralPath $npxLog -Raw
             Assert-Match -Text $npxCalls -Pattern '(?m)^npx:--yes skills update --project --global --yes\s*$' -Message 'npx fallback should update both scopes non-interactively'
+            Assert-Equal -Expected $projectDir -Actual (Get-Content -LiteralPath $cwdLog -Raw).Trim() -Message 'npx skills should retain the caller project directory'
         }
     }
 }

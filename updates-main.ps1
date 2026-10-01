@@ -19,7 +19,7 @@ if ($CliArgs -and $CliArgs.Count -gt 0) {
     }
 }
 
-$script:UpdatesVersion = '2.1.3'
+$script:UpdatesVersion = '2.2.0'
 $script:CanonicalRepo = 'amanthanvi/updates'
 $script:ReleaseChannel = 'github-release'
 $script:ReleaseManifestName = 'updates-release.json'
@@ -1353,9 +1353,9 @@ function Invoke-ModuleClaude {
     if (-not $claude) {
         return (Resolve-MissingDependency -ModuleName 'claude' -Detail 'claude not found.')
     }
-    $result = Invoke-LoggedProcess -FilePath $claude -ArgumentList @('update', 'latest')
+    $result = Invoke-LoggedProcess -FilePath $claude -ArgumentList @('install', 'latest')
     if ($result.ExitCode -ne 0) {
-        Write-ErrorLine 'claude: update failed'
+        Write-ErrorLine 'claude: install failed'
         return 1
     }
     return 0
@@ -1398,7 +1398,7 @@ function Invoke-ModuleSkills {
         $arguments.Add('--yes')
     }
 
-    $result = Invoke-LoggedProcess -FilePath $filePath -ArgumentList $arguments.ToArray()
+    $result = Invoke-LoggedProcess -FilePath $filePath -ArgumentList $arguments.ToArray() -WorkingDirectory (Get-Location).Path
     if ($result.ExitCode -ne 0) {
         Write-ErrorLine 'skills: update failed'
         return 1

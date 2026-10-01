@@ -1,7 +1,7 @@
 #requires -Version 7.0
 [CmdletBinding(PositionalBinding = $false)]
 param(
-    [string]$Version = '2.1.3',
+    [string]$Version = '2.2.0',
     [string]$InstallRoot,
     [string]$SourceZip,
     [string]$SourceZipSha256,
