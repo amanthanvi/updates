@@ -3840,30 +3840,15 @@ module_pi() {
 	return 0
 }
 
-skills_update_argv() {
-	# Sets the global array SKILLS_UPDATE_ARGV to the invocation that updates
-	# both scopes without prompts. `skills update` with both --project and
-	# --global resolves to the interactive "Both" scope without a prompt.
-	SKILLS_UPDATE_ARGV=()
-	if cmd_exists skills; then
-		SKILLS_UPDATE_ARGV=(skills)
-	elif cmd_exists npx; then
-		SKILLS_UPDATE_ARGV=(npx --yes skills)
-	else
-		return 1
-	fi
-
-	SKILLS_UPDATE_ARGV+=(update --project --global)
-	if [ "$NON_INTERACTIVE" -eq 1 ]; then
-		SKILLS_UPDATE_ARGV+=(--yes)
-	fi
-	return 0
-}
-
 module_skills() {
 	log "Agent skills $(emoji "🧠")"
 
-	if ! skills_update_argv; then
+	local -a argv=()
+	if cmd_exists skills; then
+		argv=(skills)
+	elif cmd_exists npx; then
+		argv=(npx --yes skills)
+	else
 		if missing_dependency_is_error; then
 			err "skills: required command not found: skills (or npx)"
 			return 1
@@ -3872,12 +3857,17 @@ module_skills() {
 		return 2
 	fi
 
+	argv+=(update --project --global)
+	if [ "$NON_INTERACTIVE" -eq 1 ]; then
+		argv+=(--yes)
+	fi
+
 	if [ "$DRY_RUN" -eq 1 ]; then
-		log "DRY RUN: ${SKILLS_UPDATE_ARGV[*]}"
+		log "DRY RUN: ${argv[*]}"
 		return 0
 	fi
 
-	run "${SKILLS_UPDATE_ARGV[@]}" || return 1
+	run "${argv[@]}" || return 1
 	return 0
 }
 

@@ -1375,30 +1375,23 @@ function Invoke-ModulePi {
 }
 
 function Invoke-ModuleSkills {
-    # `skills update` with both --project and --global resolves to the
-    # interactive "Both" scope without a prompt.
-    $arguments = New-Object System.Collections.Generic.List[string]
     $skills = Resolve-ApplicationCommand @('skills.exe', 'skills.cmd', 'skills')
     if ($skills) {
         $filePath = $skills
-        $arguments.Add('update')
+        $arguments = @('update', '--project', '--global')
     } else {
         $npx = Resolve-ApplicationCommand @('npx.exe', 'npx.cmd', 'npx')
         if (-not $npx) {
             return (Resolve-MissingDependency -ModuleName 'skills' -Detail 'skills not found (need skills or npx).')
         }
         $filePath = $npx
-        $arguments.Add('--yes')
-        $arguments.Add('skills')
-        $arguments.Add('update')
+        $arguments = @('--yes', 'skills', 'update', '--project', '--global')
     }
-    $arguments.Add('--project')
-    $arguments.Add('--global')
     if ($script:NonInteractive) {
-        $arguments.Add('--yes')
+        $arguments += '--yes'
     }
 
-    $result = Invoke-LoggedProcess -FilePath $filePath -ArgumentList $arguments.ToArray() -WorkingDirectory (Get-Location).Path
+    $result = Invoke-LoggedProcess -FilePath $filePath -ArgumentList $arguments -WorkingDirectory (Get-Location).Path
     if ($result.ExitCode -ne 0) {
         Write-ErrorLine 'skills: update failed'
         return 1
