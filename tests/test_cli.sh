@@ -1805,9 +1805,7 @@ UPDATES_TEST_CASE
 
 run_test "skills module skips without skills or npx and errors under --only" <<'UPDATES_TEST_CASE'
 rm -f "${stub_bin}/skills" "${stub_bin}/npx"
-# Host tool directories can expose a real npx (system Node installs); isolate
-# PATH to fixture-controlled executables so neither command can leak in. Stubs
-# embed the interpreter path because `env bash` cannot resolve with this PATH.
+# Isolate PATH so a host npx cannot leak in; stubs use absolute shebangs.
 skills_iso_bin="${tmp_dir}/skills-isolated-bin"
 mkdir -p "$skills_iso_bin"
 {

@@ -1,3 +1,18 @@
+# Plan: skills module structure cleanup
+
+## Goal
+
+- Simplify the landed `skills` module implementation without changing its public command contract.
+
+## Execution checklist
+
+- [x] Fold Bash `skills_update_argv` + global `SKILLS_UPDATE_ARGV` into `module_skills` with a local argv array.
+- [x] Keep Windows `Invoke-LoggedProcess` default at InstallRoot; skills alone passes caller cwd (avoids pip cwd hijack and non-filesystem PS locations).
+- [x] Deslop skills comments / List boilerplate and trim the PATH-isolation test note.
+- [x] Pass lint and Bash tests; native Windows harness remains host-dependent.
+
+---
+
 # Release preparation: v2.2.0
 
 - [x] Include merged project/global skill support, the Windows project-directory fix, and Unix cancellation/progress improvements.
