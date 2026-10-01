@@ -369,7 +369,7 @@ Execution order: `brew`, `shell`, `repos`, `linux`, `winget`, `node`, `bun`, `py
 | `mas`    |  Yes  |  No   | No  |   No    | Requires `mas` (opt-in) |
 | `pipx`   |  Yes  |  Yes  | Yes |   Yes   | Requires `pipx` |
 | `rustup` |  Yes  |  Yes  | Yes |   Yes   | Requires `rustup` |
-| `claude` |  Yes  |  Yes  | Yes |   Yes   | Requires `claude`; runs `claude update` |
+| `claude` |  Yes  |  Yes  | Yes |   Yes   | Requires `claude`; runs `claude install latest` |
 | `pi`     |  Yes  |  Yes  | Yes |   Yes   | Requires `pi`; runs `pi update --all` |
 | `skills` |  Yes  |  Yes  | Yes |   Yes   | Requires `skills` or `npx`; runs `skills update` for project + global scopes |
 | `mise`   |  Yes  |  Yes  | Yes |   No    | Requires `mise` |
@@ -559,11 +559,11 @@ Purpose: update Rust toolchains.
 
 ### 8.13 `claude`
 
-Purpose: update the Claude Code CLI.
+Purpose: update the Claude Code CLI to the latest release channel.
 
 - Requires: `claude`
-- Non-dry-run: `claude update`
-- Side effects: updates the Claude Code CLI.
+- Non-dry-run: `claude install latest`
+- Side effects: installs/updates the Claude Code native build on the latest channel.
 
 ### 8.14 `pi`
 

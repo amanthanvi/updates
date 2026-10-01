@@ -1353,9 +1353,9 @@ function Invoke-ModuleClaude {
     if (-not $claude) {
         return (Resolve-MissingDependency -ModuleName 'claude' -Detail 'claude not found.')
     }
-    $result = Invoke-LoggedProcess -FilePath $claude -ArgumentList @('update')
+    $result = Invoke-LoggedProcess -FilePath $claude -ArgumentList @('install', 'latest')
     if ($result.ExitCode -ne 0) {
-        Write-ErrorLine 'claude: update failed'
+        Write-ErrorLine 'claude: install failed'
         return 1
     }
     return 0

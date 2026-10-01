@@ -3819,11 +3819,11 @@ module_claude() {
 	ensure_cmd_or_skip claude claude || return $?
 
 	if [ "$DRY_RUN" -eq 1 ]; then
-		log "DRY RUN: claude update"
+		log "DRY RUN: claude install latest"
 		return 0
 	fi
 
-	run claude update || return 1
+	run claude install latest || return 1
 	return 0
 }
 
