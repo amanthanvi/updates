@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-10-03
+
 ### Changed
 
 - Update Claude Code from the latest release channel with `claude install latest` on Bash and native Windows.

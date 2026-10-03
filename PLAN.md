@@ -13,6 +13,14 @@
 
 ---
 
+# Release preparation: v2.2.1
+
+- [x] Include the Claude latest-channel retarget and the skills argv/cwd cleanup already on main.
+- [x] Align Unix/Windows versions, installer defaults, self-update test fixtures, README, SPEC, and the dated changelog for v2.2.1.
+- Release gates: `./scripts/release.sh 2.2.1`, green cross-platform CI, and the existing GitHub release workflow's artifact and attestation verification.
+
+---
+
 # Release preparation: v2.2.0
 
 - [x] Include merged project/global skill support, the Windows project-directory fix, and Unix cancellation/progress improvements.
