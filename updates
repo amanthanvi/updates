@@ -1917,6 +1917,9 @@ maybe_self_update() {
 	fi
 
 	if [ -n "$release_json" ]; then
+		# Resolve here so the subshell below inherits the cached interpreter
+		# and modules do not probe Python a second time.
+		python_launcher_resolve || :
 		if ! parsed_release="$(printf '%s' "$release_json" | self_update_parse_release_metadata 2>/dev/null)"; then
 			warn "updates: self-update failed to parse release metadata; continuing"
 			return 0
@@ -2999,37 +3002,46 @@ shell_detect_omz_custom_dir() {
 
 git_repo_preflight() {
 	local repo="$1"
-	local branch=""
-	if ! command_capture branch "git: inspecting $repo (branch)" git -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null || [ -z "$branch" ]; then
+	# One porcelain v2 status call reports branch, upstream, divergence, and
+	# tracked changes; untracked files never block a fast-forward pull.
+	local status_out=""
+	if ! command_capture status_out "git: inspecting $repo" git -C "$repo" status --porcelain=v2 --branch --untracked-files=no 2>/dev/null; then
+		command_outcome_set fail pull-failed "git: ${repo}: failed to inspect worktree state"
+		return 0
+	fi
+
+	local line branch="" upstream="" counts="" dirty=0
+	while IFS= read -r line; do
+		case "$line" in
+		'# branch.head '*) branch="${line#'# branch.head '}" ;;
+		'# branch.upstream '*) upstream="${line#'# branch.upstream '}" ;;
+		'# branch.ab '*) counts="${line#'# branch.ab '}" ;;
+		'#'*) ;;
+		?*) dirty=1 ;;
+		esac
+	done <<<"$status_out"
+
+	if [ -z "$branch" ] || [ "$branch" = "(detached)" ]; then
 		command_outcome_set skip detached-head "git: ${repo}: detached HEAD; skipping"
 		return 0
 	fi
 
-	local upstream=""
-	if ! command_capture upstream "git: inspecting $repo (upstream)" git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || [ -z "$upstream" ]; then
+	# A configured upstream whose remote-tracking ref is gone has no branch.ab.
+	if [ -z "$upstream" ] || [ -z "$counts" ]; then
 		command_outcome_set skip missing-upstream "git: ${repo}: branch ${branch} has no upstream; skipping"
 		return 0
 	fi
 
-	local worktree_status=""
-	if ! command_capture worktree_status "git: inspecting $repo (worktree_status)" git -C "$repo" status --porcelain --untracked-files=no 2>/dev/null; then
-		command_outcome_set fail pull-failed "git: ${repo}: failed to inspect worktree state"
-		return 0
-	fi
-	if [ -n "$worktree_status" ]; then
+	if [ "$dirty" -eq 1 ]; then
 		command_outcome_set skip dirty-worktree "git: ${repo}: worktree has uncommitted changes; skipping"
-		return 0
-	fi
-
-	local counts=""
-	if ! command_capture counts "git: inspecting $repo (counts)" git -C "$repo" rev-list --left-right --count "HEAD...@{upstream}" 2>/dev/null; then
-		command_outcome_set fail pull-failed "git: ${repo}: failed to compare HEAD with ${upstream}"
 		return 0
 	fi
 
 	local ahead=0
 	local behind=0
 	read -r ahead behind <<<"$counts"
+	ahead="${ahead#+}"
+	behind="${behind#-}"
 	case "$ahead" in
 	'' | *[!0-9]*)
 		command_outcome_set fail pull-failed "git: ${repo}: invalid divergence result"
@@ -3420,6 +3432,25 @@ module_node() {
 	return 0
 }
 
+# `bun update -g` exits 1 with "No package.json, so nothing to update" when no
+# global packages were ever installed; that is an up-to-date state, not a failure.
+run_bun_global_update() {
+	local log_dir="" status=0
+	debug "+ bun update -g"
+	command_temp_dir log_dir || return 1
+	if [ "$JSON" -eq 1 ]; then
+		command_logged "bun: bun update -g" "$log_dir/stderr" stderr bun update -g 1>&2 || status=$?
+	else
+		command_logged "bun: bun update -g" "$log_dir/stderr" stderr bun update -g || status=$?
+	fi
+	if [ "$status" -ne 0 ] && grep -q 'No package.json, so nothing to update' "$log_dir/stderr"; then
+		log "bun: no Bun global packages installed; nothing to update."
+		status=0
+	fi
+	command_remove_temp "$log_dir"
+	return "$status"
+}
+
 module_bun() {
 	log "Bun globals $(emoji "🥟")"
 	ensure_cmd_or_skip bun bun || return $?
@@ -3434,7 +3465,7 @@ module_bun() {
 		return 0
 	fi
 
-	run bun update -g || return 1
+	run_bun_global_update || return 1
 	if bun_is_standalone_install; then
 		run bun upgrade || return 1
 	else

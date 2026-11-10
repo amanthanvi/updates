@@ -123,10 +123,7 @@ write_git_ready_stub() {
 	write_stub git '
 echo "GIT_TERMINAL_PROMPT=${GIT_TERMINAL_PROMPT:-} git $*" >>"$CALL_LOG"
 case " $* " in
-*" symbolic-ref --quiet --short HEAD ") echo "main" ;;
-*" rev-parse --abbrev-ref --symbolic-full-name @{upstream} "*) echo "origin/main" ;;
-*" status --porcelain --untracked-files=no "*) ;;
-*" rev-list --left-right --count HEAD...@{upstream} "*) printf "0\t0\n" ;;
+*" status --porcelain=v2 --branch --untracked-files=no "*) printf "# branch.head main\n# branch.upstream origin/main\n# branch.ab +0 -0\n" ;;
 esac
 '
 }
@@ -357,7 +354,13 @@ write_ncu_stub '{"npm":"11.7.0"}'
 # shellcheck disable=SC2016
 write_stub npm 'echo "npm $*" >>"$CALL_LOG"'
 # shellcheck disable=SC2016
-write_stub bun 'echo "bun $*" >>"$CALL_LOG"'
+write_stub bun '
+echo "bun $*" >>"$CALL_LOG"
+if [ -n "${BUN_STUB_UPDATE_ERROR:-}" ] && [ "$*" = "update -g" ]; then
+	echo "$BUN_STUB_UPDATE_ERROR" >&2
+	exit 1
+fi
+'
 # shellcheck disable=SC2016
 write_stub pipx 'echo "pipx $*" >>"$CALL_LOG"'
 write_git_ready_stub
@@ -1295,6 +1298,30 @@ grep -q '^bun update -g$' "$CALL_LOG"
 
 UPDATES_TEST_CASE
 
+run_test "bun module treats an empty global install as up to date" <<'UPDATES_TEST_CASE'
+: >"$CALL_LOG"
+bun_empty_out="${tmp_dir}/bun-empty.log"
+BUN_STUB_UPDATE_ERROR="No package.json, so nothing to update" "$SCRIPT" --only bun --no-emoji --no-color >"$bun_empty_out" 2>&1
+grep -q '^bun update -g$' "$CALL_LOG"
+grep -q 'bun: no Bun global packages installed; nothing to update' "$bun_empty_out"
+grep -q 'bun END (OK)' "$bun_empty_out"
+
+UPDATES_TEST_CASE
+
+run_test "bun module still fails on other update errors" <<'UPDATES_TEST_CASE'
+: >"$CALL_LOG"
+bun_fail_out="${tmp_dir}/bun-fail.log"
+rc=0
+BUN_STUB_UPDATE_ERROR="error: registry unreachable" "$SCRIPT" --only bun --no-emoji --no-color >"$bun_fail_out" 2>&1 || rc=$?
+if [ "$rc" -eq 0 ]; then
+	echo "Expected bun update failure to fail the module" >&2
+	exit 1
+fi
+grep -q 'error: registry unreachable' "$bun_fail_out"
+grep -q 'bun END (FAIL)' "$bun_fail_out"
+
+UPDATES_TEST_CASE
+
 run_test "mise module runs" <<'UPDATES_TEST_CASE'
 : >"$CALL_LOG"
 "$SCRIPT" --only mise --no-emoji >/dev/null
@@ -1411,6 +1438,11 @@ printf 'dirty\n' >>"${git_sync_dir}/aman-dirty-setup/tracked.txt"
 create_tracked_git_repo "${git_sync_dir}/aman-detached-setup" "$git_sync_fixtures" detached
 "$SYSTEM_GIT" -C "${git_sync_dir}/aman-detached-setup" checkout -q --detach
 
+create_tracked_git_repo "${git_sync_dir}/aman-gone-setup" "$git_sync_fixtures" gone
+"$SYSTEM_GIT" -C "${git_sync_dir}/aman-gone-setup" push -q -u origin main:feature
+"$SYSTEM_GIT" -C "${git_sync_dir}/aman-gone-setup" push -q origin --delete feature
+"$SYSTEM_GIT" -C "${git_sync_dir}/aman-gone-setup" fetch -q --prune origin
+
 cat >"${git_sync_home}/.updatesrc" <<EOF
 REPOS_DIR=${git_sync_dir}
 EOF
@@ -1421,6 +1453,7 @@ echo "$out" | grep -q '^==> repos END (OK)'
 grep -q '^ran$' "$post_pull_marker"
 grep -q 'aman-local-only-setup.*no upstream' "$git_sync_stderr"
 grep -q 'aman-dirty-setup.*uncommitted changes' "$git_sync_stderr"
+grep -q 'aman-gone-setup.*no upstream' "$git_sync_stderr"
 grep -q 'aman-detached-setup.*detached HEAD' "$git_sync_stderr"
 
 UPDATES_TEST_CASE

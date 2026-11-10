@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Bash `bun` module no longer fails when no Bun global packages are installed (`bun update -g` reports "No package.json, so nothing to update").
+
+### Changed
+
+- Bash Git preflight for `shell` and `repos` uses one `git status --porcelain=v2 --branch` call per repo instead of four, so each repo shows one progress line.
+- Bash runs reuse the Python interpreter resolved during the self-update check instead of probing again in later modules.
+
 ## [2.2.1] - 2026-10-03
 
 ### Changed
