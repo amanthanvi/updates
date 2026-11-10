@@ -425,7 +425,7 @@ Purpose: update common shell customization tooling (Oh My Zsh) and its git-backe
   - Oh My Zsh directory: `$ZSH` (if set and exists) or `~/.oh-my-zsh`
   - Custom directory: `$ZSH_CUSTOM` (if set) or `<ZSH>/custom`
   - Plugin/theme repos detected in `<custom>/plugins/*` and `<custom>/themes/*` (directories with `.git`).
-- Git preflight skips with a warning when a detected repo is on a detached HEAD, has no upstream, or has uncommitted changes.
+- Git preflight runs one `git status --porcelain=v2 --branch --untracked-files=no` per repo and skips with a warning when it is on a detached HEAD, has no upstream (or the upstream branch is gone), or has uncommitted tracked changes.
 - A clean repo whose local and upstream histories have diverged fails the module without merging, rebasing, resetting, or changing branches.
 - Non-dry-run: `git -C <dir> pull --ff-only` for each detected repo.
 - With `-n`: applies `GIT_TERMINAL_PROMPT=0` to Git commands without changing the caller's environment.
@@ -502,7 +502,7 @@ Purpose: upgrade Bun global packages and, when safe, the Bun CLI itself.
 - Runs on macOS, Linux, and native Windows in `v2.0.0`.
 - Requires: `bun`
 - Non-dry-run:
-  - `bun update -g`
+  - `bun update -g`; on macOS and Linux, Bun's "No package.json, so nothing to update" failure (no global packages installed) is reported as up to date
   - `bun upgrade` only when Bun appears standalone-installed; if Bun appears package-managed or ownership is unclear, CLI self-update is skipped on native Windows
 - Side effects: upgrades Bun global packages; may upgrade the Bun CLI when ownership is clearly standalone.
 
