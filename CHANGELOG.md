@@ -11,12 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- At `info`/`debug`, native Windows runs end with a `Results` recap, warnings list, and `--only` retry hint like Bash (without colors, failed-command notes, or `~/` paths).
 - At `info`/`debug`, Bash runs end with a `Results` recap: one line per module with a status marker, its duration, and the reason for any skip or failure, followed by any warnings that scrolled past and, when something failed, a `--only` retry hint. The stable `==> ... END` and `==> SUMMARY` lines are unchanged.
+- At `info`/`debug`, native Windows runs end with a `Results` recap, warnings list, and `--only` retry hint like Bash (without colors, failed-command notes, or `~/` paths).
 
 ### Changed
 
-- Repeated `--only` flags no longer accumulate: the last one wins, so adding `--only <csv>` to a command narrows it. An empty `--only` list is now a usage error (exit `2`) instead of selecting every module; so are an empty `--skip` list and an empty `--log-file` path. If you passed `--only` more than once, combine the lists (`--only brew,node`); in wrappers, pass `--skip` only when its value is non-empty (`${SKIP:+--skip} ${SKIP:+"$SKIP"}` works in bash, sh, and zsh).
+- Repeated `--only` flags no longer accumulate: the last one wins and replaces any earlier list, so adding the retry hint's `--only <csv>` reruns just those modules. An empty `--only` list is now a usage error (exit `2`) instead of selecting every module; so are an empty `--skip` list and an empty `--log-file` path. If you passed `--only` more than once, combine the lists (`--only brew,node`); in wrappers, pass `--only`, `--skip`, or `--log-file` only when the value is non-empty (for example `${SKIP:+--skip} ${SKIP:+"$SKIP"}`, which works in bash, sh, and zsh).
 - A skipped module's lone warning appears once, on its recap line, instead of also under `Warnings`. `shell` and `repos` skips where every Git repo is ineligible now say `no eligible Git repos` (`Git repo not eligible` for a single repo) and keep each repo's warning under `Warnings`.
 - Bash `--help` groups options into Run, Inspect, Output, Configuration, and Module options sections.
 - On a color TTY, Bash shows state-changing commands in bold and internal checks dimmed.

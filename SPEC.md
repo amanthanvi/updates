@@ -72,7 +72,7 @@ v2.3 preserves the stable v2 contract. At `info`/`debug`, Bash and native Window
 
 - **Loading:** Module boundary line printed (`==> <module> START`); underlying tool output streams through.
 - **Empty:** "All packages are up-to-date" message per module when nothing to upgrade.
-- **Error:** `ERROR: ...` on stderr; module marked FAIL in summary; exit code 1. At `info`/`debug`, the closing recap shows why each module failed or was skipped and ends with a `--only` retry hint.
+- **Error:** `ERROR: ...` on stderr; module marked FAIL in summary; exit code 1. At `info`/`debug`, the closing recap shows why each module failed or was skipped, and the run ends with a `--only` retry hint.
 - **Permission denied:** `WARN:` message when self-update lacks write access or a valid Windows install receipt; the run skips gracefully instead of elevating on Windows.
 - **Offline/degraded:** Self-update silently skips on network failure; individual modules fail based on their own tool's behavior.
 - **Accessibility:** Plain-text output; emoji disabled with `--no-emoji`; colors disabled with `--no-color` / `NO_COLOR=1`.
@@ -215,7 +215,7 @@ Module lists are parsed from a **single argument**:
 If `--only`/`--skip` includes an unknown module, the CLI **MUST** exit with code `2`.
 If `--only` includes a module that is not supported on the current platform, the CLI **MUST** exit with code `2`.
 
-Repeated `--only` flags do not accumulate: the last one wins, so appending `--only <csv>` to an existing command narrows it. An `--only` or `--skip` value that names no modules (for example `--only ""` or `--skip " , "`) **MUST** exit with code `2`, as must an empty `--log-file` path. Repeated `--skip` flags accumulate.
+Repeated `--only` flags do not accumulate: the last one wins and replaces any earlier list, so appending the retry hint's `--only <csv>` reruns just those modules. An `--only` or `--skip` value that names no modules (for example `--only ""` or `--skip " , "`) **MUST** exit with code `2`, as must an empty `--log-file` path. Repeated `--skip` flags accumulate.
 
 Precedence: `--skip` overrides `--only`.
 
