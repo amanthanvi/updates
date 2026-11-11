@@ -2097,7 +2097,8 @@ function Invoke-WindowsSelfUpdate {
     }
 }
 
-# Strip a leading "<module>: " and a trailing "Skipping." so recap notes stay short.
+# Strip a leading "<module>: ", a trailing "; skipping" or " Skipping.", and one
+# trailing "." so recap notes stay short.
 function Format-RecapNote {
     param(
         [string]$ModuleName,
