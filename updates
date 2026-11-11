@@ -4213,8 +4213,9 @@ print_retry_hint() {
 	local invoked="$0" found=""
 	case "$invoked" in
 	*/*)
-		# Prefer the bare name when PATH already resolves to this same file.
-		found="$(command -v "${invoked##*/}" 2>/dev/null || true)"
+		# Prefer the bare name when PATH (files only, not functions or
+		# aliases) already resolves to this same file.
+		found="$(type -P "${invoked##*/}" 2>/dev/null || true)"
 		if [ -n "$found" ] && [ "$found" -ef "$invoked" ]; then
 			invoked="${invoked##*/}"
 		fi
@@ -4224,8 +4225,20 @@ print_retry_hint() {
 		[ ! -f "./$invoked" ] || invoked="./$invoked"
 		;;
 	esac
+	# pre_scan_no_config reads every argument (even after `--`), so carry
+	# its effective result forward when no recorded argument would.
+	local -a args=(${retry_args[@]+"${retry_args[@]}"})
+	local arg has_no_config=0 has_json=0
+	for arg in ${args[@]+"${args[@]}"}; do
+		case "$arg" in
+		--no-config) has_no_config=1 ;;
+		--json) has_json=1 ;;
+		esac
+	done
+	[ "$NO_CONFIG" -eq 0 ] || [ "$has_no_config" -eq 1 ] || args+=(--no-config)
+	[ "$JSON" -eq 0 ] || [ "$has_json" -eq 1 ] || args+=(--json)
 	local retry
-	retry="$(printf '%q ' "$invoked" ${retry_args[@]+"${retry_args[@]}"} --only "$failures_csv")"
+	retry="$(printf '%q ' "$invoked" ${args[@]+"${args[@]}"} --only "$failures_csv")"
 	print "Retry just the failures: ${retry% }"
 }
 

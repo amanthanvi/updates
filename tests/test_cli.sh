@@ -1376,6 +1376,21 @@ rc=0
 PATH="${tmp_dir}/retry path:${PATH}" updates --only go --dry-run --no-color >"$recap_out" 2>&1 || rc=$?
 [ "$rc" -eq 1 ]
 [ "$(tail -n 1 "$recap_out")" = "Retry just the failures: updates --dry-run --no-color --only go" ]
+# Arguments after `--` still feed the --no-config pre-scan, so the retry keeps it.
+rc=0
+"$SCRIPT" --only go --no-color --dry-run -- --no-config >"$recap_out" 2>&1 || rc=$?
+[ "$rc" -eq 1 ]
+[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: $(printf '%q' "$SCRIPT") --no-color --dry-run --no-config --only go" ]
+# A shell function named like the script must not replace the invoked path.
+rc=0
+(
+	cd "${tmp_dir}/retry path"
+	updates() { :; }
+	export -f updates
+	"$retry_copy" --only go --dry-run --no-color >"$recap_out" 2>&1
+) || rc=$?
+[ "$rc" -eq 1 ]
+[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: $(printf '%q' "$retry_copy") --dry-run --no-color --only go" ]
 
 # --strict says that later modules never ran.
 rc=0
