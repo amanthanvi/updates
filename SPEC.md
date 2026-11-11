@@ -305,7 +305,7 @@ Unix closing recap (additive; the boundary and summary lines above are unchanged
 
 - At `info`/`debug`, a `Results` block (`Results (dry run)` under `--dry-run`) is printed immediately before the `SUMMARY` line: one line per module that ran, in execution order, with a status marker (`✓`/`✗`/`–`, or `ok`/`FAIL`/`skip` with `--no-emoji`), the module name, its duration (omitted for skips), and an optional note. Notes are the skip reason, the module's last error or failed command (`<command> exited <N>`), and/or a warning count. Paths under `$HOME` are shown as `~/...`.
 - If any warnings were emitted, a `Warnings (<N>)` block repeats them as `<module>: <message>` (`updates:` for warnings outside a module).
-- When modules failed, the final line after `ERROR: Completed ...` is `Retry just the failures: updates --only <csv>`.
+- When modules failed, the final line after `ERROR: Completed ...` is `Retry just the failures: updates --only <csv>` (with ` --dry-run` appended for dry runs). Under `--strict`, it is preceded by `Stopped at the first failure (--strict); later modules did not run.` Both are human-only and hidden at `--log-level warn` and below.
 - The recap goes to the human stream (stderr under `--json`) and never to JSONL. Native Windows does not print it yet.
 
 ### 5.2 JSONL event stream contract

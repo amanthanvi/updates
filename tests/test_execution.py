@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import pty
+import select
 import signal
 import subprocess
 import sys
@@ -178,19 +179,23 @@ class ExecutionTests(unittest.TestCase):
         path = self.root / name
         return path.read_text() if path.exists() else ''
 
-    def start(self, mode, module, extra=(), tty=None):
+    def start(self, mode, module, extra=(), tty=None, color=False, tty_streams=('stdout', 'stderr')):
         env = dict(self.env, PROBE_MODE=mode)
-        streams = []
+        if color:
+            env['TERM'] = 'xterm-256color'
+            env.pop('NO_COLOR', None)
+        streams = {}
         for name in ('stdout', 'stderr'):
             handle = (self.root / name).open('wb')
             self.handles.append(handle)
-            streams.append(handle)
-        process = subprocess.Popen(['/bin/bash', str(self.script), '--no-config',
-                                    '--no-self-update', '--no-emoji', '--no-color',
-                                    '--only', module] + list(extra), env=env,
+            streams[name] = tty if tty is not None and name in tty_streams else handle
+        flags = ['--no-config', '--no-self-update', '--no-emoji']
+        if not color:
+            flags.append('--no-color')
+        process = subprocess.Popen(['/bin/bash', str(self.script)] + flags +
+                                   ['--only', module] + list(extra), env=env,
                                    stdin=tty if tty is not None else subprocess.DEVNULL,
-                                   stdout=tty if tty is not None else streams[0],
-                                   stderr=tty if tty is not None else streams[1],
+                                   stdout=streams['stdout'], stderr=streams['stderr'],
                                    start_new_session=True)
         self.processes.append(process)
         return process
@@ -230,6 +235,44 @@ class ExecutionTests(unittest.TestCase):
             os.close(master)
             if slave is not None:
                 os.close(slave)
+
+    def test_json_colors_follow_the_human_stream(self):
+        # Human output goes to stderr under --json, so only a terminal on
+        # stderr may receive ANSI colors; JSONL on stdout never does.
+        for tty_stream, file_stream in (('stdout', 'stderr'), ('stderr', 'stdout')):
+            with self.subTest(tty=tty_stream):
+                master, slave = pty.openpty()
+                try:
+                    process = self.start('brew', 'brew', ('--json', '--dry-run'), tty=slave,
+                                         color=True, tty_streams=(tty_stream,))
+                    os.close(slave)
+                    slave = None
+                    # Drain while running: an unread pty blocks the writer, and
+                    # macOS drops buffered pty output once the slave closes.
+                    terminal = b''
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline:
+                        if select.select([master], [], [], .05)[0]:
+                            try:
+                                chunk = os.read(master, 4096)
+                            except OSError:
+                                break
+                            if not chunk:
+                                break
+                            terminal += chunk
+                        elif process.poll() is not None:
+                            break
+                    self.assertEqual(process.wait(timeout=5), 0)
+                finally:
+                    os.close(master)
+                    if slave is not None:
+                        os.close(slave)
+                redirected = (self.root / file_stream).read_bytes()
+                self.assertNotIn(b'\x1b', redirected)
+                if tty_stream == 'stderr':
+                    self.assertIn(b'\x1b[', terminal, 'Expected colored human output on a TTY')
+                else:
+                    self.assertNotIn(b'\x1b', terminal, 'JSONL stdout must stay uncolored')
 
     def test_terminal_group_interrupt_stops_runner(self):
         process = self.start('brew', 'brew,node')

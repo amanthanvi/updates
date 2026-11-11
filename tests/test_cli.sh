@@ -1342,6 +1342,33 @@ grep -q '^Results (dry run)$' "$recap_out"
 grep -Eq '^  ok   bun +[0-9]+s$' "$recap_out"
 grep -Eq '^  skip go +GO_BINARIES not configured$' "$recap_out"
 
+# A retry after a preview must stay a preview.
+rc=0
+"$SCRIPT" --only go --no-color --dry-run >"$recap_out" 2>&1 || rc=$?
+[ "$rc" -eq 1 ]
+[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: updates --only go --dry-run" ]
+
+# --strict says that later modules never ran.
+rc=0
+BUN_STUB_UPDATE_ERROR="error: boom" "$SCRIPT" --only bun,go --strict --no-color >"$recap_out" 2>&1 || rc=$?
+[ "$rc" -eq 1 ]
+grep -q '^Stopped at the first failure (--strict); later modules did not run.$' "$recap_out"
+if grep -q ' go ' "$recap_out"; then
+	echo "Expected --strict to stop before go" >&2
+	exit 1
+fi
+
+# The recap and retry hint are human-only; JSONL stdout never carries them.
+rc=0
+recap_json="${tmp_dir}/recap.jsonl"
+BUN_STUB_UPDATE_ERROR="error: boom" "$SCRIPT" "${recap_skip[@]}" --json --no-color >"$recap_json" 2>"$recap_out" || rc=$?
+[ "$rc" -eq 1 ]
+if grep -Eq 'Retry just|Results' "$recap_json"; then
+	echo "Expected the recap to stay out of JSONL" >&2
+	exit 1
+fi
+grep -q '^Retry just the failures: updates --only bun$' "$recap_out"
+
 "$SCRIPT" "${recap_skip[@]}" --no-color --log-level warn --dry-run >"$recap_out" 2>&1
 if grep -q '^Results' "$recap_out"; then
 	echo "Expected --log-level warn to suppress the closing recap" >&2

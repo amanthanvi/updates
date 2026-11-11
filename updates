@@ -64,6 +64,7 @@ MODULE_LAST_ERROR=""
 MODULE_LAST_FAILED_COMMAND=""
 MODULE_WARNING_COUNT=0
 MODULE_LAST_WARNING=""
+STRICT_STOPPED=0
 COMMAND_PIDS=()
 COMMAND_TEMPS=()
 
@@ -864,7 +865,7 @@ run() {
 	if [ "$DRY_RUN" -eq 1 ]; then
 		return 0
 	fi
-	local COMMAND_PROGRESS_STYLE=command status=0
+	local COMMAND_PROGRESS_STYLE='command' status=0
 	if [ "$JSON" -eq 1 ]; then
 		command_execute "$CURRENT_MODULE: $*" "$@" 1>&2 || status=$?
 	else
@@ -929,7 +930,7 @@ run_npm_global_install_logged() {
 	shift
 
 	debug "+ npm install -g $*"
-	local COMMAND_PROGRESS_STYLE=command status=0
+	local COMMAND_PROGRESS_STYLE='command' status=0
 	if [ "$JSON" -eq 1 ]; then
 		command_logged "node: installing ${*: -1}" "$npm_err_log" stderr npm install -g "$@" 1>&2 || status=$?
 	else
@@ -2345,11 +2346,16 @@ Module options:
       --pip-force          Pass --break-system-packages to pip (dangerous)
 
 Examples:
-  ${SCRIPT_NAME}                                   Update everything detected
-  ${SCRIPT_NAME} --dry-run                         Preview without changing anything
+  ${SCRIPT_NAME}
+      Update everything detected on this machine
+  ${SCRIPT_NAME} --dry-run
+      Preview what would run without changing anything
   ${SCRIPT_NAME} --only brew,node --brew-mode formula
+      Update only Homebrew formulae and npm globals
   ${SCRIPT_NAME} --json -n --no-self-update --log-level warn
+      Scripted run: JSONL on stdout, no prompts, no self-update
   ${SCRIPT_NAME} --skip python --log-file ./updates.log
+      Skip pip and keep a log of the run
 
 EOF
 }
@@ -3252,7 +3258,7 @@ module_repos() {
 
 	local base_dir="${REPOS_DIR:-${home_dir}/GitRepos}"
 	if [ ! -d "$base_dir" ]; then
-		module_skip_note repos "base directory not found: ${base_dir}"
+		module_skip_note repos "base directory ${base_dir} not found"
 		return 2
 	fi
 
@@ -3733,7 +3739,7 @@ module_python() {
 		log "Upgrading ${#safe_packages[@]} guarded Python packages..."
 		install_log="${guard_log_dir}/safe-set-install.log"
 		debug "+ ${pip_guard_install_args[*]} ${safe_packages[*]}"
-		if ! command_logged "python: installing guarded package set" "$install_log" combined "${pip_guard_install_args[@]}" "${safe_packages[@]}"; then
+		if ! COMMAND_PROGRESS_STYLE='command' command_logged "python: installing guarded package set" "$install_log" combined "${pip_guard_install_args[@]}" "${safe_packages[@]}"; then
 			err "python: pip upgrade failed: guarded user-site package set"
 			command_remove_temp "$guard_log_dir"
 			return 1
@@ -3794,7 +3800,7 @@ module_python() {
 	while [ "$next" -lt "${#packages[@]}" ] || [ "${#pids[@]}" -gt 0 ]; do
 		while [ "$next" -lt "${#packages[@]}" ] && [ "${#pids[@]}" -lt "$PARALLEL" ]; do
 			pkg="${packages[$next]}"
-			command_progress "python: installing $pkg"
+			COMMAND_PROGRESS_STYLE='command' command_progress "python: installing $pkg"
 			"${pip_install_args[@]}" "$pkg" </dev/null >"${pip_log_dir}/${pkg}.log" 2>&1 &
 			child=$!
 			COMMAND_PIDS+=("$child")
@@ -4184,6 +4190,16 @@ print_run_recap() {
 	print ""
 }
 
+# Human-only next step after failures; never emitted as JSONL.
+print_retry_hint() {
+	local failures_csv="$1"
+	[ "$LOG_LEVEL_NUM" -ge 2 ] && [ -n "$failures_csv" ] || return 0
+	[ "$STRICT_STOPPED" -eq 0 ] || print "Stopped at the first failure (--strict); later modules did not run."
+	local retry="${SCRIPT_NAME} --only ${failures_csv}"
+	[ "$DRY_RUN" -eq 0 ] || retry="${retry} --dry-run"
+	print "Retry just the failures: ${retry}"
+}
+
 run_selected_modules() {
 	successes=()
 	skipped=()
@@ -4242,6 +4258,7 @@ run_selected_modules() {
 		json_emit_module_end "$m" fail "$dur"
 		progress "$(format_boundary_end "$m" FAIL "$dur")"
 		if [ "$STRICT" -eq 1 ]; then
+			STRICT_STOPPED=1
 			return 1
 		fi
 	done 3<<<"$MODULE_REGISTRY"
@@ -4349,7 +4366,7 @@ main() {
 	fi
 	progress "$(format_summary "$successes_count" "$skipped_count" "$failures_count" "$total" "$failures_csv")"
 	err "Completed in ${total}s with failures: ${failures_csv}"
-	[ -z "$failures_csv" ] || log "Retry just the failures: ${SCRIPT_NAME} --only ${failures_csv}"
+	print_retry_hint "$failures_csv"
 	return 1
 }
 
