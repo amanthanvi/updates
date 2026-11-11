@@ -4195,9 +4195,26 @@ print_retry_hint() {
 	local failures_csv="$1"
 	[ "$LOG_LEVEL_NUM" -ge 2 ] && [ -n "$failures_csv" ] || return 0
 	[ "$STRICT_STOPPED" -eq 0 ] || print "Stopped at the first failure (--strict)."
-	local retry="${SCRIPT_NAME} --only ${failures_csv}"
-	[ "$DRY_RUN" -eq 0 ] || retry="${retry} --dry-run"
-	print "Retry just the failures: ${retry}"
+	# Re-run the same invocation (path and every other option, e.g. --dry-run,
+	# --brew-mode, --no-config) with the module selection narrowed to failures.
+	local -a retry_args=()
+	local arg drop_next=0
+	for arg in ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}; do
+		if [ "$drop_next" -eq 1 ]; then
+			drop_next=0
+			continue
+		fi
+		case "$arg" in
+		--only | --skip)
+			drop_next=1
+			continue
+			;;
+		esac
+		retry_args+=("$arg")
+	done
+	local retry
+	retry="$(printf '%q ' "$0" ${retry_args[@]+"${retry_args[@]}"} --only "$failures_csv")"
+	print "Retry just the failures: ${retry% }"
 }
 
 run_selected_modules() {

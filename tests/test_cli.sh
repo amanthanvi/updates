@@ -1335,7 +1335,8 @@ grep -Eq '^  – go +GO_BINARIES not configured$' "$recap_out"
 results_line="$(grep -n '^Results$' "$recap_out" | cut -d: -f1)"
 summary_line="$(grep -n '^==> SUMMARY ' "$recap_out" | cut -d: -f1)"
 [ "$results_line" -lt "$summary_line" ]
-[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: updates --only bun" ]
+# The hint re-runs this exact invocation (path and options), narrowed to the failures.
+[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: $(printf '%q' "$SCRIPT") --no-color --only bun" ]
 
 "$SCRIPT" "${recap_skip[@]}" --no-color --no-emoji --dry-run >"$recap_out" 2>&1
 grep -q '^Results (dry run)$' "$recap_out"
@@ -1344,9 +1345,16 @@ grep -Eq '^  skip go +GO_BINARIES not configured$' "$recap_out"
 
 # A retry after a preview must stay a preview.
 rc=0
-"$SCRIPT" --only go --no-color --dry-run >"$recap_out" 2>&1 || rc=$?
+"$SCRIPT" --only go --brew-mode greedy --no-color --dry-run >"$recap_out" 2>&1 || rc=$?
 [ "$rc" -eq 1 ]
-[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: updates --only go --dry-run" ]
+[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: $(printf '%q' "$SCRIPT") --brew-mode greedy --no-color --dry-run --only go" ]
+
+# The invoked path is kept and shell-quoted, so the hint is copy-pasteable.
+retry_copy="$(make_installed_copy "${tmp_dir}/retry path")"
+rc=0
+"$retry_copy" --only go --no-color --dry-run >"$recap_out" 2>&1 || rc=$?
+[ "$rc" -eq 1 ]
+[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: ${tmp_dir}/retry\ path/updates --no-color --dry-run --only go" ]
 
 # --strict says that later modules never ran.
 rc=0
@@ -1367,7 +1375,7 @@ if grep -Eq 'Retry just|Results' "$recap_json"; then
 	echo "Expected the recap to stay out of JSONL" >&2
 	exit 1
 fi
-grep -q '^Retry just the failures: updates --only bun$' "$recap_out"
+[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: $(printf '%q' "$SCRIPT") --json --no-color --only bun" ]
 
 rc=0
 "$SCRIPT" --only go --no-color --log-level warn --dry-run >"$recap_out" 2>&1 || rc=$?
