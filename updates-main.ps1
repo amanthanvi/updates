@@ -8,14 +8,15 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $script:EffectiveCliArgs = @()
-if ($CliArgs -and $CliArgs.Count -gt 0) {
-    $script:EffectiveCliArgs = @($CliArgs | Where-Object { -not [string]::IsNullOrEmpty($_) })
-} elseif ($MyInvocation.UnboundArguments -and $MyInvocation.UnboundArguments.Count -gt 0) {
-    $script:EffectiveCliArgs = @($MyInvocation.UnboundArguments | Where-Object { -not [string]::IsNullOrEmpty($_) })
+# Empty arguments are kept: like Bash, `--only ""` must fail rather than vanish.
+if ($null -ne $CliArgs -and $CliArgs.Count -gt 0) {
+    $script:EffectiveCliArgs = @($CliArgs | Where-Object { $null -ne $_ })
+} elseif ($null -ne $MyInvocation.UnboundArguments -and $MyInvocation.UnboundArguments.Count -gt 0) {
+    $script:EffectiveCliArgs = @($MyInvocation.UnboundArguments | Where-Object { $null -ne $_ })
 } else {
     $fallbackArgs = Get-Variable -Name args -Scope Local -ErrorAction SilentlyContinue
-    if ($fallbackArgs -and $fallbackArgs.Value -and $fallbackArgs.Value.Count -gt 0) {
-        $script:EffectiveCliArgs = @($fallbackArgs.Value | Where-Object { -not [string]::IsNullOrEmpty($_) })
+    if ($fallbackArgs -and $null -ne $fallbackArgs.Value -and $fallbackArgs.Value.Count -gt 0) {
+        $script:EffectiveCliArgs = @($fallbackArgs.Value | Where-Object { $null -ne $_ })
     }
 }
 
@@ -311,7 +312,7 @@ Options:
 function PreScan-NoConfig {
     param([string[]]$CliInput)
 
-    $CliInput = @($CliInput | Where-Object { -not [string]::IsNullOrEmpty($_) })
+    $CliInput = @($CliInput | Where-Object { $null -ne $_ })
     foreach ($arg in $CliInput) {
         switch ($arg) {
             '--no-config' { $script:NoConfig = $true }
@@ -434,7 +435,7 @@ function Read-Config {
 function Parse-Args {
     param([string[]]$CliInput)
 
-    $CliInput = @($CliInput | Where-Object { -not [string]::IsNullOrEmpty($_) })
+    $CliInput = @($CliInput | Where-Object { $null -ne $_ })
     $i = 0
     while ($i -lt $CliInput.Length) {
         $arg = $CliInput[$i]

@@ -213,7 +213,7 @@ Module lists are parsed from a **single argument**:
 If `--only`/`--skip` includes an unknown module, the CLI **MUST** exit with code `2`.
 If `--only` includes a module that is not supported on the current platform, the CLI **MUST** exit with code `2`.
 
-Repeated `--only` flags do not accumulate: the last one wins, so appending `--only <csv>` to an existing command narrows it. An `--only` value that names no modules after splitting (for example `--only " , "`) **MUST** exit with code `2`. Repeated `--skip` flags accumulate. Native Windows drops empty command-line arguments before parsing, so there `--only ""` takes the next argument as its list.
+Repeated `--only` flags do not accumulate: the last one wins, so appending `--only <csv>` to an existing command narrows it. An `--only` value that names no modules (for example `--only ""` or `--only " , "`) **MUST** exit with code `2`. Repeated `--skip` flags accumulate.
 
 Precedence: `--skip` overrides `--only`.
 
