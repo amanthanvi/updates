@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-11-11
+
 ### Added
 
 - Native Windows runs end with a `Results` recap, warnings list, and `--only` retry hint like Bash (without colors, failed-command notes, or `~/` paths).

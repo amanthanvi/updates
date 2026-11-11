@@ -20,7 +20,7 @@ if ($null -ne $CliArgs -and $CliArgs.Count -gt 0) {
     }
 }
 
-$script:UpdatesVersion = '2.2.1'
+$script:UpdatesVersion = '2.3.0'
 $script:CanonicalRepo = 'amanthanvi/updates'
 $script:ReleaseChannel = 'github-release'
 $script:ReleaseManifestName = 'updates-release.json'
