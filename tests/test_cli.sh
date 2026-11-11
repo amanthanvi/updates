@@ -746,16 +746,15 @@ if echo "$out" | grep -q '^==> brew START$'; then
 	echo "Expected a later --only to replace the earlier list" >&2
 	exit 1
 fi
-set +e
-"$SCRIPT" --dry-run --only brew --only "" >/dev/null 2>&1
-rc=$?
-"$SCRIPT" --dry-run --only " , " >/dev/null 2>&1
-rc_blank=$?
-set -e
-if [ "$rc" -ne 2 ] || [ "$rc_blank" -ne 2 ]; then
-	echo "Expected an empty --only list to be a usage error (got $rc and $rc_blank)" >&2
-	exit 1
-fi
+for empty_args in '--only|brew|--only|' '--only| , ' '--skip|' '--skip| , ' '--log-file|'; do
+	IFS='|' read -r -a empty_argv <<<"$empty_args|"
+	rc=0
+	"$SCRIPT" --dry-run "${empty_argv[@]}" >/dev/null 2>&1 || rc=$?
+	if [ "$rc" -ne 2 ]; then
+		echo "Expected an empty value in ${empty_args} to be a usage error (got $rc)" >&2
+		exit 1
+	fi
+done
 
 UPDATES_TEST_CASE
 

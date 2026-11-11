@@ -1249,6 +1249,12 @@ if (Should-RunTest 'native payload closing recap explains failures and skips and
             $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--dry-run', '--only', '', 'bun', '--no-color', '--no-emoji') -Environment $environment
             Assert-Equal -Expected 2 -Actual $result.ExitCode -Message 'an empty --only value should fail instead of taking the next argument'
             Assert-NotMatch -Text $result.Stdout -Pattern '==> bun START' -Message 'an empty --only value should not run modules'
+            # Self-update relaunches through updates.cmd, which drops empty strings,
+            # so every empty option value must be rejected up front.
+            foreach ($emptyOption in @('--skip', '--log-file')) {
+                $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--dry-run', $emptyOption, '', '--only', 'winget') -Environment $environment
+                Assert-Equal -Expected 2 -Actual $result.ExitCode -Message ("an empty {0} value should be a usage error" -f $emptyOption)
+            }
 
             # Warnings that scrolled past are repeated; ones outside a module are labeled updates.
             Write-Utf8NoBom -Path (Join-Path $installRoot '.updatesrc') -Content "PARALLEL=2`n"

@@ -468,7 +468,7 @@ function Parse-Args {
             }
             '--log-file' {
                 $i++
-                if ($i -ge $CliInput.Length) { Fail-Usage '--log-file requires a path' }
+                if ($i -ge $CliInput.Length -or -not $CliInput[$i]) { Fail-Usage '--log-file requires a path' }
                 $script:LogFile = $CliInput[$i]
             }
             '--parallel' {
@@ -496,7 +496,9 @@ function Parse-Args {
             '--skip' {
                 $i++
                 if ($i -ge $CliInput.Length) { Fail-Usage '--skip requires a module list' }
-                foreach ($moduleName in (Split-ModuleList -Value $CliInput[$i])) {
+                $skipModules = @(Split-ModuleList -Value $CliInput[$i])
+                if ($skipModules.Count -eq 0) { Fail-Usage '--skip requires a module list' }
+                foreach ($moduleName in $skipModules) {
                     if (-not (Test-ModuleKnown -Name $moduleName)) {
                         Fail-Usage ("Unknown module in --skip: {0}" -f $moduleName)
                     }
@@ -1866,6 +1868,8 @@ function Invoke-SelfUpdatedRelaunch {
     param([string[]]$OriginalArgs)
 
     $env:UPDATES_SELF_UPDATED = '1'
+    # Native .cmd calls drop empty strings; Parse-Args rejects every empty
+    # argument and option value, so accepted arguments survive this relaunch.
     & (Join-Path $script:InstallRoot 'updates.cmd') @OriginalArgs
     return $LASTEXITCODE
 }
