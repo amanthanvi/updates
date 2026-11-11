@@ -2606,12 +2606,16 @@ parse_args() {
 			[ $# -gt 0 ] || die "--only requires a module list"
 			local list
 			list="$(normalize_module_list "$1")"
+			# The last --only wins, so appending one narrows an existing command.
+			only_modules=()
+			only_modules_count=0
 			local m
 			for m in $list; do
 				is_module_known "$m" || die "Unknown module in --only: $m"
 				only_modules+=("$m")
 				only_modules_count=$((only_modules_count + 1))
 			done
+			[ "$only_modules_count" -gt 0 ] || die "--only requires a module list"
 			;;
 		--skip)
 			shift
@@ -4098,7 +4102,12 @@ record_module_result() {
 		note="${MODULE_LAST_ERROR:-$MODULE_LAST_FAILED_COMMAND}"
 		;;
 	SKIP)
-		note="${MODULE_SKIP_REASON:-$MODULE_LAST_WARNING}"
+		note="$MODULE_SKIP_REASON"
+		if [ -z "$note" ] && [ -n "$MODULE_LAST_WARNING" ]; then
+			# The skip line shows this warning, so don't repeat it under Warnings.
+			note="$MODULE_LAST_WARNING"
+			run_warnings=("${run_warnings[@]:0:$((${#run_warnings[@]} - 1))}")
+		fi
 		;;
 	esac
 	[ -z "$note" ] || note="$(recap_trim_note "$module" "$note")"

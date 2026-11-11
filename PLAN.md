@@ -1,8 +1,8 @@
-# Plan: polished Unix run output
+# Plan: polished run output
 
 ## Goal
 
-- Make a full Bash run easy to read at a glance, in the style of `npx skills`, without changing the frozen v2 boundary/summary lines or the JSONL contract.
+- Make a full run on Bash and native Windows easy to read at a glance, in the style of `npx skills`, without changing the frozen v2 boundary/summary lines or the JSONL contract.
 
 ## Execution checklist
 
@@ -11,7 +11,11 @@
 - [x] Color human output by its own stream (stdout, or stderr under `--json`); bold state-changing commands and dim internal checks on a TTY.
 - [x] Group `--help` options into Run, Inspect, Output, Configuration, and Module options.
 - [x] Pass lint and Bash tests; recap and color behavior covered by tests and pty checks.
-- [ ] Native Windows recap parity (follow-up).
+- [x] Native Windows recap parity: same `Results`/`Warnings` blocks, retry hint, and `--strict` note.
+- [x] Treat empty Bun globals as up to date on native Windows too.
+- [x] Show a skip warning once: on the module's recap line, not again under `Warnings`.
+- [x] Make the last `--only` win so the retry hint narrows commands that already use `--only`; reject empty `--only` lists.
+- [x] Pass lint and Bash tests; stubbed PowerShell smoke on macOS; native Windows tests run in CI.
 
 ---
 

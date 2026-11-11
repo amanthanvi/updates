@@ -35,6 +35,13 @@ $script:ConfigSkipModules = New-Object System.Collections.Generic.List[string]
 $script:Successes = New-Object System.Collections.Generic.List[string]
 $script:Skipped = New-Object System.Collections.Generic.List[string]
 $script:Failures = New-Object System.Collections.Generic.List[string]
+$script:ModuleResults = New-Object System.Collections.Generic.List[object]
+$script:RunWarnings = New-Object System.Collections.Generic.List[object]
+$script:ModuleSkipReason = ''
+$script:ModuleLastError = ''
+$script:ModuleLastWarning = ''
+$script:ModuleWarningCount = 0
+$script:StrictStopped = $false
 $script:LogLevelMap = @{
     error = 0
     warn  = 1
@@ -161,6 +168,9 @@ function Write-WarnLine {
         module  = $script:CurrentModule
         message = $Message
     }
+    $script:RunWarnings.Add([pscustomobject]@{ Module = $script:CurrentModule; Message = $Message })
+    $script:ModuleWarningCount++
+    $script:ModuleLastWarning = $Message
 
     if ($script:LogLevelNum -ge 1) {
         Write-HumanLine ("WARN: {0}" -f $Message)
@@ -175,6 +185,7 @@ function Write-ErrorLine {
         module  = $script:CurrentModule
         message = $Message
     }
+    $script:ModuleLastError = $Message
 
     Write-HumanLine ("ERROR: {0}" -f $Message)
 }
@@ -471,12 +482,15 @@ function Parse-Args {
             '--only' {
                 $i++
                 if ($i -ge $CliInput.Length) { Fail-Usage '--only requires a module list' }
+                # The last --only wins, so appending one narrows an existing command.
+                $script:OnlyModules.Clear()
                 foreach ($moduleName in (Split-ModuleList -Value $CliInput[$i])) {
                     if (-not (Test-ModuleKnown -Name $moduleName)) {
                         Fail-Usage ("Unknown module in --only: {0}" -f $moduleName)
                     }
                     $script:OnlyModules.Add($moduleName)
                 }
+                if ($script:OnlyModules.Count -eq 0) { Fail-Usage '--only requires a module list' }
             }
             '--skip' {
                 $i++
@@ -738,6 +752,7 @@ function Resolve-MissingDependency {
         return 1
     }
 
+    $script:ModuleSkipReason = $Detail
     Write-LogLine ("Skipping {0}: {1}" -f $ModuleName, $Detail)
     return 2
 }
@@ -1170,7 +1185,9 @@ function Invoke-ModuleBun {
     }
 
     $result = Invoke-LoggedProcess -FilePath $bun -ArgumentList @('update', '-g')
-    if ($result.ExitCode -ne 0) {
+    if ($result.ExitCode -ne 0 -and $result.Output -match 'No package\.json, so nothing to update') {
+        Write-LogLine 'bun: no Bun global packages installed; nothing to update.'
+    } elseif ($result.ExitCode -ne 0) {
         Write-ErrorLine 'bun: global upgrade failed'
         return 1
     }
@@ -1404,7 +1421,8 @@ function Invoke-Module {
 
     $module = Get-ModuleInfo -Name $ModuleName
     if ($null -eq $module -or -not ($module.Platforms -contains 'windows') -or -not $module.Handler) {
-        Write-LogLine ("Skipping {0}: module is not implemented on native Windows." -f $ModuleName)
+        $script:ModuleSkipReason = 'module is not implemented on native Windows.'
+        Write-LogLine ("Skipping {0}: {1}" -f $ModuleName, $script:ModuleSkipReason)
         return 2
     }
     return (& $module.Handler)
@@ -2074,6 +2092,117 @@ function Invoke-WindowsSelfUpdate {
     }
 }
 
+# Strip a leading "<module>: " and a trailing "Skipping." so recap notes stay short.
+function Format-RecapNote {
+    param(
+        [string]$ModuleName,
+        [string]$Note
+    )
+
+    $prefix = '{0}: ' -f $ModuleName
+    if ($Note.StartsWith($prefix)) {
+        $Note = $Note.Substring($prefix.Length)
+    }
+    $Note = $Note -replace '(;\s*skipping|\s+Skipping\.)$', ''
+    return $Note.TrimEnd('.')
+}
+
+function Add-ModuleResult {
+    param(
+        [string]$ModuleName,
+        [string]$Status,
+        [int]$Seconds
+    )
+
+    $note = ''
+    if ($Status -eq 'FAIL') {
+        $note = $script:ModuleLastError
+    } elseif ($Status -eq 'SKIP') {
+        $note = $script:ModuleSkipReason
+        if (-not $note -and $script:ModuleLastWarning) {
+            # The skip line shows this warning, so don't repeat it under Warnings.
+            $note = $script:ModuleLastWarning
+            $script:RunWarnings.RemoveAt($script:RunWarnings.Count - 1)
+        }
+    }
+    if ($note) {
+        $note = Format-RecapNote -ModuleName $ModuleName -Note $note
+    }
+    if ($Status -ne 'SKIP' -and $script:ModuleWarningCount -gt 0) {
+        $countNote = '{0} warning' -f $script:ModuleWarningCount
+        if ($script:ModuleWarningCount -ne 1) {
+            $countNote += 's'
+        }
+        $note = if ($note) { '{0}; {1}' -f $note, $countNote } else { $countNote }
+    }
+    $script:ModuleResults.Add([pscustomobject]@{
+        Name    = $ModuleName
+        Status  = $Status
+        Seconds = $Seconds
+        Note    = $note
+    })
+}
+
+function Get-RecapMark {
+    param([string]$Status)
+
+    # Symbols only when the console can render them; otherwise plain words.
+    if (-not $script:NoEmoji -and [Console]::OutputEncoding.CodePage -eq 65001) {
+        switch ($Status) {
+            'OK' { return [string][char]0x2713 }
+            'FAIL' { return [string][char]0x2717 }
+            default { return [string][char]0x2013 }
+        }
+    }
+    switch ($Status) {
+        'OK' { return 'ok  ' }
+        'FAIL' { return 'FAIL' }
+        default { return 'skip' }
+    }
+}
+
+# Human-only closing recap: one line per module, then any warnings that
+# scrolled past. Written before the stable SUMMARY line; never in JSONL.
+function Write-RunRecap {
+    if ($script:LogLevelNum -lt 2 -or $script:ModuleResults.Count -eq 0) {
+        return
+    }
+
+    $width = ($script:ModuleResults | ForEach-Object { $_.Name.Length } | Measure-Object -Maximum).Maximum
+    $heading = if ($script:DryRun) { 'Results (dry run)' } else { 'Results' }
+    Write-HumanLine ''
+    Write-HumanLine $heading
+    foreach ($result in $script:ModuleResults) {
+        $seconds = if ($result.Status -eq 'SKIP') { '' } else { '{0}s' -f $result.Seconds }
+        $line = '  {0} {1} {2,5}' -f (Get-RecapMark -Status $result.Status), $result.Name.PadRight($width), $seconds
+        if ($result.Note) {
+            $line += '  ' + $result.Note
+        }
+        Write-HumanLine $line
+    }
+
+    if ($script:RunWarnings.Count -gt 0) {
+        Write-HumanLine ''
+        Write-HumanLine ('Warnings ({0})' -f $script:RunWarnings.Count)
+        foreach ($warning in $script:RunWarnings) {
+            $moduleName = if ($warning.Module -eq 'main') { 'updates' } else { $warning.Module }
+            Write-HumanLine ('  {0}: {1}' -f $moduleName, (Format-RecapNote -ModuleName $moduleName -Note $warning.Message))
+        }
+    }
+    Write-HumanLine ''
+}
+
+# Human-only next step after failures; never emitted as JSONL.
+function Write-RetryHint {
+    if ($script:LogLevelNum -lt 2 -or $script:Failures.Count -eq 0) {
+        return
+    }
+    if ($script:StrictStopped) {
+        Write-HumanLine 'Stopped at the first failure (--strict).'
+    }
+    Write-HumanLine ('Retry just the failures: re-run the same command with --only {0}' -f ($script:Failures -join ','))
+}
+
 function Invoke-SelectedModules {
     $selected = Get-SelectedModules
     $startAt = Get-Date
@@ -2082,6 +2211,10 @@ function Invoke-SelectedModules {
         Write-ModuleStartEvent -ModuleName $moduleName
         Write-ProgressLine (Format-BoundaryStart -ModuleName $moduleName)
         $script:CurrentModule = $moduleName
+        $script:ModuleSkipReason = ''
+        $script:ModuleLastError = ''
+        $script:ModuleLastWarning = ''
+        $script:ModuleWarningCount = 0
         $moduleStart = Get-Date
         $rc = Invoke-Module -ModuleName $moduleName
         $script:CurrentModule = 'main'
@@ -2091,20 +2224,24 @@ function Invoke-SelectedModules {
         switch ($rc) {
             0 {
                 $script:Successes.Add($moduleName)
+                Add-ModuleResult -ModuleName $moduleName -Status 'OK' -Seconds $seconds
                 Write-ModuleEndEvent -ModuleName $moduleName -Status 'ok' -Seconds $seconds
                 Write-ProgressLine (Format-BoundaryEnd -ModuleName $moduleName -Status 'OK' -Seconds $seconds)
             }
             2 {
                 $script:Skipped.Add($moduleName)
+                Add-ModuleResult -ModuleName $moduleName -Status 'SKIP' -Seconds $seconds
                 Write-ModuleEndEvent -ModuleName $moduleName -Status 'skip' -Seconds $seconds
                 Write-ProgressLine (Format-BoundaryEnd -ModuleName $moduleName -Status 'SKIP' -Seconds $seconds)
             }
             default {
                 $script:Failures.Add($moduleName)
+                Add-ModuleResult -ModuleName $moduleName -Status 'FAIL' -Seconds $seconds
                 Write-ModuleEndEvent -ModuleName $moduleName -Status 'fail' -Seconds $seconds
                 Write-ProgressLine (Format-BoundaryEnd -ModuleName $moduleName -Status 'FAIL' -Seconds $seconds)
                 if ($script:Strict) {
                     $stopAfterFailure = $true
+                    $script:StrictStopped = $true
                 }
             }
         }
@@ -2116,10 +2253,12 @@ function Invoke-SelectedModules {
 
     $totalSeconds = [int][Math]::Round(((Get-Date) - $startAt).TotalSeconds)
     Write-SummaryEvent -TotalSeconds $totalSeconds
+    Write-RunRecap
     Write-ProgressLine (Format-Summary -Ok $script:Successes.Count -Skip $script:Skipped.Count -Fail $script:Failures.Count -TotalSeconds $totalSeconds)
 
     if ($script:Failures.Count -gt 0) {
         Write-ErrorLine ("Completed in {0}s with failures: {1}" -f $totalSeconds, (($script:Failures | ForEach-Object { $_ }) -join ' '))
+        Write-RetryHint
         return 1
     }
 

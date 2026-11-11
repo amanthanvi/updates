@@ -70,7 +70,7 @@ v2.2 adds the default-on `skills` module for project and global scopes, includin
 
 - **Loading:** Module boundary line printed (`==> <module> START`); underlying tool output streams through.
 - **Empty:** "All packages are up-to-date" message per module when nothing to upgrade.
-- **Error:** `ERROR: ...` on stderr; module marked FAIL in summary; exit code 1. On Unix, the closing recap shows why each module failed or was skipped and ends with a `--only` retry hint.
+- **Error:** `ERROR: ...` on stderr; module marked FAIL in summary; exit code 1. The closing recap shows why each module failed or was skipped and ends with a `--only` retry hint.
 - **Permission denied:** `WARN:` message when self-update lacks write access or a valid Windows install receipt; the run skips gracefully instead of elevating on Windows.
 - **Offline/degraded:** Self-update silently skips on network failure; individual modules fail based on their own tool's behavior.
 - **Accessibility:** Plain-text output; emoji disabled with `--no-emoji`; colors disabled with `--no-color` / `NO_COLOR=1`.
@@ -213,6 +213,8 @@ Module lists are parsed from a **single argument**:
 If `--only`/`--skip` includes an unknown module, the CLI **MUST** exit with code `2`.
 If `--only` includes a module that is not supported on the current platform, the CLI **MUST** exit with code `2`.
 
+Repeated `--only` flags do not accumulate: the last one wins, so appending `--only <csv>` to an existing command narrows it. An `--only` list with no module names **MUST** exit with code `2`. Repeated `--skip` flags accumulate.
+
 Precedence: `--skip` overrides `--only`.
 
 ### 3.8 --json (JSONL streaming output)
@@ -301,12 +303,12 @@ Standardized boundaries:
 - After the run completes, a summary line is printed:
   - `==> SUMMARY ok=<N> skip=<N> fail=<N> total=<Ns> [failures=<csv>]`
 
-Unix closing recap (additive; the boundary and summary lines above are unchanged):
+Closing recap (additive; the boundary and summary lines above are unchanged):
 
-- At `info`/`debug`, a `Results` block (`Results (dry run)` under `--dry-run`) is printed immediately before the `SUMMARY` line: one line per module that ran, in execution order, with a status marker (`✓`/`✗`/`–`, or `ok`/`FAIL`/`skip` with `--no-emoji`), the module name, its duration (omitted for skips), and an optional note. Notes are the skip reason, the module's last error or failed command (`<command> exited <N>`), and/or a warning count. Paths under `$HOME` are shown as `~/...`.
-- If any warnings were emitted, a `Warnings (<N>)` block repeats them as `<module>: <message>` (`updates:` for warnings outside a module).
+- At `info`/`debug`, a `Results` block (`Results (dry run)` under `--dry-run`) is printed immediately before the `SUMMARY` line: one line per module that ran, in execution order, with a status marker (`✓`/`✗`/`–`, or `ok`/`FAIL`/`skip` with `--no-emoji`), the module name, its duration (omitted for skips), and an optional note. Notes are the skip reason, the module's last error or failed command (`<command> exited <N>`, Unix only), and/or a warning count. On Unix, paths under `$HOME` are shown as `~/...`. Native Windows uses the ASCII markers unless the console encoding is UTF-8.
+- If any warnings were emitted, a `Warnings (<N>)` block repeats them as `<module>: <message>` (`updates:` for warnings outside a module). A warning that is the reason a module was skipped is shown on that module's recap line instead.
 - When modules failed, the final line after `ERROR: Completed ...` is `Retry just the failures: re-run the same command with --only <csv>`. Under `--strict`, it is preceded by `Stopped at the first failure (--strict).` Both are human-only and hidden at `--log-level warn` and below.
-- The recap goes to the human stream (stderr under `--json`) and never to JSONL. Native Windows does not print it yet.
+- The recap goes to the human stream (stderr under `--json`) and never to JSONL.
 
 ### 5.2 JSONL event stream contract
 
@@ -509,7 +511,7 @@ Purpose: upgrade Bun global packages and, when safe, the Bun CLI itself.
 - Runs on macOS, Linux, and native Windows in `v2.0.0`.
 - Requires: `bun`
 - Non-dry-run:
-  - `bun update -g`; on macOS and Linux, Bun's "No package.json, so nothing to update" failure (no global packages installed) is reported as up to date
+  - `bun update -g`; Bun's "No package.json, so nothing to update" failure (no global packages installed) is reported as up to date
   - `bun upgrade` only when Bun appears standalone-installed; if Bun appears package-managed or ownership is unclear, CLI self-update is skipped on native Windows
 - Side effects: upgrades Bun global packages; may upgrade the Bun CLI when ownership is clearly standalone.
 

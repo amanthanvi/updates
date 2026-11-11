@@ -739,6 +739,26 @@ fi
 
 UPDATES_TEST_CASE
 
+run_test "the last --only wins" <<'UPDATES_TEST_CASE'
+out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --no-emoji --only brew,node --only node)"
+echo "$out" | grep -q '^==> node START$'
+if echo "$out" | grep -q '^==> brew START$'; then
+	echo "Expected a later --only to replace the earlier list" >&2
+	exit 1
+fi
+set +e
+"$SCRIPT" --dry-run --only brew --only "" >/dev/null 2>&1
+rc=$?
+"$SCRIPT" --dry-run --only " , " >/dev/null 2>&1
+rc_blank=$?
+set -e
+if [ "$rc" -ne 2 ] || [ "$rc_blank" -ne 2 ]; then
+	echo "Expected an empty --only list to be a usage error (got $rc and $rc_blank)" >&2
+	exit 1
+fi
+
+UPDATES_TEST_CASE
+
 run_test "selected modules run in non-dry-run mode" <<'UPDATES_TEST_CASE'
 out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --only brew,node --no-emoji)"
 echo "$out" | grep -q '^==> brew START$'
@@ -2095,6 +2115,12 @@ node_capability_stderr="${tmp_dir}/node-capability-stderr.log"
 out="$("$SCRIPT" "${node_skip_args[@]}" 2>"$node_capability_stderr")"
 echo "$out" | grep -q '^==> node END (SKIP)'
 grep -q 'node: no npm-check-updates adapter supports --enginesNode' "$node_capability_stderr"
+# The recap's skip line carries the warning, so it is not listed again.
+echo "$out" | grep -Eq '^  skip node +no npm-check-updates adapter supports --enginesNode; upgrade ncu or install npx$'
+if echo "$out" | grep -q '^Warnings ('; then
+	echo "Expected the skip warning to appear once in the recap" >&2
+	exit 1
+fi
 set +e
 out="$("$SCRIPT" --only node --no-emoji --no-color 2>"$node_capability_stderr")"
 rc=$?
