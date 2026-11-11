@@ -72,7 +72,7 @@ v2.3 preserves the stable v2 contract. At `info`/`debug`, Bash and native Window
 
 - **Loading:** Module boundary line printed (`==> <module> START`); underlying tool output streams through.
 - **Empty:** "All packages are up-to-date" message per module when nothing to upgrade.
-- **Error:** `ERROR: ...` on stderr; module marked FAIL in summary; exit code 1. The closing recap shows why each module failed or was skipped and ends with a `--only` retry hint.
+- **Error:** `ERROR: ...` on stderr; module marked FAIL in summary; exit code 1. At `info`/`debug`, the closing recap shows why each module failed or was skipped and ends with a `--only` retry hint.
 - **Permission denied:** `WARN:` message when self-update lacks write access or a valid Windows install receipt; the run skips gracefully instead of elevating on Windows.
 - **Offline/degraded:** Self-update silently skips on network failure; individual modules fail based on their own tool's behavior.
 - **Accessibility:** Plain-text output; emoji disabled with `--no-emoji`; colors disabled with `--no-color` / `NO_COLOR=1`.
@@ -914,7 +914,7 @@ The Unix `updates` script exceeds the project's 500-line guideline. This is an i
 | 2026-04-26 | `updates` distribution remains GitHub Releases only               | Publish to third-party managers      | Lowest-friction official channel; simpler trust boundary    | No first-party npm/PyPI/Winget/etc. channel for `updates` itself in v2.0.0              |
 | 2026-04-26 | Windows uses receipt-gated standalone self-update                 | Delegate to package managers         | Avoids overwriting unknown installs; first-party ownership  | Manual copies and non-official layouts skip self-update                                  |
 | 2026-04-26 | Immutable releases + asset digests required for runtime updates   | SHA256 only                          | Stronger supply-chain guarantees without adding local deps  | Release pipeline must verify/publish in a stricter order                                 |
-| 2026-11-11 | Last `--only` wins; empty `--only`/`--skip`/`--log-file` exit `2` (v2.3.0) | Keep accumulating; ship in 3.0.0 | Neither behavior was documented; the change can only run fewer modules; invalid values already exit `2` (§3.1, §3.2) | Minor release; CHANGELOG gives migration advice (`--only a,b`) |
+| 2026-11-11 | Last `--only` wins; empty `--only`/`--skip`/`--log-file` exit `2` (v2.3.0) | Keep accumulating; ship in 3.0.0 | Neither behavior was documented; the change can only run fewer modules; invalid values already exit `2` (§3.1, §3.2); rule recorded in §3.7 | Minor release; CHANGELOG gives migration advice (`--only a,b`) |
 
 ## 18) Assumptions, Open Questions, Risks
 
