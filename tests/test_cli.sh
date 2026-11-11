@@ -1335,7 +1335,7 @@ grep -Eq '^  – go +GO_BINARIES not configured$' "$recap_out"
 results_line="$(grep -n '^Results$' "$recap_out" | cut -d: -f1)"
 summary_line="$(grep -n '^==> SUMMARY ' "$recap_out" | cut -d: -f1)"
 [ "$results_line" -lt "$summary_line" ]
-# The hint is a plain instruction naming the failed modules, never a rebuilt command.
+# The hint names the failed modules.
 [ "$(tail -n 1 "$recap_out")" = "Retry just the failures: re-run the same command with --only bun" ]
 
 "$SCRIPT" "${recap_skip[@]}" --no-color --no-emoji --dry-run >"$recap_out" 2>&1
