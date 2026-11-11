@@ -27,7 +27,7 @@ v2.1 preserves the stable v2 contract. Patch release v2.1.1 filters Node upgrade
 
 v2.2 adds the default-on `skills` module for project and global scopes, including the caller's project directory on native Windows. Unix commands now support cancellation, live phases and elapsed progress, streamed diagnostics, and scoped non-interactive Homebrew confirmation. Patch release v2.2.1 retargets the Claude module to `claude install latest` on Bash and native Windows.
 
-v2.3 ends every Bash and native Windows run with a human-only `Results` recap, resurfaced warnings, and a `--only` retry hint, and treats empty Bun global installs as up to date. The last `--only` now wins, and empty `--only`, `--skip`, and `--log-file` values are usage errors.
+v2.3 preserves the stable v2 contract. At `info`/`debug`, Bash and native Windows runs end with a human-only `Results` recap and resurfaced warnings, plus a `--only` retry hint after failures; empty Bun global installs count as up to date. The last `--only` now wins, and empty `--only`, `--skip`, and `--log-file` values are usage errors.
 
 ### 1.3 Success metrics
 
@@ -914,6 +914,7 @@ The Unix `updates` script exceeds the project's 500-line guideline. This is an i
 | 2026-04-26 | `updates` distribution remains GitHub Releases only               | Publish to third-party managers      | Lowest-friction official channel; simpler trust boundary    | No first-party npm/PyPI/Winget/etc. channel for `updates` itself in v2.0.0              |
 | 2026-04-26 | Windows uses receipt-gated standalone self-update                 | Delegate to package managers         | Avoids overwriting unknown installs; first-party ownership  | Manual copies and non-official layouts skip self-update                                  |
 | 2026-04-26 | Immutable releases + asset digests required for runtime updates   | SHA256 only                          | Stronger supply-chain guarantees without adding local deps  | Release pipeline must verify/publish in a stricter order                                 |
+| 2026-11-11 | Last `--only` wins; empty `--only`/`--skip`/`--log-file` exit `2` (v2.3.0) | Keep accumulating; ship in 3.0.0 | Neither behavior was documented; the change can only run fewer modules; invalid values already exit `2` (§3.1, §3.2) | Minor release; CHANGELOG gives migration advice (`--only a,b`) |
 
 ## 18) Assumptions, Open Questions, Risks
 
