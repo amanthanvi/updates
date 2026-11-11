@@ -59,6 +59,7 @@ result_statuses=()
 result_seconds=()
 result_notes=()
 run_warnings=()
+retry_args=()
 MODULE_SKIP_REASON=""
 MODULE_LAST_ERROR=""
 MODULE_LAST_FAILED_COMMAND=""
@@ -2525,7 +2526,10 @@ read_config() {
 }
 
 parse_args() {
+	local arg remaining
 	while [ $# -gt 0 ]; do
+		arg="$1"
+		remaining=$#
 		case "$1" in
 		-h | --help)
 			usage
@@ -2657,6 +2661,15 @@ parse_args() {
 			;;
 		*)
 			die "Unexpected argument: $1"
+			;;
+		esac
+		# Record what was parsed (minus the module selection) for the retry hint;
+		# a value-taking option has already shifted onto its value.
+		case "$arg" in
+		--only | --skip) ;;
+		*)
+			retry_args+=("$arg")
+			[ $# -eq "$remaining" ] || retry_args+=("$1")
 			;;
 		esac
 		shift
@@ -4195,25 +4208,24 @@ print_retry_hint() {
 	local failures_csv="$1"
 	[ "$LOG_LEVEL_NUM" -ge 2 ] && [ -n "$failures_csv" ] || return 0
 	[ "$STRICT_STOPPED" -eq 0 ] || print "Stopped at the first failure (--strict)."
-	# Re-run the same invocation (path and every other option, e.g. --dry-run,
-	# --brew-mode, --no-config) with the module selection narrowed to failures.
-	local -a retry_args=()
-	local arg drop_next=0
-	for arg in ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}; do
-		if [ "$drop_next" -eq 1 ]; then
-			drop_next=0
-			continue
+	# Re-run the same invocation with the selection narrowed to the failures.
+	# retry_args holds every parsed option except --only/--skip (see parse_args).
+	local invoked="$0" found=""
+	case "$invoked" in
+	*/*)
+		# Prefer the bare name when PATH already resolves to this same file.
+		found="$(command -v "${invoked##*/}" 2>/dev/null || true)"
+		if [ -n "$found" ] && [ "$found" -ef "$invoked" ]; then
+			invoked="${invoked##*/}"
 		fi
-		case "$arg" in
-		--only | --skip)
-			drop_next=1
-			continue
-			;;
-		esac
-		retry_args+=("$arg")
-	done
+		;;
+	*)
+		# `bash updates` leaves a bare name; keep it pointing at this file.
+		[ ! -f "./$invoked" ] || invoked="./$invoked"
+		;;
+	esac
 	local retry
-	retry="$(printf '%q ' "$0" ${retry_args[@]+"${retry_args[@]}"} --only "$failures_csv")"
+	retry="$(printf '%q ' "$invoked" ${retry_args[@]+"${retry_args[@]}"} --only "$failures_csv")"
 	print "Retry just the failures: ${retry% }"
 }
 
@@ -4334,12 +4346,12 @@ main() {
 	fi
 
 	if [ -n "$LOG_FILE" ] && [ "${UPDATES_LOG_REDIRECTED:-0}" != "1" ]; then
-		mkdir -p "$(dirname "$LOG_FILE")" || die "Failed to create log dir"
+		mkdir -p -- "$(dirname -- "$LOG_FILE")" || die "Failed to create log dir"
 		export UPDATES_LOG_REDIRECTED=1
 		if [ "$JSON" -eq 1 ]; then
-			exec 2> >(tee -a "$LOG_FILE" >&2)
+			exec 2> >(tee -a -- "$LOG_FILE" >&2)
 		else
-			exec > >(tee -a "$LOG_FILE") 2>&1
+			exec > >(tee -a -- "$LOG_FILE") 2>&1
 		fi
 	fi
 

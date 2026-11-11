@@ -1354,7 +1354,28 @@ retry_copy="$(make_installed_copy "${tmp_dir}/retry path")"
 rc=0
 "$retry_copy" --only go --no-color --dry-run >"$recap_out" 2>&1 || rc=$?
 [ "$rc" -eq 1 ]
-[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: ${tmp_dir}/retry\ path/updates --no-color --dry-run --only go" ]
+[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: $(printf '%q' "${tmp_dir}/retry path/updates") --no-color --dry-run --only go" ]
+
+# The parser records the retry options, so flag-like option values, a trailing
+# `--`, and bare or PATH invocations all yield a hint that re-runs the same work.
+retry_dir="${tmp_dir}/retry-cwd"
+mkdir -p "$retry_dir"
+rc=0
+(cd "$retry_dir" && "$SCRIPT" --log-file --skip --dry-run -n --only go >"$recap_out" 2>&1) || rc=$?
+[ "$rc" -eq 1 ]
+[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: $(printf '%q' "$SCRIPT") --log-file --skip --dry-run -n --only go" ]
+rc=0
+"$SCRIPT" --only go --dry-run --no-color -- >"$recap_out" 2>&1 || rc=$?
+[ "$rc" -eq 1 ]
+[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: $(printf '%q' "$SCRIPT") --dry-run --no-color --only go" ]
+rc=0
+(cd "${tmp_dir}/retry path" && bash updates --only go --dry-run --no-color >"$recap_out" 2>&1) || rc=$?
+[ "$rc" -eq 1 ]
+[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: ./updates --dry-run --no-color --only go" ]
+rc=0
+PATH="${tmp_dir}/retry path:${PATH}" updates --only go --dry-run --no-color >"$recap_out" 2>&1 || rc=$?
+[ "$rc" -eq 1 ]
+[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: updates --dry-run --no-color --only go" ]
 
 # --strict says that later modules never ran.
 rc=0

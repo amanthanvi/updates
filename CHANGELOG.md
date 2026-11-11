@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - Bash `--json` no longer writes ANSI colors into a redirected stderr when stdout is a terminal.
+- Bash `--log-file` accepts paths that start with `-`.
 - Bash `bun` module no longer fails when no Bun global packages are installed (`bun update -g` reports "No package.json, so nothing to update").
 
 ## [2.2.1] - 2026-10-03
