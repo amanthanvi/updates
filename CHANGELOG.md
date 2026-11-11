@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- The native Windows payload keeps empty arguments it receives (from `cmd.exe` or `pwsh -File`), so `--only "" bun` is a usage error instead of running `bun`, and a stray `""` is rejected like on Bash. PowerShell's `&` call operator still drops `""` before `updates.cmd` sees it.
+- The native Windows payload keeps empty arguments it receives (for example through `pwsh -File`), so `--only "" bun` is a usage error instead of running `bun`, and a stray `""` is rejected like on Bash. PowerShell's `&` call operator still drops `""` before `updates.cmd` sees it.
 - Bash `--json` no longer writes ANSI colors into a redirected stderr when stdout is a terminal.
 - Bash `--log-file` accepts paths that start with `-`.
 - `bun` module no longer fails on Bash or native Windows when no Bun global packages are installed (`bun update -g` reports "No package.json, so nothing to update").
