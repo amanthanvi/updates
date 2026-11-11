@@ -9,13 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Native Windows runs end with the same `Results` recap, warnings list, and `--only` retry hint as Bash.
+- Native Windows runs end with a `Results` recap, warnings list, and `--only` retry hint like Bash (without colors, failed-command notes, or `~/` paths).
 - Bash runs end with a `Results` recap: one line per module with a status marker, its duration, and the reason for any skip or failure, followed by any warnings that scrolled past and, when something failed, a `--only` retry hint. The stable `==> ... END` and `==> SUMMARY` lines are unchanged.
 
 ### Changed
 
 - Repeated `--only` flags no longer accumulate: the last one wins, so adding `--only <csv>` to a command narrows it. An empty `--only` list is now a usage error (exit `2`) instead of selecting every module.
-- A warning that explains why a module was skipped appears once, on that module's recap line, instead of also under `Warnings`.
+- A skipped module's lone warning appears once, on its recap line, instead of also under `Warnings`. `shell` and `repos` skips where every Git repo is ineligible now say `no eligible Git repos` and keep each repo's warning under `Warnings`.
 - Bash `--help` groups options into Run, Inspect, Output, Configuration, and Module options sections.
 - On a color TTY, Bash shows state-changing commands in bold and internal checks dimmed.
 - Bash Git preflight for `shell` and `repos` uses one `git status --porcelain=v2 --branch` call per repo instead of four, so each repo shows one progress line.

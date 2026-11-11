@@ -291,7 +291,7 @@ Options:
       --list-modules       List available modules
       --doctor             Check local install integrity; make no changes or network requests
       --dry-run            Print what would run; make no changes
-      --only <list>        Run only these modules (CSV; or quote a space-separated list)
+      --only <list>        Run only these modules (CSV or quoted list; the last --only wins)
       --skip <list>        Skip these modules (CSV; or quote a space-separated list)
       --strict             Stop on first failure
       --log-level <level>  Output level: error, warn, info, debug (default: info)
@@ -2100,11 +2100,14 @@ function Format-RecapNote {
     )
 
     $prefix = '{0}: ' -f $ModuleName
-    if ($Note.StartsWith($prefix)) {
+    if ($Note.StartsWith($prefix, [System.StringComparison]::Ordinal)) {
         $Note = $Note.Substring($prefix.Length)
     }
-    $Note = $Note -replace '(;\s*skipping|\s+Skipping\.)$', ''
-    return $Note.TrimEnd('.')
+    $Note = $Note -creplace '(; skipping| Skipping\.)$', ''
+    if ($Note.EndsWith('.')) {
+        $Note = $Note.Substring(0, $Note.Length - 1)
+    }
+    return $Note
 }
 
 function Add-ModuleResult {
@@ -2115,20 +2118,22 @@ function Add-ModuleResult {
     )
 
     $note = ''
+    $folded = $false
     if ($Status -eq 'FAIL') {
         $note = $script:ModuleLastError
     } elseif ($Status -eq 'SKIP') {
         $note = $script:ModuleSkipReason
-        if (-not $note -and $script:ModuleLastWarning) {
-            # The skip line shows this warning, so don't repeat it under Warnings.
+        if (-not $note -and $script:ModuleWarningCount -eq 1) {
+            # The lone warning is the skip reason: show it here, not under Warnings.
             $note = $script:ModuleLastWarning
+            $folded = $true
             $script:RunWarnings.RemoveAt($script:RunWarnings.Count - 1)
         }
     }
     if ($note) {
         $note = Format-RecapNote -ModuleName $ModuleName -Note $note
     }
-    if ($Status -ne 'SKIP' -and $script:ModuleWarningCount -gt 0) {
+    if (-not $folded -and $script:ModuleWarningCount -gt 0) {
         $countNote = '{0} warning' -f $script:ModuleWarningCount
         if ($script:ModuleWarningCount -ne 1) {
             $countNote += 's'
@@ -2178,7 +2183,7 @@ function Write-RunRecap {
         if ($result.Note) {
             $line += '  ' + $result.Note
         }
-        Write-HumanLine $line
+        Write-HumanLine $line.TrimEnd()
     }
 
     if ($script:RunWarnings.Count -gt 0) {

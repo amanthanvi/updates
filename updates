@@ -2314,7 +2314,7 @@ Usage:
 
 Run:
       --dry-run            Print what would run; make no changes
-      --only <list>        Run only these modules (CSV; or quote a space-separated list)
+      --only <list>        Run only these modules (CSV or quoted list; the last --only wins)
       --skip <list>        Skip these modules (CSV; or quote a space-separated list)
       --full               Enable everything (brew greedy + mas + macos + all detected modules)
       --strict             Stop on first failure
@@ -3199,6 +3199,7 @@ git_sync_repositories() {
 		return 1
 	fi
 	if [ "$eligible" -eq 0 ]; then
+		module_skip_note "$CURRENT_MODULE" "no eligible Git repos"
 		return 2
 	fi
 	return 0
@@ -4096,22 +4097,23 @@ recap_trim_note() {
 }
 
 record_module_result() {
-	local module="$1" status="$2" seconds="$3" note=""
+	local module="$1" status="$2" seconds="$3" note="" folded=0
 	case "$status" in
 	FAIL)
 		note="${MODULE_LAST_ERROR:-$MODULE_LAST_FAILED_COMMAND}"
 		;;
 	SKIP)
 		note="$MODULE_SKIP_REASON"
-		if [ -z "$note" ] && [ -n "$MODULE_LAST_WARNING" ]; then
-			# The skip line shows this warning, so don't repeat it under Warnings.
+		if [ -z "$note" ] && [ "$MODULE_WARNING_COUNT" -eq 1 ]; then
+			# The lone warning is the skip reason: show it here, not under Warnings.
 			note="$MODULE_LAST_WARNING"
+			folded=1
 			run_warnings=("${run_warnings[@]:0:$((${#run_warnings[@]} - 1))}")
 		fi
 		;;
 	esac
 	[ -z "$note" ] || note="$(recap_trim_note "$module" "$note")"
-	if [ "$status" != SKIP ] && [ "$MODULE_WARNING_COUNT" -gt 0 ]; then
+	if [ "$folded" -eq 0 ] && [ "$MODULE_WARNING_COUNT" -gt 0 ]; then
 		local count_note="${MODULE_WARNING_COUNT} warning"
 		[ "$MODULE_WARNING_COUNT" -eq 1 ] || count_note="${count_note}s"
 		note="${note:+${note}; }${count_note}"
@@ -4182,6 +4184,8 @@ print_run_recap() {
 			*) line="${line}  ${dim}${note}${reset}" ;;
 			esac
 		fi
+		# Drop the column padding left on lines without a duration or note.
+		line="${line%"${line##*[! ]}"}"
 		print "$line"
 	done
 

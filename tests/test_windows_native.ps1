@@ -1244,8 +1244,15 @@ if (Should-RunTest 'native payload closing recap explains failures and skips and
             Assert-Match -Text $result.Stdout -Pattern '(?m)^Results \(dry run\)\r?$' -Message 'dry runs should label the recap'
             Assert-NotMatch -Text $result.Stdout -Pattern '==> bun START' -Message 'the last --only should replace earlier lists'
 
-            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', ' , ', '--no-color', '--no-emoji') -Environment $environment
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--dry-run', '--only', ' , ', '--no-color', '--no-emoji') -Environment $environment
             Assert-Equal -Expected 2 -Actual $result.ExitCode -Message 'an empty --only list should be a usage error'
+
+            # Warnings that scrolled past are repeated; ones outside a module are labeled updates.
+            Write-Utf8NoBom -Path (Join-Path $installRoot '.updatesrc') -Content "PARALLEL=2`n"
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--dry-run', '--only', 'winget', '--no-color', '--no-emoji') -Environment $environment
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'a config warning should not fail the run'
+            Assert-Match -Text $result.Stdout -Pattern '(?m)^Warnings \(1\)\r?$' -Message 'the recap should count resurfaced warnings'
+            Assert-Match -Text $result.Stdout -Pattern '(?m)^  updates: config: PARALLEL is ignored on native Windows\r?$' -Message 'warnings outside a module should be labeled updates'
         }
     }
 }

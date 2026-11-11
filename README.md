@@ -86,7 +86,7 @@ ERROR: Completed in 66s with failures: bun
 Retry just the failures: re-run the same command with --only bun
 ```
 
-The `Results` recap lists every module with its duration and a short reason for skips and failures, then repeats any warnings that scrolled past. It is human-only (never in JSONL), uses ASCII `ok`/`FAIL`/`skip` markers with `--no-emoji`, and is hidden at `--log-level warn` and below. On Unix with a color TTY, commands that change state are bold and internal checks are dim.
+The `Results` recap lists every module with its duration and a short reason for skips and failures, then repeats any warnings that scrolled past. It is human-only (never in JSONL), uses ASCII `ok`/`FAIL`/`skip` markers with `--no-emoji` (and on native Windows unless the console is UTF-8), and is hidden at `--log-level warn` and below. On Unix with a color TTY, commands that change state are bold and internal checks are dim.
 
 List available modules:
 

@@ -13,7 +13,7 @@
 - [x] Pass lint and Bash tests; recap and color behavior covered by tests and pty checks.
 - [x] Native Windows recap parity: same `Results`/`Warnings` blocks, retry hint, and `--strict` note.
 - [x] Treat empty Bun globals as up to date on native Windows too.
-- [x] Show a skip warning once: on the module's recap line, not again under `Warnings`.
+- [x] Show a skipped module's lone warning once: on its recap line, not again under `Warnings`; multi-repo Git skips get their own reason.
 - [x] Make the last `--only` win so the retry hint narrows commands that already use `--only`; reject empty `--only` lists.
 - [x] Pass lint and Bash tests; stubbed PowerShell smoke on macOS; native Windows tests run in CI.
 

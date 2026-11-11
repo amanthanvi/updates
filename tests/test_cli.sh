@@ -1549,11 +1549,16 @@ mkdir -p "${git_all_skip_dir}/aman-local-only-setup"
 "$SYSTEM_GIT" -C "${git_all_skip_dir}/aman-local-only-setup" checkout -q -b local-work
 printf 'local\n' >"${git_all_skip_dir}/aman-local-only-setup/tracked.txt"
 git_test_commit "${git_all_skip_dir}/aman-local-only-setup" "local only"
+cp -R "${git_all_skip_dir}/aman-local-only-setup" "${git_all_skip_dir}/aman-other-local-setup"
 cat >"${git_all_skip_home}/.updatesrc" <<EOF
 REPOS_DIR=${git_all_skip_dir}
 EOF
 out="$(PATH="$BASE_PATH" HOME="$git_all_skip_home" "$SCRIPT" --only repos --non-interactive --no-emoji --no-color 2>"${tmp_dir}/repos-all-skip-stderr.log")"
 echo "$out" | grep -q '^==> repos END (SKIP)'
+# Several per-repo warnings are not one skip reason: all stay under Warnings.
+echo "$out" | grep -Eq '^  skip repos +no eligible Git repos; 2 warnings$'
+echo "$out" | grep -q '^Warnings (2)$'
+echo "$out" | grep -q '^  repos: git: ~/GitRepos/aman-other-local-setup: branch local-work has no upstream$'
 
 UPDATES_TEST_CASE
 
