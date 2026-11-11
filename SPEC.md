@@ -1,4 +1,4 @@
-# updates — Specification (v2.2.1)
+# updates — Specification (v2.3.0)
 
 This document is the **source of truth** for how the `updates` CLI behaves: flags, output, exit codes, module contracts, configuration, and release invariants.
 
@@ -6,11 +6,11 @@ If anything here disagrees with other docs, update the other docs (or this spec)
 
 ## 0) Metadata
 
-- **Title:** updates v2.2.1 specification
+- **Title:** updates v2.3.0 specification
 - **Owner (DRI):** Aman Thanvi (@amanthanvi)
 - **Status:** Released
-- **Last updated:** 2026-10-03
-- **Release date:** 2026-10-03
+- **Last updated:** 2026-11-11
+- **Release date:** 2026-11-11
 - **Links:** [Repository](https://github.com/amanthanvi/updates)
 
 ## 1) Executive Summary
@@ -26,6 +26,8 @@ Developers maintain a growing set of global tools and runtimes that each have th
 v2.1 preserves the stable v2 contract. Patch release v2.1.1 filters Node upgrade plans, isolates npm installs per package, and adds conservative shared Git synchronization. Patch release v2.1.2 adds authoritative active-runtime engine preflights for every planned npm candidate. Patch release v2.1.3 prefers fnm-managed Node tools and updates pi with its installed extensions.
 
 v2.2 adds the default-on `skills` module for project and global scopes, including the caller's project directory on native Windows. Unix commands now support cancellation, live phases and elapsed progress, streamed diagnostics, and scoped non-interactive Homebrew confirmation. Patch release v2.2.1 retargets the Claude module to `claude install latest` on Bash and native Windows.
+
+v2.3 preserves the stable v2 contract. At `info`/`debug`, Bash and native Windows runs end with a human-only `Results` recap and resurfaced warnings, plus a `--only` retry hint after failures; empty Bun global installs count as up to date. The last `--only` now wins, and empty `--only`, `--skip`, and `--log-file` values are usage errors.
 
 ### 1.3 Success metrics
 
@@ -70,7 +72,7 @@ v2.2 adds the default-on `skills` module for project and global scopes, includin
 
 - **Loading:** Module boundary line printed (`==> <module> START`); underlying tool output streams through.
 - **Empty:** "All packages are up-to-date" message per module when nothing to upgrade.
-- **Error:** `ERROR: ...` on stderr; module marked FAIL in summary; exit code 1. The closing recap shows why each module failed or was skipped and ends with a `--only` retry hint.
+- **Error:** `ERROR: ...` on stderr; module marked FAIL in summary; exit code 1. At `info`/`debug`, the closing recap shows why each module failed or was skipped, and the run ends with a `--only` retry hint.
 - **Permission denied:** `WARN:` message when self-update lacks write access or a valid Windows install receipt; the run skips gracefully instead of elevating on Windows.
 - **Offline/degraded:** Self-update silently skips on network failure; individual modules fail based on their own tool's behavior.
 - **Accessibility:** Plain-text output; emoji disabled with `--no-emoji`; colors disabled with `--no-color` / `NO_COLOR=1`.
@@ -213,7 +215,7 @@ Module lists are parsed from a **single argument**:
 If `--only`/`--skip` includes an unknown module, the CLI **MUST** exit with code `2`.
 If `--only` includes a module that is not supported on the current platform, the CLI **MUST** exit with code `2`.
 
-Repeated `--only` flags do not accumulate: the last one wins, so appending `--only <csv>` to an existing command narrows it. An `--only` or `--skip` value that names no modules (for example `--only ""` or `--skip " , "`) **MUST** exit with code `2`, as must an empty `--log-file` path. Repeated `--skip` flags accumulate.
+Repeated `--only` flags do not accumulate: the last one wins and replaces any earlier list, so appending the retry hint's `--only <csv>` reruns just those modules. An `--only` or `--skip` value that names no modules (for example `--only ""` or `--skip " , "`) **MUST** exit with code `2`, as must an empty `--log-file` path. Repeated `--skip` flags accumulate.
 
 Precedence: `--skip` overrides `--only`.
 
@@ -912,6 +914,7 @@ The Unix `updates` script exceeds the project's 500-line guideline. This is an i
 | 2026-04-26 | `updates` distribution remains GitHub Releases only               | Publish to third-party managers      | Lowest-friction official channel; simpler trust boundary    | No first-party npm/PyPI/Winget/etc. channel for `updates` itself in v2.0.0              |
 | 2026-04-26 | Windows uses receipt-gated standalone self-update                 | Delegate to package managers         | Avoids overwriting unknown installs; first-party ownership  | Manual copies and non-official layouts skip self-update                                  |
 | 2026-04-26 | Immutable releases + asset digests required for runtime updates   | SHA256 only                          | Stronger supply-chain guarantees without adding local deps  | Release pipeline must verify/publish in a stricter order                                 |
+| 2026-11-11 | Last `--only` wins; empty `--only`/`--skip`/`--log-file` exit `2` (v2.3.0) | Keep accumulating; ship in 3.0.0 | Neither behavior was documented; the change can only run fewer modules; invalid values already exit `2` (§3.1, §3.2); rule recorded in §3.7 | Minor release; CHANGELOG gives migration advice (`--only a,b`) |
 
 ## 18) Assumptions, Open Questions, Risks
 

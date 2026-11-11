@@ -1,3 +1,11 @@
+# Release preparation: v2.3.0
+
+- [x] Include the closing recap and retry hint on Bash and native Windows, the Bun empty-globals fix, last-`--only`-wins, and empty-value usage errors already on main.
+- [x] Align Unix/Windows versions, installer defaults, self-update test fixtures, README, SPEC, and the dated changelog for v2.3.0.
+- Release gates: `./scripts/release.sh 2.3.0`, green cross-platform CI, and the existing GitHub release workflow's artifact and attestation verification.
+
+---
+
 # Plan: polished run output
 
 ## Goal
