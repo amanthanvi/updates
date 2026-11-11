@@ -1869,7 +1869,7 @@ function Invoke-SelfUpdatedRelaunch {
 
     $env:UPDATES_SELF_UPDATED = '1'
     # Native .cmd calls drop empty strings; Parse-Args rejects every empty
-    # argument and option value, so accepted arguments survive this relaunch.
+    # argument and option value, so no accepted argument is lost on relaunch.
     & (Join-Path $script:InstallRoot 'updates.cmd') @OriginalArgs
     return $LASTEXITCODE
 }

@@ -3200,7 +3200,9 @@ git_sync_repositories() {
 		return 1
 	fi
 	if [ "$eligible" -eq 0 ]; then
-		module_skip_note "$CURRENT_MODULE" "no eligible Git repos"
+		local reason="no eligible Git repos"
+		[ "$#" -ne 1 ] || reason="Git repo not eligible"
+		module_skip_note "$CURRENT_MODULE" "$reason"
 		return 2
 	fi
 	return 0

@@ -124,7 +124,7 @@ Output:
 - `--json`: emit JSONL events to stdout; human-readable output goes to stderr.
 - `--no-emoji`: disable emoji in output.
 - `--no-color`: disable ANSI colors.
-- `--log-file <path>`: append all output to a log file (colors disabled in file).
+- `--log-file <path>`: append all output to a log file (colors disabled in file); the path must be non-empty.
 
 Self-update:
 

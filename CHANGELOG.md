@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - Repeated `--only` flags no longer accumulate: the last one wins, so adding `--only <csv>` to a command narrows it. An empty `--only` list is now a usage error (exit `2`) instead of selecting every module; so are an empty `--skip` list and an empty `--log-file` path.
-- A skipped module's lone warning appears once, on its recap line, instead of also under `Warnings`. `shell` and `repos` skips where every Git repo is ineligible now say `no eligible Git repos` and keep each repo's warning under `Warnings`.
+- A skipped module's lone warning appears once, on its recap line, instead of also under `Warnings`. `shell` and `repos` skips where every Git repo is ineligible now say `no eligible Git repos` (`Git repo not eligible` for a single repo) and keep each repo's warning under `Warnings`.
 - Bash `--help` groups options into Run, Inspect, Output, Configuration, and Module options sections.
 - On a color TTY, Bash shows state-changing commands in bold and internal checks dimmed.
 - Bash Git preflight for `shell` and `repos` uses one `git status --porcelain=v2 --branch` call per repo instead of four, so each repo shows one progress line.
