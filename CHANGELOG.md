@@ -7,14 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Fixed
+### Added
 
-- Bash `bun` module no longer fails when no Bun global packages are installed (`bun update -g` reports "No package.json, so nothing to update").
+- Bash runs end with a `Results` recap: one line per module with a status marker, its duration, and the reason for any skip or failure, followed by any warnings that scrolled past and, when something failed, a `--only` retry command. The stable `==> ... END` and `==> SUMMARY` lines are unchanged.
 
 ### Changed
 
+- Bash `--help` groups options into Run, Inspect, Output, Configuration, and Module options sections.
+- On a color TTY, Bash shows state-changing commands in bold and internal checks dimmed.
 - Bash Git preflight for `shell` and `repos` uses one `git status --porcelain=v2 --branch` call per repo instead of four, so each repo shows one progress line.
 - Bash runs reuse the Python interpreter resolved during the self-update check instead of probing again in later modules.
+
+### Fixed
+
+- Bash `--json` no longer writes ANSI colors into a redirected stderr when stdout is a terminal.
+- Bash `bun` module no longer fails when no Bun global packages are installed (`bun update -g` reports "No package.json, so nothing to update").
 
 ## [2.2.1] - 2026-10-03
 

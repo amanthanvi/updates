@@ -1322,6 +1322,35 @@ grep -q 'bun END (FAIL)' "$bun_fail_out"
 
 UPDATES_TEST_CASE
 
+run_test "closing recap explains failures and skips and suggests a retry" <<'UPDATES_TEST_CASE'
+recap_skip=(--skip "brew,shell,repos,linux,winget,node,python,uv,mas,pipx,rustup,claude,pi,skills,mise,macos")
+recap_out="${tmp_dir}/recap.log"
+rc=0
+BUN_STUB_UPDATE_ERROR="error: boom" "$SCRIPT" "${recap_skip[@]}" --no-color >"$recap_out" 2>&1 || rc=$?
+[ "$rc" -eq 1 ]
+grep -q '^Results$' "$recap_out"
+grep -Eq '^  ✗ bun +[0-9]+s  bun update -g exited 1$' "$recap_out"
+grep -Eq '^  – go +GO_BINARIES not configured$' "$recap_out"
+# The stable summary stays after the recap, and the retry hint comes last.
+results_line="$(grep -n '^Results$' "$recap_out" | cut -d: -f1)"
+summary_line="$(grep -n '^==> SUMMARY ' "$recap_out" | cut -d: -f1)"
+[ "$results_line" -lt "$summary_line" ]
+[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: updates --only bun" ]
+
+"$SCRIPT" "${recap_skip[@]}" --no-color --no-emoji --dry-run >"$recap_out" 2>&1
+grep -q '^Results (dry run)$' "$recap_out"
+grep -Eq '^  ok   bun +[0-9]+s$' "$recap_out"
+grep -Eq '^  skip go +GO_BINARIES not configured$' "$recap_out"
+
+"$SCRIPT" "${recap_skip[@]}" --no-color --log-level warn --dry-run >"$recap_out" 2>&1
+if grep -q '^Results' "$recap_out"; then
+	echo "Expected --log-level warn to suppress the closing recap" >&2
+	exit 1
+fi
+grep -q '^==> SUMMARY ' "$recap_out"
+
+UPDATES_TEST_CASE
+
 run_test "mise module runs" <<'UPDATES_TEST_CASE'
 : >"$CALL_LOG"
 "$SCRIPT" --only mise --no-emoji >/dev/null
@@ -1455,6 +1484,10 @@ grep -q 'aman-local-only-setup.*no upstream' "$git_sync_stderr"
 grep -q 'aman-dirty-setup.*uncommitted changes' "$git_sync_stderr"
 grep -q 'aman-gone-setup.*no upstream' "$git_sync_stderr"
 grep -q 'aman-detached-setup.*detached HEAD' "$git_sync_stderr"
+# The closing recap resurfaces warnings that scrolled past, home-relative.
+echo "$out" | grep -Eq '^  ok   repos +[0-9]+s  4 warnings$'
+echo "$out" | grep -q '^Warnings (4)$'
+echo "$out" | grep -q '^  repos: git: ~/GitRepos/aman-dirty-setup: worktree has uncommitted changes$'
 
 UPDATES_TEST_CASE
 
