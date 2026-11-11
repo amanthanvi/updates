@@ -3495,7 +3495,7 @@ module_node() {
 # `bun update -g` exits 1 with "No package.json, so nothing to update" when no
 # global packages were ever installed; that is an up-to-date state, not a failure.
 run_bun_global_update() {
-	local log_dir="" status=0 COMMAND_PROGRESS_STYLE=command
+	local log_dir="" status=0 COMMAND_PROGRESS_STYLE='command'
 	debug "+ bun update -g"
 	command_temp_dir log_dir || return 1
 	if [ "$JSON" -eq 1 ]; then
@@ -4194,7 +4194,7 @@ print_run_recap() {
 print_retry_hint() {
 	local failures_csv="$1"
 	[ "$LOG_LEVEL_NUM" -ge 2 ] && [ -n "$failures_csv" ] || return 0
-	[ "$STRICT_STOPPED" -eq 0 ] || print "Stopped at the first failure (--strict); later modules did not run."
+	[ "$STRICT_STOPPED" -eq 0 ] || print "Stopped at the first failure (--strict)."
 	local retry="${SCRIPT_NAME} --only ${failures_csv}"
 	[ "$DRY_RUN" -eq 0 ] || retry="${retry} --dry-run"
 	print "Retry just the failures: ${retry}"

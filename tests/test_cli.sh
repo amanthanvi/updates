@@ -1352,7 +1352,7 @@ rc=0
 rc=0
 BUN_STUB_UPDATE_ERROR="error: boom" "$SCRIPT" --only bun,go --strict --no-color >"$recap_out" 2>&1 || rc=$?
 [ "$rc" -eq 1 ]
-grep -q '^Stopped at the first failure (--strict); later modules did not run.$' "$recap_out"
+grep -q '^Stopped at the first failure (--strict)\.$' "$recap_out"
 if grep -q ' go ' "$recap_out"; then
 	echo "Expected --strict to stop before go" >&2
 	exit 1
@@ -1369,9 +1369,11 @@ if grep -Eq 'Retry just|Results' "$recap_json"; then
 fi
 grep -q '^Retry just the failures: updates --only bun$' "$recap_out"
 
-"$SCRIPT" "${recap_skip[@]}" --no-color --log-level warn --dry-run >"$recap_out" 2>&1
-if grep -q '^Results' "$recap_out"; then
-	echo "Expected --log-level warn to suppress the closing recap" >&2
+rc=0
+"$SCRIPT" --only go --no-color --log-level warn --dry-run >"$recap_out" 2>&1 || rc=$?
+[ "$rc" -eq 1 ]
+if grep -Eq '^(Results|Retry just)' "$recap_out"; then
+	echo "Expected --log-level warn to suppress the closing recap and retry hint" >&2
 	exit 1
 fi
 grep -q '^==> SUMMARY ' "$recap_out"
