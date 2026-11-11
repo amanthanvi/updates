@@ -70,7 +70,7 @@ v2.2 adds the default-on `skills` module for project and global scopes, includin
 
 - **Loading:** Module boundary line printed (`==> <module> START`); underlying tool output streams through.
 - **Empty:** "All packages are up-to-date" message per module when nothing to upgrade.
-- **Error:** `ERROR: ...` on stderr; module marked FAIL in summary; exit code 1. On Unix, the closing recap shows why each module failed or was skipped and ends with a `--only` retry command.
+- **Error:** `ERROR: ...` on stderr; module marked FAIL in summary; exit code 1. On Unix, the closing recap shows why each module failed or was skipped and ends with a `--only` retry hint.
 - **Permission denied:** `WARN:` message when self-update lacks write access or a valid Windows install receipt; the run skips gracefully instead of elevating on Windows.
 - **Offline/degraded:** Self-update silently skips on network failure; individual modules fail based on their own tool's behavior.
 - **Accessibility:** Plain-text output; emoji disabled with `--no-emoji`; colors disabled with `--no-color` / `NO_COLOR=1`.
@@ -305,7 +305,7 @@ Unix closing recap (additive; the boundary and summary lines above are unchanged
 
 - At `info`/`debug`, a `Results` block (`Results (dry run)` under `--dry-run`) is printed immediately before the `SUMMARY` line: one line per module that ran, in execution order, with a status marker (`✓`/`✗`/`–`, or `ok`/`FAIL`/`skip` with `--no-emoji`), the module name, its duration (omitted for skips), and an optional note. Notes are the skip reason, the module's last error or failed command (`<command> exited <N>`), and/or a warning count. Paths under `$HOME` are shown as `~/...`.
 - If any warnings were emitted, a `Warnings (<N>)` block repeats them as `<module>: <message>` (`updates:` for warnings outside a module).
-- When modules failed, the final line after `ERROR: Completed ...` is `Retry just the failures: <command>`, where `<command>` is the same invocation, shell-quoted: the invoked path (shown as the bare command name when `PATH` resolves to that same file, or as `./<name>` for `bash <name>`) and every option the parser consumed (such as `--dry-run`, `--brew-mode`, or `--no-config`, values included) except `--only`/`--skip`, followed by `--only <csv>` of the failed modules. Arguments after `--` are not repeated, but if the run skipped `~/.updatesrc` or used `--json` because of one, the hint adds `--no-config`/`--json` so the retry matches. The bare-name shortcut applies only when `PATH` resolves to a file (not a shell function or alias). Under `--strict`, it is preceded by `Stopped at the first failure (--strict).` Both are human-only and hidden at `--log-level warn` and below.
+- When modules failed, the final line after `ERROR: Completed ...` is `Retry just the failures: re-run the same command with --only <csv>`. It is a plain instruction, not a rebuilt command: an exact replay is not reliable because the invocation, its options, and the environment earlier modules set up (for example a Node version manager adjusting `PATH`) all shape what runs. Under `--strict`, it is preceded by `Stopped at the first failure (--strict).` Both are human-only and hidden at `--log-level warn` and below.
 - The recap goes to the human stream (stderr under `--json`) and never to JSONL. Native Windows does not print it yet.
 
 ### 5.2 JSONL event stream contract

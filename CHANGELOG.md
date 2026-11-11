@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Bash runs end with a `Results` recap: one line per module with a status marker, its duration, and the reason for any skip or failure, followed by any warnings that scrolled past and, when something failed, a `--only` retry command. The stable `==> ... END` and `==> SUMMARY` lines are unchanged.
+- Bash runs end with a `Results` recap: one line per module with a status marker, its duration, and the reason for any skip or failure, followed by any warnings that scrolled past and, when something failed, a `--only` retry hint. The stable `==> ... END` and `==> SUMMARY` lines are unchanged.
 
 ### Changed
 

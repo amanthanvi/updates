@@ -59,7 +59,6 @@ result_statuses=()
 result_seconds=()
 result_notes=()
 run_warnings=()
-retry_args=()
 MODULE_SKIP_REASON=""
 MODULE_LAST_ERROR=""
 MODULE_LAST_FAILED_COMMAND=""
@@ -2526,10 +2525,7 @@ read_config() {
 }
 
 parse_args() {
-	local arg remaining
 	while [ $# -gt 0 ]; do
-		arg="$1"
-		remaining=$#
 		case "$1" in
 		-h | --help)
 			usage
@@ -2661,15 +2657,6 @@ parse_args() {
 			;;
 		*)
 			die "Unexpected argument: $1"
-			;;
-		esac
-		# Record what was parsed (minus the module selection) for the retry hint;
-		# a value-taking option has already shifted onto its value.
-		case "$arg" in
-		--only | --skip) ;;
-		*)
-			retry_args+=("$arg")
-			[ $# -eq "$remaining" ] || retry_args+=("$1")
 			;;
 		esac
 		shift
@@ -4208,38 +4195,9 @@ print_retry_hint() {
 	local failures_csv="$1"
 	[ "$LOG_LEVEL_NUM" -ge 2 ] && [ -n "$failures_csv" ] || return 0
 	[ "$STRICT_STOPPED" -eq 0 ] || print "Stopped at the first failure (--strict)."
-	# Re-run the same invocation with the selection narrowed to the failures.
-	# retry_args holds every parsed option except --only/--skip (see parse_args).
-	local invoked="$0" found=""
-	case "$invoked" in
-	*/*)
-		# Prefer the bare name when PATH (files only, not functions or
-		# aliases) already resolves to this same file.
-		found="$(type -P "${invoked##*/}" 2>/dev/null || true)"
-		if [ -n "$found" ] && [ "$found" -ef "$invoked" ]; then
-			invoked="${invoked##*/}"
-		fi
-		;;
-	*)
-		# `bash updates` leaves a bare name; keep it pointing at this file.
-		[ ! -f "./$invoked" ] || invoked="./$invoked"
-		;;
-	esac
-	# pre_scan_no_config reads every argument (even after `--`), so carry
-	# its effective result forward when no recorded argument would.
-	local -a args=(${retry_args[@]+"${retry_args[@]}"})
-	local arg has_no_config=0 has_json=0
-	for arg in ${args[@]+"${args[@]}"}; do
-		case "$arg" in
-		--no-config) has_no_config=1 ;;
-		--json) has_json=1 ;;
-		esac
-	done
-	[ "$NO_CONFIG" -eq 0 ] || [ "$has_no_config" -eq 1 ] || args+=(--no-config)
-	[ "$JSON" -eq 0 ] || [ "$has_json" -eq 1 ] || args+=(--json)
-	local retry
-	retry="$(printf '%q ' "$invoked" ${args[@]+"${args[@]}"} --only "$failures_csv")"
-	print "Retry just the failures: ${retry% }"
+	# A plain instruction, not a rebuilt command: replaying an invocation
+	# exactly (paths, options, PATH set up by earlier modules) is not reliable.
+	print "Retry just the failures: re-run the same command with --only ${failures_csv}"
 }
 
 run_selected_modules() {

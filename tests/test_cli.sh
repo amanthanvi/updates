@@ -1335,62 +1335,19 @@ grep -Eq '^  – go +GO_BINARIES not configured$' "$recap_out"
 results_line="$(grep -n '^Results$' "$recap_out" | cut -d: -f1)"
 summary_line="$(grep -n '^==> SUMMARY ' "$recap_out" | cut -d: -f1)"
 [ "$results_line" -lt "$summary_line" ]
-# The hint re-runs this exact invocation (path and options), narrowed to the failures.
-[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: $(printf '%q' "$SCRIPT") --no-color --only bun" ]
+# The hint is a plain instruction naming the failed modules, never a rebuilt command.
+[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: re-run the same command with --only bun" ]
 
 "$SCRIPT" "${recap_skip[@]}" --no-color --no-emoji --dry-run >"$recap_out" 2>&1
 grep -q '^Results (dry run)$' "$recap_out"
 grep -Eq '^  ok   bun +[0-9]+s$' "$recap_out"
 grep -Eq '^  skip go +GO_BINARIES not configured$' "$recap_out"
 
-# A retry after a preview must stay a preview.
-rc=0
-"$SCRIPT" --only go --brew-mode greedy --no-color --dry-run >"$recap_out" 2>&1 || rc=$?
-[ "$rc" -eq 1 ]
-[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: $(printf '%q' "$SCRIPT") --brew-mode greedy --no-color --dry-run --only go" ]
-
-# The invoked path is kept and shell-quoted, so the hint is copy-pasteable.
-retry_copy="$(make_installed_copy "${tmp_dir}/retry path")"
-rc=0
-"$retry_copy" --only go --no-color --dry-run >"$recap_out" 2>&1 || rc=$?
-[ "$rc" -eq 1 ]
-[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: $(printf '%q' "${tmp_dir}/retry path/updates") --no-color --dry-run --only go" ]
-
-# The parser records the retry options, so flag-like option values, a trailing
-# `--`, and bare or PATH invocations all yield a hint that re-runs the same work.
-retry_dir="${tmp_dir}/retry-cwd"
-mkdir -p "$retry_dir"
-rc=0
-(cd "$retry_dir" && "$SCRIPT" --log-file --skip --dry-run -n --only go >"$recap_out" 2>&1) || rc=$?
-[ "$rc" -eq 1 ]
-[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: $(printf '%q' "$SCRIPT") --log-file --skip --dry-run -n --only go" ]
-rc=0
-"$SCRIPT" --only go --dry-run --no-color -- >"$recap_out" 2>&1 || rc=$?
-[ "$rc" -eq 1 ]
-[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: $(printf '%q' "$SCRIPT") --dry-run --no-color --only go" ]
-rc=0
-(cd "${tmp_dir}/retry path" && bash updates --only go --dry-run --no-color >"$recap_out" 2>&1) || rc=$?
-[ "$rc" -eq 1 ]
-[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: ./updates --dry-run --no-color --only go" ]
-rc=0
-PATH="${tmp_dir}/retry path:${PATH}" updates --only go --dry-run --no-color >"$recap_out" 2>&1 || rc=$?
-[ "$rc" -eq 1 ]
-[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: updates --dry-run --no-color --only go" ]
-# Arguments after `--` still feed the --no-config pre-scan, so the retry keeps it.
-rc=0
-"$SCRIPT" --only go --no-color --dry-run -- --no-config >"$recap_out" 2>&1 || rc=$?
-[ "$rc" -eq 1 ]
-[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: $(printf '%q' "$SCRIPT") --no-color --dry-run --no-config --only go" ]
-# A shell function named like the script must not replace the invoked path.
-rc=0
-(
-	cd "${tmp_dir}/retry path"
-	updates() { :; }
-	export -f updates
-	"$retry_copy" --only go --dry-run --no-color >"$recap_out" 2>&1
-) || rc=$?
-[ "$rc" -eq 1 ]
-[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: $(printf '%q' "$retry_copy") --dry-run --no-color --only go" ]
+# --log-file accepts paths that start with "-" (dirname/mkdir/tee get "--").
+dash_log_dir="${tmp_dir}/dash-log-cwd"
+mkdir -p "$dash_log_dir"
+(cd "$dash_log_dir" && "$SCRIPT" --log-file -run.log --only bun --dry-run --no-color >/dev/null 2>&1)
+grep -q '^==> SUMMARY ' "${dash_log_dir}/-run.log"
 
 # --strict says that later modules never ran.
 rc=0
@@ -1411,7 +1368,7 @@ if grep -Eq 'Retry just|Results' "$recap_json"; then
 	echo "Expected the recap to stay out of JSONL" >&2
 	exit 1
 fi
-[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: $(printf '%q' "$SCRIPT") --json --no-color --only bun" ]
+[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: re-run the same command with --only bun" ]
 
 rc=0
 "$SCRIPT" --only go --no-color --log-level warn --dry-run >"$recap_out" 2>&1 || rc=$?
