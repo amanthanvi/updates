@@ -1168,6 +1168,104 @@ if (Should-RunTest 'native payload strict mode stops after the first module fail
     }
 }
 
+if (Should-RunTest 'native payload treats empty Bun globals as up to date') {
+    Invoke-TestCase 'native payload treats empty Bun globals as up to date' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'bun.cmd') -Lines @(
+                'echo %BUN_STUB_ERROR% 1>&2',
+                'exit /b 1'
+            )
+            $environment = @{
+                PATH           = $stubDir
+                HOME           = $installRoot
+                USERPROFILE    = $installRoot
+                BUN_STUB_ERROR = 'No package.json, so nothing to update'
+            }
+
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', 'bun', '--no-color', '--no-emoji') -Environment $environment
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'an empty Bun global install should not fail the bun module'
+            Assert-Match -Text $result.Stdout -Pattern 'bun: no Bun global packages installed; nothing to update' -Message 'empty Bun globals should be reported as up to date'
+            Assert-Match -Text $result.Stdout -Pattern '==> bun END \(OK\)' -Message 'empty Bun globals should end OK'
+
+            $environment.BUN_STUB_ERROR = 'error: registry unreachable'
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--only', 'bun', '--no-color', '--no-emoji') -Environment $environment
+            Assert-Equal -Expected 1 -Actual $result.ExitCode -Message 'other bun update errors should still fail'
+            Assert-Match -Text $result.Stdout -Pattern 'bun: global upgrade failed' -Message 'other bun update errors should be explicit'
+        }
+    }
+}
+
+if (Should-RunTest 'native payload closing recap explains failures and skips and suggests a retry') {
+    Invoke-TestCase 'native payload closing recap explains failures and skips and suggests a retry' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'winget.cmd') -Lines @(
+                'echo winget-failed 1>&2',
+                'exit /b 1'
+            )
+            $environment = @{
+                PATH        = $stubDir
+                HOME        = $installRoot
+                USERPROFILE = $installRoot
+            }
+
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--no-color', '--no-emoji') -Environment $environment
+            Assert-Equal -Expected 1 -Actual $result.ExitCode -Message 'a failing winget should fail the run'
+            Assert-Match -Text $result.Stdout -Pattern '(?m)^Results\r?$' -Message 'the recap heading should be shown'
+            Assert-Match -Text $result.Stdout -Pattern '(?m)^  FAIL winget +\d+s  upgrade failed\r?$' -Message 'the recap should explain the failure'
+            Assert-Match -Text $result.Stdout -Pattern '(?m)^  skip node +npm-check-updates not available \(need ncu or npx\)\r?$' -Message 'a warning skip should carry its reason'
+            Assert-Match -Text $result.Stdout -Pattern '(?m)^  skip bun +bun not found\r?$' -Message 'a missing dependency skip should carry its reason'
+            Assert-NotMatch -Text $result.Stdout -Pattern '(?m)^Warnings \(' -Message 'a skip warning shown on its recap line should not be repeated'
+            Assert-Match -Text $result.Stdout -Pattern '(?s)^.*\r?\nResults\r?\n.*\r?\n==> SUMMARY ' -Message 'the recap should come before the stable summary'
+            $lastLine = @($result.Stdout -split "`r?`n" | Where-Object { $_ })[-1]
+            Assert-Equal -Expected 'Retry just the failures: re-run the same command with --only winget' -Actual $lastLine -Message 'the retry hint should be the last line'
+
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--strict', '--no-color', '--no-emoji') -Environment $environment
+            Assert-Match -Text $result.Stdout -Pattern '(?m)^Stopped at the first failure \(--strict\)\.\r?$' -Message '--strict should say later modules never ran'
+
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--json', '--no-color', '--no-emoji') -Environment $environment
+            Assert-NotMatch -Text $result.Stdout -Pattern 'Results|Retry just' -Message 'the recap and retry hint should stay out of JSONL'
+            Assert-Match -Text $result.Stderr -Pattern 'Retry just the failures' -Message 'JSON mode should keep the retry hint on stderr'
+
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--log-level', 'warn', '--no-color', '--no-emoji') -Environment $environment
+            Assert-NotMatch -Text $result.Output -Pattern '(?m)^(Results|Retry just)' -Message '--log-level warn should hide the recap and retry hint'
+
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--dry-run', '--only', 'winget,bun', '--only', 'winget', '--no-color', '--no-emoji') -Environment $environment
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'the dry-run winget plan should succeed'
+            Assert-Match -Text $result.Stdout -Pattern '(?m)^Results \(dry run\)\r?$' -Message 'dry runs should label the recap'
+            Assert-NotMatch -Text $result.Stdout -Pattern '==> bun START' -Message 'the last --only should replace earlier lists'
+
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--dry-run', '--only', ' , ', '--no-color', '--no-emoji') -Environment $environment
+            Assert-Equal -Expected 2 -Actual $result.ExitCode -Message 'an empty --only list should be a usage error'
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--dry-run', '--only', '', 'bun', '--no-color', '--no-emoji') -Environment $environment
+            Assert-Equal -Expected 2 -Actual $result.ExitCode -Message 'an empty --only value should fail instead of taking the next argument'
+            Assert-NotMatch -Text $result.Stdout -Pattern '==> bun START' -Message 'an empty --only value should not run modules'
+            # Self-update relaunches through updates.cmd, which drops empty strings,
+            # so every empty option value must be rejected up front.
+            foreach ($emptyOption in @('--skip', '--log-file')) {
+                $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--dry-run', $emptyOption, '', '--only', 'winget') -Environment $environment
+                Assert-Equal -Expected 2 -Actual $result.ExitCode -Message ("an empty {0} value should be a usage error" -f $emptyOption)
+            }
+
+            # Warnings that scrolled past are repeated; ones outside a module are labeled updates.
+            Write-Utf8NoBom -Path (Join-Path $installRoot '.updatesrc') -Content "PARALLEL=2`n"
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList @('--no-self-update', '--dry-run', '--only', 'winget', '--no-color', '--no-emoji') -Environment $environment
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'a config warning should not fail the run'
+            Assert-Match -Text $result.Stdout -Pattern '(?m)^Warnings \(1\)\r?$' -Message 'the recap should count resurfaced warnings'
+            Assert-Match -Text $result.Stdout -Pattern '(?m)^  updates: config: PARALLEL is ignored on native Windows\r?$' -Message 'warnings outside a module should be labeled updates'
+        }
+    }
+}
+
 if (Should-RunTest 'native payload keeps stdout JSON-only when child tools emit output') {
     Invoke-TestCase 'native payload keeps stdout JSON-only when child tools emit output' {
         Invoke-WithTempInstall {

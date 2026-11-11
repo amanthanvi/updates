@@ -2314,7 +2314,7 @@ Usage:
 
 Run:
       --dry-run            Print what would run; make no changes
-      --only <list>        Run only these modules (CSV; or quote a space-separated list)
+      --only <list>        Run only these modules (CSV or quoted list; the last --only wins)
       --skip <list>        Skip these modules (CSV; or quote a space-separated list)
       --full               Enable everything (brew greedy + mas + macos + all detected modules)
       --strict             Stop on first failure
@@ -2585,7 +2585,7 @@ parse_args() {
 			;;
 		--log-file)
 			shift
-			[ $# -gt 0 ] || die "--log-file requires a path"
+			[ $# -gt 0 ] && [ -n "$1" ] || die "--log-file requires a path"
 			LOG_FILE="$1"
 			;;
 		--parallel)
@@ -2606,17 +2606,21 @@ parse_args() {
 			[ $# -gt 0 ] || die "--only requires a module list"
 			local list
 			list="$(normalize_module_list "$1")"
+			# The last --only wins, so appending one narrows an existing command.
+			only_modules=()
+			only_modules_count=0
 			local m
 			for m in $list; do
 				is_module_known "$m" || die "Unknown module in --only: $m"
 				only_modules+=("$m")
 				only_modules_count=$((only_modules_count + 1))
 			done
+			[ "$only_modules_count" -gt 0 ] || die "--only requires a module list"
 			;;
 		--skip)
 			shift
 			[ $# -gt 0 ] || die "--skip requires a module list"
-			local list
+			local list skipped_before="$skip_modules_count"
 			list="$(normalize_module_list "$1")"
 			local m
 			for m in $list; do
@@ -2624,6 +2628,7 @@ parse_args() {
 				skip_modules+=("$m")
 				skip_modules_count=$((skip_modules_count + 1))
 			done
+			[ "$skip_modules_count" -gt "$skipped_before" ] || die "--skip requires a module list"
 			;;
 		--brew-mode)
 			shift
@@ -3195,6 +3200,9 @@ git_sync_repositories() {
 		return 1
 	fi
 	if [ "$eligible" -eq 0 ]; then
+		local reason="no eligible Git repos"
+		[ "$#" -ne 1 ] || reason="Git repo not eligible"
+		module_skip_note "$CURRENT_MODULE" "$reason"
 		return 2
 	fi
 	return 0
@@ -4092,17 +4100,23 @@ recap_trim_note() {
 }
 
 record_module_result() {
-	local module="$1" status="$2" seconds="$3" note=""
+	local module="$1" status="$2" seconds="$3" note="" folded=0
 	case "$status" in
 	FAIL)
 		note="${MODULE_LAST_ERROR:-$MODULE_LAST_FAILED_COMMAND}"
 		;;
 	SKIP)
-		note="${MODULE_SKIP_REASON:-$MODULE_LAST_WARNING}"
+		note="$MODULE_SKIP_REASON"
+		if [ -z "$note" ] && [ "$MODULE_WARNING_COUNT" -eq 1 ]; then
+			# The lone warning is the skip reason: show it here, not under Warnings.
+			note="$MODULE_LAST_WARNING"
+			folded=1
+			run_warnings=("${run_warnings[@]:0:$((${#run_warnings[@]} - 1))}")
+		fi
 		;;
 	esac
 	[ -z "$note" ] || note="$(recap_trim_note "$module" "$note")"
-	if [ "$status" != SKIP ] && [ "$MODULE_WARNING_COUNT" -gt 0 ]; then
+	if [ "$folded" -eq 0 ] && [ "$MODULE_WARNING_COUNT" -gt 0 ]; then
 		local count_note="${MODULE_WARNING_COUNT} warning"
 		[ "$MODULE_WARNING_COUNT" -eq 1 ] || count_note="${count_note}s"
 		note="${note:+${note}; }${count_note}"
@@ -4173,6 +4187,8 @@ print_run_recap() {
 			*) line="${line}  ${dim}${note}${reset}" ;;
 			esac
 		fi
+		# Drop the column padding left on lines without a duration or note.
+		line="${line%"${line##*[! ]}"}"
 		print "$line"
 	done
 

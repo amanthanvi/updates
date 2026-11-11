@@ -9,10 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Native Windows runs end with a `Results` recap, warnings list, and `--only` retry hint like Bash (without colors, failed-command notes, or `~/` paths).
 - Bash runs end with a `Results` recap: one line per module with a status marker, its duration, and the reason for any skip or failure, followed by any warnings that scrolled past and, when something failed, a `--only` retry hint. The stable `==> ... END` and `==> SUMMARY` lines are unchanged.
 
 ### Changed
 
+- Repeated `--only` flags no longer accumulate: the last one wins, so adding `--only <csv>` to a command narrows it. An empty `--only` list is now a usage error (exit `2`) instead of selecting every module; so are an empty `--skip` list and an empty `--log-file` path.
+- A skipped module's lone warning appears once, on its recap line, instead of also under `Warnings`. `shell` and `repos` skips where every Git repo is ineligible now say `no eligible Git repos` (`Git repo not eligible` for a single repo) and keep each repo's warning under `Warnings`.
 - Bash `--help` groups options into Run, Inspect, Output, Configuration, and Module options sections.
 - On a color TTY, Bash shows state-changing commands in bold and internal checks dimmed.
 - Bash Git preflight for `shell` and `repos` uses one `git status --porcelain=v2 --branch` call per repo instead of four, so each repo shows one progress line.
@@ -20,9 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The native Windows payload keeps empty arguments it receives (for example through `pwsh -File`), so `--only "" bun` is a usage error instead of running `bun`, and a stray `""` is rejected like on Bash. PowerShell's `&` call operator still drops `""` before `updates.cmd` sees it.
 - Bash `--json` no longer writes ANSI colors into a redirected stderr when stdout is a terminal.
 - Bash `--log-file` accepts paths that start with `-`.
-- Bash `bun` module no longer fails when no Bun global packages are installed (`bun update -g` reports "No package.json, so nothing to update").
+- `bun` module no longer fails on Bash or native Windows when no Bun global packages are installed (`bun update -g` reports "No package.json, so nothing to update").
 
 ## [2.2.1] - 2026-10-03
 

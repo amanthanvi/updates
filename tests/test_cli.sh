@@ -739,6 +739,25 @@ fi
 
 UPDATES_TEST_CASE
 
+run_test "the last --only wins" <<'UPDATES_TEST_CASE'
+out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --no-emoji --only brew,node --only node)"
+echo "$out" | grep -q '^==> node START$'
+if echo "$out" | grep -q '^==> brew START$'; then
+	echo "Expected a later --only to replace the earlier list" >&2
+	exit 1
+fi
+for empty_args in '--only|brew|--only|' '--only| , ' '--skip|' '--skip| , ' '--log-file|'; do
+	IFS='|' read -r -a empty_argv <<<"$empty_args|"
+	rc=0
+	"$SCRIPT" --dry-run "${empty_argv[@]}" >/dev/null 2>&1 || rc=$?
+	if [ "$rc" -ne 2 ]; then
+		echo "Expected an empty value in ${empty_args} to be a usage error (got $rc)" >&2
+		exit 1
+	fi
+done
+
+UPDATES_TEST_CASE
+
 run_test "selected modules run in non-dry-run mode" <<'UPDATES_TEST_CASE'
 out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --only brew,node --no-emoji)"
 echo "$out" | grep -q '^==> brew START$'
@@ -1532,8 +1551,17 @@ git_test_commit "${git_all_skip_dir}/aman-local-only-setup" "local only"
 cat >"${git_all_skip_home}/.updatesrc" <<EOF
 REPOS_DIR=${git_all_skip_dir}
 EOF
+out="$(PATH="$BASE_PATH" HOME="$git_all_skip_home" "$SCRIPT" --only repos --non-interactive --no-emoji --no-color 2>/dev/null)"
+echo "$out" | grep -Eq '^  skip repos +Git repo not eligible; 1 warning$'
+echo "$out" | grep -q '^Warnings (1)$'
+echo "$out" | grep -q '^  repos: git: ~/GitRepos/aman-local-only-setup: branch local-work has no upstream$'
+cp -R "${git_all_skip_dir}/aman-local-only-setup" "${git_all_skip_dir}/aman-other-local-setup"
 out="$(PATH="$BASE_PATH" HOME="$git_all_skip_home" "$SCRIPT" --only repos --non-interactive --no-emoji --no-color 2>"${tmp_dir}/repos-all-skip-stderr.log")"
 echo "$out" | grep -q '^==> repos END (SKIP)'
+# Several per-repo warnings are not one skip reason: all stay under Warnings.
+echo "$out" | grep -Eq '^  skip repos +no eligible Git repos; 2 warnings$'
+echo "$out" | grep -q '^Warnings (2)$'
+echo "$out" | grep -q '^  repos: git: ~/GitRepos/aman-other-local-setup: branch local-work has no upstream$'
 
 UPDATES_TEST_CASE
 
@@ -2095,6 +2123,12 @@ node_capability_stderr="${tmp_dir}/node-capability-stderr.log"
 out="$("$SCRIPT" "${node_skip_args[@]}" 2>"$node_capability_stderr")"
 echo "$out" | grep -q '^==> node END (SKIP)'
 grep -q 'node: no npm-check-updates adapter supports --enginesNode' "$node_capability_stderr"
+# The recap's skip line carries the warning, so it is not listed again.
+echo "$out" | grep -Eq '^  skip node +no npm-check-updates adapter supports --enginesNode; upgrade ncu or install npx$'
+if echo "$out" | grep -q '^Warnings ('; then
+	echo "Expected the skip warning to appear once in the recap" >&2
+	exit 1
+fi
 set +e
 out="$("$SCRIPT" --only node --no-emoji --no-color 2>"$node_capability_stderr")"
 rc=$?
