@@ -1322,6 +1322,65 @@ grep -q 'bun END (FAIL)' "$bun_fail_out"
 
 UPDATES_TEST_CASE
 
+run_test "closing recap explains failures and skips and suggests a retry" <<'UPDATES_TEST_CASE'
+recap_skip=(--skip "brew,shell,repos,linux,winget,node,python,uv,mas,pipx,rustup,claude,pi,skills,mise,macos")
+recap_out="${tmp_dir}/recap.log"
+rc=0
+BUN_STUB_UPDATE_ERROR="error: boom" "$SCRIPT" "${recap_skip[@]}" --no-color >"$recap_out" 2>&1 || rc=$?
+[ "$rc" -eq 1 ]
+grep -q '^Results$' "$recap_out"
+grep -Eq '^  ✗ bun +[0-9]+s  bun update -g exited 1$' "$recap_out"
+grep -Eq '^  – go +GO_BINARIES not configured$' "$recap_out"
+# The stable summary stays after the recap, and the retry hint comes last.
+results_line="$(grep -n '^Results$' "$recap_out" | cut -d: -f1)"
+summary_line="$(grep -n '^==> SUMMARY ' "$recap_out" | cut -d: -f1)"
+[ "$results_line" -lt "$summary_line" ]
+# The hint names the failed modules.
+[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: re-run the same command with --only bun" ]
+
+"$SCRIPT" "${recap_skip[@]}" --no-color --no-emoji --dry-run >"$recap_out" 2>&1
+grep -q '^Results (dry run)$' "$recap_out"
+grep -Eq '^  ok   bun +[0-9]+s$' "$recap_out"
+grep -Eq '^  skip go +GO_BINARIES not configured$' "$recap_out"
+
+# --log-file accepts paths that start with "-" (dirname/mkdir/tee get "--").
+dash_log_dir="${tmp_dir}/dash-log-cwd"
+mkdir -p "$dash_log_dir"
+(cd "$dash_log_dir" && "$SCRIPT" --log-file -run.log --only bun --dry-run --no-color >/dev/null 2>&1)
+grep -q '^==> SUMMARY ' "${dash_log_dir}/-run.log"
+
+# --strict says that later modules never ran.
+rc=0
+BUN_STUB_UPDATE_ERROR="error: boom" "$SCRIPT" --only bun,go --strict --no-color >"$recap_out" 2>&1 || rc=$?
+[ "$rc" -eq 1 ]
+grep -q '^Stopped at the first failure (--strict)\.$' "$recap_out"
+if grep -q ' go ' "$recap_out"; then
+	echo "Expected --strict to stop before go" >&2
+	exit 1
+fi
+
+# The recap and retry hint are human-only; JSONL stdout never carries them.
+rc=0
+recap_json="${tmp_dir}/recap.jsonl"
+BUN_STUB_UPDATE_ERROR="error: boom" "$SCRIPT" "${recap_skip[@]}" --json --no-color >"$recap_json" 2>"$recap_out" || rc=$?
+[ "$rc" -eq 1 ]
+if grep -Eq 'Retry just|Results' "$recap_json"; then
+	echo "Expected the recap to stay out of JSONL" >&2
+	exit 1
+fi
+[ "$(tail -n 1 "$recap_out")" = "Retry just the failures: re-run the same command with --only bun" ]
+
+rc=0
+"$SCRIPT" --only go --no-color --log-level warn --dry-run >"$recap_out" 2>&1 || rc=$?
+[ "$rc" -eq 1 ]
+if grep -Eq '^(Results|Retry just)' "$recap_out"; then
+	echo "Expected --log-level warn to suppress the closing recap and retry hint" >&2
+	exit 1
+fi
+grep -q '^==> SUMMARY ' "$recap_out"
+
+UPDATES_TEST_CASE
+
 run_test "mise module runs" <<'UPDATES_TEST_CASE'
 : >"$CALL_LOG"
 "$SCRIPT" --only mise --no-emoji >/dev/null
@@ -1455,6 +1514,10 @@ grep -q 'aman-local-only-setup.*no upstream' "$git_sync_stderr"
 grep -q 'aman-dirty-setup.*uncommitted changes' "$git_sync_stderr"
 grep -q 'aman-gone-setup.*no upstream' "$git_sync_stderr"
 grep -q 'aman-detached-setup.*detached HEAD' "$git_sync_stderr"
+# The closing recap resurfaces warnings that scrolled past, home-relative.
+echo "$out" | grep -Eq '^  ok   repos +[0-9]+s  4 warnings$'
+echo "$out" | grep -q '^Warnings (4)$'
+echo "$out" | grep -q '^  repos: git: ~/GitRepos/aman-dirty-setup: worktree has uncommitted changes$'
 
 UPDATES_TEST_CASE
 

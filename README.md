@@ -67,10 +67,26 @@ Example output (trimmed):
 Starting updates...
 ==> brew START
 Homebrew 🍺
-==> brew END (OK) (12s)
-==> SUMMARY ok=1 skip=0 fail=0 total=12s
-Done in 12s. 🎉
+brew: brew update
+...
+==> brew END (OK) (32s)
+...
+
+Results
+  ✓ brew     32s
+  ✓ repos    34s  1 warning
+  ✗ bun       0s  bun update -g exited 1
+  – mise          mise not found
+
+Warnings (1)
+  repos: git: ~/GitRepos/aman-opencode-setup: worktree has uncommitted changes
+
+==> SUMMARY ok=2 skip=1 fail=1 total=66s failures=bun
+ERROR: Completed in 66s with failures: bun
+Retry just the failures: re-run the same command with --only bun
 ```
+
+On Unix, the `Results` recap lists every module with its duration and a short reason for skips and failures, then repeats any warnings that scrolled past. It is human-only (never in JSONL), uses ASCII `ok`/`FAIL`/`skip` markers with `--no-emoji`, and is hidden at `--log-level warn` and below. On a color TTY, commands that change state are bold and internal checks are dim.
 
 List available modules:
 

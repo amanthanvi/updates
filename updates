@@ -53,11 +53,24 @@ skipped_count=0
 failures_count=0
 
 CURRENT_MODULE="main"
+# Per-run results for the closing recap (parallel arrays, Bash 3.2 safe).
+result_modules=()
+result_statuses=()
+result_seconds=()
+result_notes=()
+run_warnings=()
+MODULE_SKIP_REASON=""
+MODULE_LAST_ERROR=""
+MODULE_LAST_FAILED_COMMAND=""
+MODULE_WARNING_COUNT=0
+MODULE_LAST_WARNING=""
+STRICT_STOPPED=0
 COMMAND_PIDS=()
 COMMAND_TEMPS=()
 
 COLOR_STDOUT=0
 COLOR_STDERR=0
+COLOR_HUMAN=0
 C_RESET=""
 C_BOLD=""
 C_DIM=""
@@ -346,6 +359,7 @@ debug() {
 init_colors() {
 	COLOR_STDOUT=0
 	COLOR_STDERR=0
+	COLOR_HUMAN=0
 	C_RESET=""
 	C_BOLD=""
 	C_DIM=""
@@ -364,6 +378,12 @@ init_colors() {
 	if [ -t 2 ]; then
 		COLOR_STDERR=1
 	fi
+	# Human progress shares a stream with stdout, or stderr under --json.
+	if [ "$HUMAN_FD" -eq 2 ]; then
+		COLOR_HUMAN="$COLOR_STDERR"
+	else
+		COLOR_HUMAN="$COLOR_STDOUT"
+	fi
 
 	if [ "$COLOR_STDOUT" -eq 0 ] && [ "$COLOR_STDERR" -eq 0 ]; then
 		return 0
@@ -380,6 +400,9 @@ init_colors() {
 
 warn() {
 	json_emit_message_event warn "$CURRENT_MODULE" "$*"
+	run_warnings+=("${CURRENT_MODULE}|$*")
+	MODULE_WARNING_COUNT=$((MODULE_WARNING_COUNT + 1))
+	MODULE_LAST_WARNING="$*"
 	if [ "$LOG_LEVEL_NUM" -lt 1 ]; then
 		return 0
 	fi
@@ -392,6 +415,7 @@ warn() {
 
 err() {
 	json_emit_message_event error "$CURRENT_MODULE" "$*"
+	MODULE_LAST_ERROR="$*"
 	if [ "$COLOR_STDERR" -eq 1 ]; then
 		printf '%s\n' "${C_RED}ERROR:${C_RESET} $*" >&2
 	else
@@ -413,7 +437,7 @@ emoji() {
 
 format_boundary_start() {
 	local module="$1"
-	if [ "$COLOR_STDOUT" -eq 1 ]; then
+	if [ "$COLOR_HUMAN" -eq 1 ]; then
 		printf '%s %s START' "${C_BLUE}${C_BOLD}==>${C_RESET}" "${C_BOLD}${module}${C_RESET}"
 		return 0
 	fi
@@ -425,7 +449,7 @@ format_boundary_end() {
 	local status="$2"
 	local dur="$3"
 
-	if [ "$COLOR_STDOUT" -ne 1 ]; then
+	if [ "$COLOR_HUMAN" -ne 1 ]; then
 		printf '==> %s END (%s) (%ss)' "$module" "$status" "$dur"
 		return 0
 	fi
@@ -451,7 +475,7 @@ format_summary() {
 	local total="$4"
 	local failures_csv="${5:-}"
 
-	if [ "$COLOR_STDOUT" -ne 1 ]; then
+	if [ "$COLOR_HUMAN" -ne 1 ]; then
 		local line="==> SUMMARY ok=${ok} skip=${skip} fail=${fail} total=${total}s"
 		if [ -n "$failures_csv" ]; then
 			line="${line} failures=${failures_csv}"
@@ -691,6 +715,14 @@ validate_only_modules_supported() {
 # after log redirection in main; these messages never enter the JSONL stream.
 command_progress() {
 	[ "$LOG_LEVEL_NUM" -ge 2 ] || return 0
+	# Commands that change state stand out; internal probes stay dim.
+	if [ "$COLOR_HUMAN" -eq 1 ]; then
+		case "${COMMAND_PROGRESS_STYLE:-probe}" in
+		command) printf '%s\n' "${C_BOLD}$*${C_RESET}" >&4 ;;
+		*) printf '%s\n' "${C_DIM}$*${C_RESET}" >&4 ;;
+		esac
+		return 0
+	fi
 	printf '%s\n' "$*" >&4
 }
 
@@ -722,6 +754,7 @@ command_remove_temp() {
 
 command_heartbeat() {
 	local label="$1" started="$SECONDS" timer=""
+	COMMAND_PROGRESS_STYLE=probe
 	trap - EXIT
 	# An interruptible wait lets the parent reap this helper immediately.
 	trap '[ -z "$timer" ] || { kill "$timer" 2>/dev/null; wait "$timer" 2>/dev/null; }; exit 0' TERM INT
@@ -832,11 +865,14 @@ run() {
 	if [ "$DRY_RUN" -eq 1 ]; then
 		return 0
 	fi
+	local COMMAND_PROGRESS_STYLE='command' status=0
 	if [ "$JSON" -eq 1 ]; then
-		command_execute "$CURRENT_MODULE: $*" "$@" 1>&2
+		command_execute "$CURRENT_MODULE: $*" "$@" 1>&2 || status=$?
 	else
-		command_execute "$CURRENT_MODULE: $*" "$@"
+		command_execute "$CURRENT_MODULE: $*" "$@" || status=$?
 	fi
+	[ "$status" -eq 0 ] || MODULE_LAST_FAILED_COMMAND="$* exited ${status}"
+	return "$status"
 }
 
 command_outcome_set() {
@@ -894,11 +930,14 @@ run_npm_global_install_logged() {
 	shift
 
 	debug "+ npm install -g $*"
+	local COMMAND_PROGRESS_STYLE='command' status=0
 	if [ "$JSON" -eq 1 ]; then
-		command_logged "node: installing ${*: -1}" "$npm_err_log" stderr npm install -g "$@" 1>&2
+		command_logged "node: installing ${*: -1}" "$npm_err_log" stderr npm install -g "$@" 1>&2 || status=$?
 	else
-		command_logged "node: installing ${*: -1}" "$npm_err_log" stderr npm install -g "$@"
+		command_logged "node: installing ${*: -1}" "$npm_err_log" stderr npm install -g "$@" || status=$?
 	fi
+	[ "$status" -eq 0 ] || MODULE_LAST_FAILED_COMMAND="npm install -g ${*: -1} exited ${status}"
+	return "$status"
 }
 
 npm_allow_scripts_arg_from_log() {
@@ -2267,42 +2306,56 @@ usage() {
 	cat <<EOF
 ${SCRIPT_NAME} v${UPDATES_VERSION}
 
-Updates common tooling on macOS and Linux (Homebrew, npm globals, pip globals, etc.).
+Keep developer tooling current on macOS and Linux with one command:
+Homebrew, npm/Bun/pip/uv/pipx globals, Rust, Git repos, AI CLIs, and more.
 
 Usage:
   ${SCRIPT_NAME} [options]
 
-Options:
-  -h, --help               Show this help
-      --version            Print version
-      --list-modules       List available modules
-      --doctor             Check local installation integrity; make no changes
+Run:
       --dry-run            Print what would run; make no changes
       --only <list>        Run only these modules (CSV; or quote a space-separated list)
       --skip <list>        Skip these modules (CSV; or quote a space-separated list)
+      --full               Enable everything (brew greedy + mas + macos + all detected modules)
       --strict             Stop on first failure
+  -n, --non-interactive    Avoid interactive prompts when possible
+
+Inspect:
+      --list-modules       List available modules
+      --doctor             Check local installation integrity; make no changes
+      --version            Print version
+  -h, --help               Show this help
+
+Output:
       --log-level <level>  Output level: error, warn, info, debug (default: info)
       --json               Emit JSONL events to stdout (human output to stderr)
-      --[no-]self-update   Check GitHub for a newer version and update this script (default: enabled)
-  -n, --non-interactive    Avoid interactive prompts when possible
-      --no-config          Ignore ~/.updatesrc
-      --no-emoji           Disable emoji in output
-      --no-color           Disable ANSI colors in output
       --log-file <path>    Append human output to a log file
-      --parallel <N>       Parallelism for pip upgrades (default: ${PARALLEL})
-      --pip-force          Pass --break-system-packages to pip (dangerous)
+      --no-emoji           Disable emoji in output
+      --no-color           Disable ANSI colors in output (or set NO_COLOR=1)
+
+Configuration:
+      --no-config          Ignore ~/.updatesrc
+      --[no-]self-update   Check GitHub for a newer version and update this script (default: enabled)
+
+Module options:
       --brew-mode <mode>   Homebrew scope: formula, casks, greedy
       --[no-]brew-cleanup  Run brew cleanup after upgrade (default: enabled)
-      --full               Enable everything (brew greedy + mas + macos + all detected modules)
       --[no-]mas-upgrade   Upgrade Mac App Store apps (default: disabled)
       --[no-]macos-updates List available macOS software updates (default: disabled)
+      --parallel <N>       Parallelism for pip upgrades (default: ${PARALLEL})
+      --pip-force          Pass --break-system-packages to pip (dangerous)
 
 Examples:
   ${SCRIPT_NAME}
+      Update everything detected on this machine
   ${SCRIPT_NAME} --dry-run
+      Preview what would run without changing anything
   ${SCRIPT_NAME} --only brew,node --brew-mode formula
+      Update only Homebrew formulae and npm globals
   ${SCRIPT_NAME} --json -n --no-self-update --log-level warn
+      Scripted run: JSONL on stdout, no prompts, no self-update
   ${SCRIPT_NAME} --skip python --log-file ./updates.log
+      Skip pip and keep a log of the run
 
 EOF
 }
@@ -2645,6 +2698,13 @@ missing_dependency_is_error() {
 	return 1
 }
 
+# Log a module skip and keep its reason for the closing recap.
+module_skip_note() {
+	local module="$1" reason="$2"
+	MODULE_SKIP_REASON="$reason"
+	log "Skipping ${module}: ${reason}."
+}
+
 ensure_cmd_or_skip() {
 	local cmd="$1"
 	local module="$2"
@@ -2657,7 +2717,7 @@ ensure_cmd_or_skip() {
 		return 1
 	fi
 
-	log "Skipping $module: $cmd not found."
+	module_skip_note "$module" "$cmd not found"
 	return 2
 }
 
@@ -3146,7 +3206,7 @@ module_shell() {
 
 	local omz_dir=""
 	if ! omz_dir="$(shell_detect_omz_dir)"; then
-		log "Skipping shell: Oh My Zsh not found."
+		module_skip_note shell "Oh My Zsh not found"
 		return 2
 	fi
 
@@ -3179,7 +3239,7 @@ module_shell() {
 	fi
 
 	if [ "${#repos[@]}" -eq 0 ]; then
-		log "Skipping shell: no git repos detected."
+		module_skip_note shell "no git repos detected"
 		return 2
 	fi
 
@@ -3192,13 +3252,13 @@ module_repos() {
 
 	local home_dir=""
 	if ! home_dir="$(updates_home_dir)"; then
-		log "Skipping repos: home directory not available."
+		module_skip_note repos "home directory not available"
 		return 2
 	fi
 
 	local base_dir="${REPOS_DIR:-${home_dir}/GitRepos}"
 	if [ ! -d "$base_dir" ]; then
-		log "Skipping repos: base directory not found: ${base_dir}"
+		module_skip_note repos "base directory ${base_dir} not found"
 		return 2
 	fi
 
@@ -3213,7 +3273,7 @@ module_repos() {
 	done
 
 	if [ "${#repos[@]}" -eq 0 ]; then
-		log "Skipping repos: no aman-*-setup repos found in ${base_dir}."
+		module_skip_note repos "no aman-*-setup repos found in ${base_dir}"
 		return 2
 	fi
 
@@ -3245,7 +3305,7 @@ module_linux() {
 			err "linux: no supported package manager found (apt-get/dnf/yum/pacman/zypper/apk)"
 			return 1
 		fi
-		log "Skipping linux: no supported package manager found."
+		module_skip_note linux "no supported package manager found"
 		return 2
 	fi
 
@@ -3366,7 +3426,7 @@ module_linux() {
 }
 
 module_winget() {
-	log "Skipping winget: native Windows support uses updates.ps1."
+	module_skip_note winget "native Windows support uses updates.ps1"
 	return 2
 }
 
@@ -3435,7 +3495,7 @@ module_node() {
 # `bun update -g` exits 1 with "No package.json, so nothing to update" when no
 # global packages were ever installed; that is an up-to-date state, not a failure.
 run_bun_global_update() {
-	local log_dir="" status=0
+	local log_dir="" status=0 COMMAND_PROGRESS_STYLE='command'
 	debug "+ bun update -g"
 	command_temp_dir log_dir || return 1
 	if [ "$JSON" -eq 1 ]; then
@@ -3447,6 +3507,7 @@ run_bun_global_update() {
 		log "bun: no Bun global packages installed; nothing to update."
 		status=0
 	fi
+	[ "$status" -eq 0 ] || MODULE_LAST_FAILED_COMMAND="bun update -g exited ${status}"
 	command_remove_temp "$log_dir"
 	return "$status"
 }
@@ -3481,7 +3542,7 @@ module_python() {
 			err "python: required command not found: py, python, or python3"
 			return 1
 		fi
-		log "Skipping python: no supported Python launcher found."
+		module_skip_note python "no supported Python launcher found"
 		return 2
 	fi
 
@@ -3493,7 +3554,7 @@ module_python() {
 			err "python: required module not found: pip (${PYTHON_CMD_LABEL} -m pip)"
 			return 1
 		fi
-		log "Skipping python: pip not available (${PYTHON_CMD_LABEL} -m pip)."
+		module_skip_note python "pip not available (${PYTHON_CMD_LABEL} -m pip)"
 		return 2
 	fi
 
@@ -3678,7 +3739,7 @@ module_python() {
 		log "Upgrading ${#safe_packages[@]} guarded Python packages..."
 		install_log="${guard_log_dir}/safe-set-install.log"
 		debug "+ ${pip_guard_install_args[*]} ${safe_packages[*]}"
-		if ! command_logged "python: installing guarded package set" "$install_log" combined "${pip_guard_install_args[@]}" "${safe_packages[@]}"; then
+		if ! COMMAND_PROGRESS_STYLE='command' command_logged "python: installing guarded package set" "$install_log" combined "${pip_guard_install_args[@]}" "${safe_packages[@]}"; then
 			err "python: pip upgrade failed: guarded user-site package set"
 			command_remove_temp "$guard_log_dir"
 			return 1
@@ -3739,7 +3800,7 @@ module_python() {
 	while [ "$next" -lt "${#packages[@]}" ] || [ "${#pids[@]}" -gt 0 ]; do
 		while [ "$next" -lt "${#packages[@]}" ] && [ "${#pids[@]}" -lt "$PARALLEL" ]; do
 			pkg="${packages[$next]}"
-			command_progress "python: installing $pkg"
+			COMMAND_PROGRESS_STYLE='command' command_progress "python: installing $pkg"
 			"${pip_install_args[@]}" "$pkg" </dev/null >"${pip_log_dir}/${pkg}.log" 2>&1 &
 			child=$!
 			COMMAND_PIDS+=("$child")
@@ -3884,7 +3945,7 @@ module_skills() {
 			err "skills: required command not found: skills (or npx)"
 			return 1
 		fi
-		log "Skipping skills: neither skills nor npx found."
+		module_skip_note skills "neither skills nor npx found"
 		return 2
 	fi
 
@@ -3926,7 +3987,7 @@ module_go() {
 			err "go: GO_BINARIES is not configured (set GO_BINARIES=... in ~/.updatesrc)"
 			return 1
 		fi
-		log "Skipping go: GO_BINARIES not configured."
+		module_skip_note go "GO_BINARIES not configured"
 		return 2
 	fi
 
@@ -3949,7 +4010,7 @@ module_go() {
 			err "go: GO_BINARIES is empty (set GO_BINARIES=... in ~/.updatesrc)"
 			return 1
 		fi
-		log "Skipping go: GO_BINARIES is empty."
+		module_skip_note go "GO_BINARIES is empty"
 		return 2
 	fi
 
@@ -4015,6 +4076,129 @@ module_dispatch() {
 	"$handler"
 }
 
+# Strip a leading "<module>: " and trailing "; skipping" so recap notes stay short.
+recap_trim_note() {
+	local module="$1" note="$2"
+	note="${note#"${module}: "}"
+	note="${note%"; skipping"}"
+	# Show home-relative paths as ~/... (unquoted patterns stay Bash 3.2 safe).
+	# shellcheck disable=SC2088 # a literal ~/ is the intended display text
+	local home_prefix="${HOME:-}/" home_short="~/"
+	case "$home_prefix" in
+	/ | *[*?[\\]*) ;;
+	*) note="${note//$home_prefix/$home_short}" ;;
+	esac
+	stdout_print "$note"
+}
+
+record_module_result() {
+	local module="$1" status="$2" seconds="$3" note=""
+	case "$status" in
+	FAIL)
+		note="${MODULE_LAST_ERROR:-$MODULE_LAST_FAILED_COMMAND}"
+		;;
+	SKIP)
+		note="${MODULE_SKIP_REASON:-$MODULE_LAST_WARNING}"
+		;;
+	esac
+	[ -z "$note" ] || note="$(recap_trim_note "$module" "$note")"
+	if [ "$status" != SKIP ] && [ "$MODULE_WARNING_COUNT" -gt 0 ]; then
+		local count_note="${MODULE_WARNING_COUNT} warning"
+		[ "$MODULE_WARNING_COUNT" -eq 1 ] || count_note="${count_note}s"
+		note="${note:+${note}; }${count_note}"
+	fi
+	result_modules+=("$module")
+	result_statuses+=("$status")
+	result_seconds+=("$seconds")
+	result_notes+=("$note")
+}
+
+recap_mark() {
+	local status="$1" mark color=""
+	if [ "$NO_EMOJI" -eq 1 ]; then
+		case "$status" in
+		OK) mark="ok  " ;;
+		FAIL) mark="FAIL" ;;
+		*) mark="skip" ;;
+		esac
+	else
+		case "$status" in
+		OK) mark="✓" ;;
+		FAIL) mark="✗" ;;
+		*) mark="–" ;;
+		esac
+	fi
+	if [ "$COLOR_HUMAN" -eq 1 ]; then
+		case "$status" in
+		OK) color="$C_GREEN" ;;
+		FAIL) color="$C_RED" ;;
+		*) color="$C_DIM" ;;
+		esac
+		printf '%s' "${color}${mark}${C_RESET}"
+		return 0
+	fi
+	printf '%s' "$mark"
+}
+
+# Human-only closing recap: one line per module, then any warnings that
+# scrolled past. Printed before the stable SUMMARY line; never in JSONL.
+print_run_recap() {
+	[ "$LOG_LEVEL_NUM" -ge 2 ] || return 0
+	local count="${#result_modules[@]}"
+	[ "$count" -gt 0 ] || return 0
+
+	local width=0 name
+	for name in "${result_modules[@]}"; do
+		[ "${#name}" -le "$width" ] || width="${#name}"
+	done
+
+	local heading="Results"
+	[ "$DRY_RUN" -eq 0 ] || heading="Results (dry run)"
+	local bold="" dim="" yellow="" reset=""
+	if [ "$COLOR_HUMAN" -eq 1 ]; then
+		bold="$C_BOLD" dim="$C_DIM" yellow="$C_YELLOW" reset="$C_RESET"
+	fi
+
+	print ""
+	print "${bold}${heading}${reset}"
+	local i line seconds note
+	for ((i = 0; i < count; i++)); do
+		seconds=""
+		[ "${result_statuses[i]}" = SKIP ] || seconds="${result_seconds[i]}s"
+		line="$(printf '  %s %-*s %5s' "$(recap_mark "${result_statuses[i]}")" "$width" "${result_modules[i]}" "$seconds")"
+		note="${result_notes[i]}"
+		if [ -n "$note" ]; then
+			case "${result_statuses[i]}" in
+			FAIL) line="${line}  ${note}" ;;
+			*) line="${line}  ${dim}${note}${reset}" ;;
+			esac
+		fi
+		print "$line"
+	done
+
+	local warning_count="${#run_warnings[@]}"
+	if [ "$warning_count" -gt 0 ]; then
+		print ""
+		print "${yellow}${bold}Warnings (${warning_count})${reset}"
+		local entry module
+		for entry in "${run_warnings[@]}"; do
+			module="${entry%%|*}"
+			[ "$module" != main ] || module="updates"
+			print "  ${module}: $(recap_trim_note "$module" "${entry#*|}")"
+		done
+	fi
+	print ""
+}
+
+# Human-only next step after failures; never emitted as JSONL.
+print_retry_hint() {
+	local failures_csv="$1"
+	[ "$LOG_LEVEL_NUM" -ge 2 ] && [ -n "$failures_csv" ] || return 0
+	[ "$STRICT_STOPPED" -eq 0 ] || print "Stopped at the first failure (--strict)."
+	# Plain instruction; exact replay of the invocation isn't reliable.
+	print "Retry just the failures: re-run the same command with --only ${failures_csv}"
+}
+
 run_selected_modules() {
 	successes=()
 	skipped=()
@@ -4036,6 +4220,11 @@ run_selected_modules() {
 		local start="$SECONDS"
 
 		CURRENT_MODULE="$m"
+		MODULE_SKIP_REASON=""
+		MODULE_LAST_ERROR=""
+		MODULE_LAST_FAILED_COMMAND=""
+		MODULE_LAST_WARNING=""
+		MODULE_WARNING_COUNT=0
 		debug "Running module: $m"
 		local rc=0
 		module_dispatch "$m"
@@ -4046,6 +4235,7 @@ run_selected_modules() {
 		if [ "$rc" -eq 0 ]; then
 			successes+=("$m")
 			successes_count=$((successes_count + 1))
+			record_module_result "$m" OK "$dur"
 			json_emit_module_end "$m" ok "$dur"
 			progress "$(format_boundary_end "$m" OK "$dur")"
 			continue
@@ -4055,6 +4245,7 @@ run_selected_modules() {
 		if [ "$rc" -eq 2 ]; then
 			skipped+=("$m")
 			skipped_count=$((skipped_count + 1))
+			record_module_result "$m" SKIP "$dur"
 			json_emit_module_end "$m" skip "$dur"
 			progress "$(format_boundary_end "$m" SKIP "$dur")"
 			continue
@@ -4062,9 +4253,11 @@ run_selected_modules() {
 
 		failures+=("$m")
 		failures_count=$((failures_count + 1))
+		record_module_result "$m" FAIL "$dur"
 		json_emit_module_end "$m" fail "$dur"
 		progress "$(format_boundary_end "$m" FAIL "$dur")"
 		if [ "$STRICT" -eq 1 ]; then
+			STRICT_STOPPED=1
 			return 1
 		fi
 	done 3<<<"$MODULE_REGISTRY"
@@ -4123,12 +4316,12 @@ main() {
 	fi
 
 	if [ -n "$LOG_FILE" ] && [ "${UPDATES_LOG_REDIRECTED:-0}" != "1" ]; then
-		mkdir -p "$(dirname "$LOG_FILE")" || die "Failed to create log dir"
+		mkdir -p -- "$(dirname -- "$LOG_FILE")" || die "Failed to create log dir"
 		export UPDATES_LOG_REDIRECTED=1
 		if [ "$JSON" -eq 1 ]; then
-			exec 2> >(tee -a "$LOG_FILE" >&2)
+			exec 2> >(tee -a -- "$LOG_FILE" >&2)
 		else
-			exec > >(tee -a "$LOG_FILE") 2>&1
+			exec > >(tee -a -- "$LOG_FILE") 2>&1
 		fi
 	fi
 
@@ -4154,6 +4347,7 @@ main() {
 	local rc=0
 	if run_selected_modules; then
 		local total="${SECONDS}"
+		print_run_recap
 		json_emit_summary "$successes_count" "$skipped_count" "$failures_count" "$total"
 		progress "$(format_summary "$successes_count" "$skipped_count" "$failures_count" "$total")"
 		log "Done in ${total}s. $(emoji "🎉")"
@@ -4161,6 +4355,7 @@ main() {
 	fi
 
 	local total="${SECONDS}"
+	print_run_recap
 	local failures_csv=""
 	if [ "$failures_count" -gt 0 ]; then
 		failures_csv="$(csv_join "${failures[@]}")"
@@ -4170,6 +4365,7 @@ main() {
 	fi
 	progress "$(format_summary "$successes_count" "$skipped_count" "$failures_count" "$total" "$failures_csv")"
 	err "Completed in ${total}s with failures: ${failures_csv}"
+	print_retry_hint "$failures_csv"
 	return 1
 }
 

@@ -70,7 +70,7 @@ v2.2 adds the default-on `skills` module for project and global scopes, includin
 
 - **Loading:** Module boundary line printed (`==> <module> START`); underlying tool output streams through.
 - **Empty:** "All packages are up-to-date" message per module when nothing to upgrade.
-- **Error:** `ERROR: ...` on stderr; module marked FAIL in summary; exit code 1.
+- **Error:** `ERROR: ...` on stderr; module marked FAIL in summary; exit code 1. On Unix, the closing recap shows why each module failed or was skipped and ends with a `--only` retry hint.
 - **Permission denied:** `WARN:` message when self-update lacks write access or a valid Windows install receipt; the run skips gracefully instead of elevating on Windows.
 - **Offline/degraded:** Self-update silently skips on network failure; individual modules fail based on their own tool's behavior.
 - **Accessibility:** Plain-text output; emoji disabled with `--no-emoji`; colors disabled with `--no-color` / `NO_COLOR=1`.
@@ -291,7 +291,7 @@ Output is intended to be stable and easy to grep.
   - `ERROR: ...`
 - `--log-level warn` (and below) suppress normal output but **MUST NOT** suppress `WARN:`/`ERROR:` messages.
 - Emoji is enabled by default; `--no-emoji` removes emoji.
-- ANSI colors are enabled automatically when output is a TTY; set `NO_COLOR=1` or pass `--no-color` to disable. When `--log-file` is used, colors are disabled in the log file.
+- ANSI colors are enabled automatically when output is a TTY; set `NO_COLOR=1` or pass `--no-color` to disable. When `--log-file` is used, colors are disabled in the log file. Human progress and boundary lines are colored only when their own stream (stdout, or stderr under `--json`) is a TTY. On Unix, state-changing command lines are bold and internal check lines are dim.
 
 Standardized boundaries:
 
@@ -300,6 +300,13 @@ Standardized boundaries:
   - `==> <module> END (<OK|SKIP|FAIL>) (<Ns>)`
 - After the run completes, a summary line is printed:
   - `==> SUMMARY ok=<N> skip=<N> fail=<N> total=<Ns> [failures=<csv>]`
+
+Unix closing recap (additive; the boundary and summary lines above are unchanged):
+
+- At `info`/`debug`, a `Results` block (`Results (dry run)` under `--dry-run`) is printed immediately before the `SUMMARY` line: one line per module that ran, in execution order, with a status marker (`✓`/`✗`/`–`, or `ok`/`FAIL`/`skip` with `--no-emoji`), the module name, its duration (omitted for skips), and an optional note. Notes are the skip reason, the module's last error or failed command (`<command> exited <N>`), and/or a warning count. Paths under `$HOME` are shown as `~/...`.
+- If any warnings were emitted, a `Warnings (<N>)` block repeats them as `<module>: <message>` (`updates:` for warnings outside a module).
+- When modules failed, the final line after `ERROR: Completed ...` is `Retry just the failures: re-run the same command with --only <csv>`. Under `--strict`, it is preceded by `Stopped at the first failure (--strict).` Both are human-only and hidden at `--log-level warn` and below.
+- The recap goes to the human stream (stderr under `--json`) and never to JSONL. Native Windows does not print it yet.
 
 ### 5.2 JSONL event stream contract
 

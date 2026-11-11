@@ -1,3 +1,20 @@
+# Plan: polished Unix run output
+
+## Goal
+
+- Make a full Bash run easy to read at a glance, in the style of `npx skills`, without changing the frozen v2 boundary/summary lines or the JSONL contract.
+
+## Execution checklist
+
+- [x] End each run with a `Results` recap: status marker, duration, and a skip/failure reason per module, plus resurfaced warnings.
+- [x] Finish failed runs with a plain `--only <failures>` retry hint.
+- [x] Color human output by its own stream (stdout, or stderr under `--json`); bold state-changing commands and dim internal checks on a TTY.
+- [x] Group `--help` options into Run, Inspect, Output, Configuration, and Module options.
+- [x] Pass lint and Bash tests; recap and color behavior covered by tests and pty checks.
+- [ ] Native Windows recap parity (follow-up).
+
+---
+
 # Plan: skills module structure cleanup
 
 ## Goal
