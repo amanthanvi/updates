@@ -768,7 +768,7 @@ for extra_args in '--|--dry-run' '--dry-run|--|brew' '--dry-run|--|--json'; do
 		exit 1
 	fi
 	grep -q "^ERROR: Unexpected argument: ${extra_argv[${#extra_argv[@]} - 1]}$" "${tmp_dir}/dd-stderr"
-	if echo "$out" | grep -q '^==> '; then
+	if echo "$out" | grep -q '^==> \|"module_start"' || grep -q '^==> ' "${tmp_dir}/dd-stderr"; then
 		echo "Expected no modules to run for ${extra_args}" >&2
 		exit 1
 	fi

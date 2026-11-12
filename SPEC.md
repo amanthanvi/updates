@@ -702,7 +702,7 @@ Purpose: list available macOS software updates.
   - download and verify `updates-windows.zip`, `updates-release.json`, and `SHA256SUMS`
   - stage the complete version directory on the target filesystem
   - validate payload structure, containment, embedded version, and `bootstrap_min`
-  - atomically commit bootstrap and receipt files
+  - atomically commit the receipt (self-update never rewrites `updates.cmd` or `updates.ps1`; the installer does)
   - preserve the actually runnable version in `previous.txt`
   - atomically switch `current.txt` last, then relaunch once with `UPDATES_SELF_UPDATED=1`: start the installed `updates.ps1` in `pwsh` directly (not through `updates.cmd`, so `cmd.exe` cannot reinterpret `&`, `%`, `^`, or quotes) with the same arguments, each passed unchanged, and the same current directory, console, and standard streams, and return its exit code
 - Any receipt, trust, digest, checksum, manifest, extraction, staging, or relaunch failure leaves the current version active and prints a warning. The run stays non-fatal unless another selected module fails.
