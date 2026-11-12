@@ -2364,6 +2364,9 @@ pre_scan_no_config() {
 	local arg
 	for arg in "$@"; do
 		case "$arg" in
+		--)
+			break
+			;;
 		--no-config)
 			NO_CONFIG=1
 			;;
@@ -2654,7 +2657,9 @@ parse_args() {
 			MACOS_UPDATES=0
 			;;
 		--)
+			# updates takes no operands, so -- may only end the argument list.
 			shift
+			[ $# -eq 0 ] || die "Unexpected argument: $1"
 			break
 			;;
 		-*)

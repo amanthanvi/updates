@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- On macOS and Linux, an argument after `--` is now a usage error (exit `2`), as the CLI contract already required, instead of being silently ignored: `updates -- --dry-run` used to run real updates. A trailing `--` is still accepted.
+- Native Windows passes every argument to the payload unchanged. PowerShell no longer consumes `--` or claims arguments such as `-o` and `-Verbose`, so `updates -- --dry-run` is a usage error rather than a dry run, `updates --dry-run --` works, and `-o` is reported as an unknown option.
+- After a native Windows self-update, the restarted run's output is shown and its exit code is returned. Previously its standard output was swallowed and the command then failed with `payload launch failed`. The restart also no longer goes through `cmd.exe`, so arguments containing `&`, `%`, `^`, quotes, or a trailing backslash reach it unchanged.
+
 ## [2.3.0] - 2026-11-11
 
 ### Added
