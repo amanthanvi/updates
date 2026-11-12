@@ -1,7 +1,7 @@
 # Fix: arguments after `--` and the Windows self-update relaunch
 
-- [x] Bash rejects any argument after `--` (exit `2`) instead of ignoring it; Bash and Windows pre-scans stop at `--`.
-- [x] Windows bootstrap passes `$args` verbatim so PowerShell's binder cannot consume `--` or claim `-o`/`-Verbose`.
+- [x] Bash rejects any argument after `--` (exit `2`) instead of ignoring it.
+- [x] Windows bootstrap uses `$args` so PowerShell's binder cannot consume `--` or claim `-o`/`-Verbose` (existing installs get it by re-running the installer; self-update does not replace the bootstrap).
 - [x] Windows self-update relaunch starts the new `updates.ps1` in `pwsh` with `ProcessStartInfo.ArgumentList`, inherited streams, and the current directory, so output is no longer captured and `cmd.exe` cannot reinterpret arguments.
 - [x] Tests: Bash `--` cases; Windows bootstrap `--`/`-o` cases; real relaunch with `&`, `%`, quotes, trailing backslashes, and an empty argument.
 

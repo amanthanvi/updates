@@ -315,7 +315,6 @@ function PreScan-NoConfig {
     $CliInput = @($CliInput | Where-Object { $null -ne $_ })
     foreach ($arg in $CliInput) {
         switch ($arg) {
-            '--' { return }
             '--no-config' { $script:NoConfig = $true }
             '--json' { $script:JsonMode = $true }
             '-h' { $script:NoConfig = $true }

@@ -87,7 +87,7 @@ The `v2.0.0` contract freezes: flag names, module names, exit codes, output form
 
 Native Windows supports `updates.cmd` as the user-facing launcher and `updates.ps1` as the stable bootstrap. macOS, Linux, and WSL continue to use the `updates` Bash entrypoint.
 
-The CLI takes no positional arguments. Unknown options or unexpected arguments **MUST** error with exit code `2`. `--` may end the argument list, but nothing may follow it: any argument after `--` is unexpected, even one that looks like an option. On native Windows, `updates.ps1` passes every argument to the payload unchanged, so PowerShell's parameter binder never consumes `--` or treats arguments such as `-o` as its own.
+The CLI takes no positional arguments. Unknown options or unexpected arguments **MUST** error with exit code `2`. `--` may end the argument list, but nothing may follow it: any argument after `--` is unexpected, even one that looks like an option. On native Windows, `updates.ps1` has no parameter block, so PowerShell's parameter binder never consumes `--` or claims arguments such as `-o` or `-Verbose`; `pwsh -File` still splits `-name:value` arguments before the payload sees them.
 
 ### 3.2 Exit codes
 
@@ -704,7 +704,7 @@ Purpose: list available macOS software updates.
   - validate payload structure, containment, embedded version, and `bootstrap_min`
   - atomically commit bootstrap and receipt files
   - preserve the actually runnable version in `previous.txt`
-  - atomically switch `current.txt` last, then relaunch once with `UPDATES_SELF_UPDATED=1`: start the new `updates.ps1` in `pwsh` directly (not through `updates.cmd`, so `cmd.exe` cannot reinterpret `&`, `%`, `^`, or quotes) with the same arguments, each passed unchanged, and the same current directory, console, and standard streams, and return its exit code
+  - atomically switch `current.txt` last, then relaunch once with `UPDATES_SELF_UPDATED=1`: start the installed `updates.ps1` in `pwsh` directly (not through `updates.cmd`, so `cmd.exe` cannot reinterpret `&`, `%`, `^`, or quotes) with the same arguments, each passed unchanged, and the same current directory, console, and standard streams, and return its exit code
 - Any receipt, trust, digest, checksum, manifest, extraction, staging, or relaunch failure leaves the current version active and prints a warning. The run stays non-fatal unless another selected module fails.
 
 ## 10) Security & Privacy

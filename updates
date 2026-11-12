@@ -2364,9 +2364,6 @@ pre_scan_no_config() {
 	local arg
 	for arg in "$@"; do
 		case "$arg" in
-		--)
-			break
-			;;
 		--no-config)
 			NO_CONFIG=1
 			;;

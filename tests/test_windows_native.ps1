@@ -2629,7 +2629,7 @@ if (Should-RunTest 'bootstrap passes -- and PowerShell-style arguments to the pa
                 $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList ($baseArgs + $case.Args) -Environment $environment
                 Assert-Equal -Expected 2 -Actual $result.ExitCode -Message ("an argument after -- in '{0}' should be a usage error" -f $label)
                 Assert-Match -Text $result.Output -Pattern ('(?m)^ERROR: Unexpected argument: {0}\r?$' -f [regex]::Escape($case.Unexpected)) -Message ("'{0}' should name the unexpected argument" -f $label)
-                Assert-NotMatch -Text $result.Output -Pattern '==> |"event"' -Message ("'{0}' should not run modules or switch to JSON" -f $label)
+                Assert-NotMatch -Text $result.Output -Pattern '==> ' -Message ("'{0}' should not run modules" -f $label)
             }
 
             $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList ($baseArgs + @('--dry-run', '--only', 'winget', '--')) -Environment $environment
