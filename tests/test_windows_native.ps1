@@ -2604,5 +2604,102 @@ exit $LASTEXITCODE
     }
 }
 
+if (Should-RunTest 'bootstrap passes -- and PowerShell-style arguments to the payload unchanged') {
+    Invoke-TestCase 'bootstrap passes -- and PowerShell-style arguments to the payload unchanged' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Install-RepoWindowsRuntime -RepoRoot $repoRoot -InstallRoot $installRoot
+            $stubDir = Join-Path $installRoot 'stub-bin'
+            $null = New-Item -ItemType Directory -Path $stubDir -Force
+            Write-CmdStub -Path (Join-Path $stubDir 'winget.cmd') -Lines @('exit /b 0')
+            $environment = @{
+                PATH        = $stubDir
+                HOME        = $installRoot
+                USERPROFILE = $installRoot
+            }
+            $baseArgs = @('--no-self-update', '--no-color', '--no-emoji')
+
+            # updates takes no operands: anything after -- is a usage error, even an option.
+            foreach ($case in @(
+                    @{ Args = @('--', '--dry-run'); Unexpected = '--dry-run' },
+                    @{ Args = @('--dry-run', '--', 'winget'); Unexpected = 'winget' },
+                    @{ Args = @('--dry-run', '--', '--json'); Unexpected = '--json' }
+                )) {
+                $label = $case.Args -join ' '
+                $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList ($baseArgs + $case.Args) -Environment $environment
+                Assert-Equal -Expected 2 -Actual $result.ExitCode -Message ("an argument after -- in '{0}' should be a usage error" -f $label)
+                Assert-Match -Text $result.Output -Pattern ('(?m)^ERROR: Unexpected argument: {0}\r?$' -f [regex]::Escape($case.Unexpected)) -Message ("'{0}' should name the unexpected argument" -f $label)
+                Assert-NotMatch -Text $result.Output -Pattern '==> |"event"' -Message ("'{0}' should not run modules or switch to JSON" -f $label)
+            }
+
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList ($baseArgs + @('--dry-run', '--only', 'winget', '--')) -Environment $environment
+            Assert-Equal -Expected 0 -Actual $result.ExitCode -Message 'a trailing -- should be accepted'
+            Assert-Match -Text $result.Stdout -Pattern '(?m)^==> winget START\r?$' -Message 'a trailing -- should not change the run'
+
+            $result = Invoke-Bootstrap -InstallRoot $installRoot -ArgumentList ($baseArgs + @('--dry-run', '-o')) -Environment $environment
+            Assert-Equal -Expected 2 -Actual $result.ExitCode -Message 'a PowerShell-style option should reach the payload as an unknown option'
+            Assert-Match -Text $result.Output -Pattern '(?m)^ERROR: Unknown option: -o\r?$' -Message 'the payload, not PowerShell, should reject -o'
+        }
+    }
+}
+
+if (Should-RunTest 'self-update relaunch passes arguments through unchanged and keeps the relaunched output') {
+    Invoke-TestCase 'self-update relaunch passes arguments through unchanged and keeps the relaunched output' {
+        Invoke-WithTempInstall {
+            param($installRoot)
+
+            Copy-RepoWindowsBootstrap -RepoRoot $repoRoot -InstallRoot $installRoot
+            Copy-RepoWindowsCmd -RepoRoot $repoRoot -InstallRoot $installRoot
+            $payload = @'
+param([string[]]$CliArgs)
+$index = 0
+foreach ($arg in @($CliArgs)) {
+    [Console]::Out.WriteLine(('relaunched-arg[{0}]=<{1}>' -f $index, $arg))
+    $index++
+}
+[Console]::Out.WriteLine(('relaunched-guard={0}' -f $env:UPDATES_SELF_UPDATED))
+[Console]::Out.WriteLine(('relaunched-pwd={0}' -f (Get-Location).ProviderPath))
+exit 17
+'@
+            New-VersionedPayload -InstallRoot $installRoot -Version '2.0.0' -PayloadContent $payload
+            Set-VersionPointers -InstallRoot $installRoot -CurrentVersion '2.0.0'
+
+            # cmd.exe would split on & and expand %PATH%; the quote, trailing
+            # backslashes, and empty string exercise per-argument quoting.
+            $workDir = Join-Path $installRoot 'R&D (100%) ^x !y'
+            $null = New-Item -ItemType Directory -Path $workDir -Force
+            $relaunchArgs = @('--log-file', (Join-Path $workDir 'u.log'), 'R&D', '%PATH%', 'a"b', 'dir\', 'two words\', '', '--')
+            $argsPath = Join-Path $installRoot 'relaunch-args.json'
+            Write-Utf8NoBom -Path $argsPath -Content (ConvertTo-Json -InputObject $relaunchArgs)
+            $driverPath = Join-Path $installRoot 'relaunch-driver.ps1'
+            $driver = @'
+$ErrorActionPreference = 'Stop'
+. __PAYLOAD__
+$script:InstallRoot = __INSTALL_ROOT__
+Set-Location -LiteralPath __WORK_DIR__
+$relaunchArgs = [string[]]@(Get-Content -LiteralPath __ARGS_PATH__ -Raw | ConvertFrom-Json)
+$rc = Invoke-SelfUpdatedRelaunch -OriginalArgs $relaunchArgs
+[Console]::Out.WriteLine(('relaunch-rc={0}:{1}' -f $rc.GetType().Name, ($rc -join '|')))
+'@
+            $driver = $driver.Replace('__PAYLOAD__', (Quote-PowerShellLiteral -Value (Resolve-RepoWindowsPayloadSource -RepoRoot $repoRoot)))
+            $driver = $driver.Replace('__INSTALL_ROOT__', (Quote-PowerShellLiteral -Value $installRoot))
+            $driver = $driver.Replace('__WORK_DIR__', (Quote-PowerShellLiteral -Value $workDir))
+            $driver = $driver.Replace('__ARGS_PATH__', (Quote-PowerShellLiteral -Value $argsPath))
+            Write-Utf8NoBom -Path $driverPath -Content $driver
+
+            $result = Invoke-ProcessCapture -FilePath (Get-PwshPath) -ArgumentList @('-NoLogo', '-NoProfile', '-File', $driverPath) -WorkingDirectory $installRoot -Environment @{ UPDATES_SELF_UPDATED = $null }
+
+            Assert-Match -Text $result.Stdout -Pattern '(?m)^relaunch-rc=Int32:17\r?$' -Message 'relaunch should return only the relaunched exit code'
+            for ($index = 0; $index -lt $relaunchArgs.Count; $index++) {
+                Assert-Match -Text $result.Stdout -Pattern ('(?m)^relaunched-arg\[{0}\]=<{1}>\r?$' -f $index, [regex]::Escape($relaunchArgs[$index])) -Message ("relaunch should pass argument {0} unchanged and show the relaunched output" -f $index)
+            }
+            Assert-NotMatch -Text $result.Stdout -Pattern ('relaunched-arg\[{0}\]' -f $relaunchArgs.Count) -Message 'relaunch should not add arguments'
+            Assert-Match -Text $result.Stdout -Pattern '(?m)^relaunched-guard=1\r?$' -Message 'relaunch should set the one-restart guard'
+            Assert-Match -Text $result.Stdout -Pattern ('(?m)^relaunched-pwd={0}\r?$' -f [regex]::Escape($workDir)) -Message 'relaunch should keep the current directory'
+        }
+    }
+}
+
 Complete-TestRun
 Write-Host 'All Windows-native tests passed.'
