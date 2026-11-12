@@ -758,6 +758,26 @@ done
 
 UPDATES_TEST_CASE
 
+run_test "arguments after -- are usage errors" <<'UPDATES_TEST_CASE'
+for extra_args in '--|--dry-run' '--dry-run|--|brew' '--dry-run|--|--json'; do
+	IFS='|' read -r -a extra_argv <<<"$extra_args"
+	rc=0
+	out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --only brew --no-emoji --no-color "${extra_argv[@]}" 2>"${tmp_dir}/dd-stderr")" || rc=$?
+	if [ "$rc" -ne 2 ]; then
+		echo "Expected an argument after -- in ${extra_args} to be a usage error (got $rc)" >&2
+		exit 1
+	fi
+	grep -q "^ERROR: Unexpected argument: ${extra_argv[${#extra_argv[@]} - 1]}$" "${tmp_dir}/dd-stderr"
+	if echo "$out" | grep -q '^==> \|"module_start"' || grep -q '^==> ' "${tmp_dir}/dd-stderr"; then
+		echo "Expected no modules to run for ${extra_args}" >&2
+		exit 1
+	fi
+done
+out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --dry-run --only brew --no-emoji --)"
+echo "$out" | grep -q '^==> brew START$'
+
+UPDATES_TEST_CASE
+
 run_test "selected modules run in non-dry-run mode" <<'UPDATES_TEST_CASE'
 out="$(UPDATES_ALLOW_NON_DARWIN=1 "$SCRIPT" --only brew,node --no-emoji)"
 echo "$out" | grep -q '^==> brew START$'

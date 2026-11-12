@@ -2654,7 +2654,9 @@ parse_args() {
 			MACOS_UPDATES=0
 			;;
 		--)
+			# updates takes no operands, so -- may only end the argument list.
 			shift
+			[ $# -eq 0 ] || die "Unexpected argument: $1"
 			break
 			;;
 		-*)

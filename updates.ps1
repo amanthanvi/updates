@@ -1,9 +1,7 @@
 #requires -Version 7.0
-[CmdletBinding(PositionalBinding = $false)]
-param(
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]]$RemainingArgs
-)
+# No param block: PowerShell's parameter binder would swallow `--` and treat
+# arguments such as -o or -Verbose as its own; $args keeps every one verbatim.
+$RemainingArgs = @($args)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'

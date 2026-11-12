@@ -1868,10 +1868,24 @@ function Invoke-SelfUpdatedRelaunch {
     param([string[]]$OriginalArgs)
 
     $env:UPDATES_SELF_UPDATED = '1'
-    # Native .cmd calls drop empty strings; Parse-Args rejects every empty
-    # argument and option value, so no accepted argument is lost on relaunch.
-    & (Join-Path $script:InstallRoot 'updates.cmd') @OriginalArgs
-    return $LASTEXITCODE
+    # Start the new bootstrap in pwsh directly, not through updates.cmd:
+    # cmd.exe would reinterpret & ^ % and quotes in the arguments. ArgumentList
+    # quotes each argument so it arrives unchanged, and the child writes to
+    # this process's console and handles instead of into the return value.
+    $pwsh = Get-Command -Name 'pwsh.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = if ($pwsh) { $pwsh.Source } else { (Get-Process -Id $PID).Path }
+    $startInfo.UseShellExecute = $false
+    $startInfo.WorkingDirectory = (Get-Location -PSProvider FileSystem).ProviderPath
+    foreach ($arg in @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $script:InstallRoot 'updates.ps1'))) {
+        $startInfo.ArgumentList.Add($arg)
+    }
+    foreach ($arg in $OriginalArgs) {
+        $startInfo.ArgumentList.Add($arg)
+    }
+    $process = [System.Diagnostics.Process]::Start($startInfo)
+    $process.WaitForExit()
+    return $process.ExitCode
 }
 
 function Invoke-WindowsSelfUpdate {
