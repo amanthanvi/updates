@@ -752,25 +752,75 @@ command_remove_temp() {
 	COMMAND_TEMPS=(${remaining[@]+"${remaining[@]}"})
 }
 
+# A background run sees the mode set by whatever owns the terminal, such as an
+# idle zsh prompt with echo and line editing off. Succeeds only when ps shows
+# another process group in the terminal's foreground.
+command_in_background_job() {
+	local groups="" tpgid="" pgid=""
+	groups="$(ps -o tpgid= -o pgid= -p "$$" 2>/dev/null)" || return 1
+	read -r tpgid pgid <<<"$groups" || true
+	# Accept only two positive group IDs; no terminal shows as 0 or -1.
+	case "${tpgid}:${pgid}" in
+	[1-9]*:[1-9]*) ;;
+	*) return 1 ;;
+	esac
+	case "${tpgid}${pgid}" in
+	*[!0-9]*) return 1 ;;
+	esac
+	[ "$tpgid" != "$pgid" ]
+}
+
 command_heartbeat() {
-	local label="$1" started="$SECONDS" timer=""
+	local label="$1" started="$SECONDS" timer="" ticks=0 terminal="" hint="" hint_due=0
+	# Tests shorten the interval; anything but a positive whole number means 30.
+	local interval="${UPDATES_PROGRESS_INTERVAL:-30}"
+	case "$interval" in
+	'' | 0* | *[!0-9]*) interval=30 ;;
+	esac
 	COMMAND_PROGRESS_STYLE=probe
 	trap - EXIT
 	# An interruptible wait lets the parent reap this helper immediately.
 	trap '[ -z "$timer" ] || { kill "$timer" 2>/dev/null; wait "$timer" 2>/dev/null; }; exit 0' TERM INT
 	while :; do
-		sleep 30 &
+		sleep "$interval" &
 		timer=$!
 		wait "$timer" || return 0
 		timer=""
-		command_progress "$label: still running ($((SECONDS - started))s elapsed; Ctrl+C to cancel)"
+		ticks=$((ticks + 1))
+		# A command can also wait on a prompt that its own output capture
+		# hides. Say so every five minutes (every tenth interval), on the next
+		# message that is printed.
+		[ "$((ticks % 10))" -ne 0 ] || hint_due=1
+		hint=""
+		# Check the terminal on stdin, where commands read input, or else the
+		# controlling terminal, where sudo and others ask for passwords. stty
+		# fails when there is no terminal.
+		if terminal="$(stty -a 2>/dev/null)" || terminal="$({ stty -a </dev/tty; } 2>/dev/null)"; then
+			case " $terminal " in
+			# With echo or line editing off, a command is reading keys: a y/n
+			# prompt such as Homebrew's, or a password. A message now would push
+			# the prompt away, and in raw mode each line would start where the
+			# previous one ended. sudo's own pseudo-terminal also keeps the
+			# terminal raw while its command runs.
+			*[[:space:]]-icanon[[:space:]]* | *[[:space:]]-echo[[:space:]]*)
+				command_in_background_job || continue
+				;;
+			esac
+			if [ "$hint_due" -eq 1 ]; then
+				hint="if it seems stuck, it may be waiting for input; "
+				hint_due=0
+			fi
+		fi
+		command_progress "$label: still running ($((SECONDS - started))s elapsed; ${hint}Ctrl+C to cancel)"
 	done
 }
 
 command_wait() {
 	local child="$1" label="$2" heartbeat="" status=0
 	if [ "$LOG_LEVEL_NUM" -ge 2 ]; then
-		command_heartbeat "$label" &
+		# Bash can give a background command /dev/null as stdin; pass stdin on
+		# so the helper can check the terminal's mode (it never reads).
+		command_heartbeat "$label" <&0 &
 		heartbeat=$!
 		COMMAND_PIDS+=("$heartbeat")
 	fi

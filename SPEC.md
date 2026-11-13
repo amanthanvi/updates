@@ -290,6 +290,8 @@ Output is intended to be stable and easy to grep.
 
 - Normal progress goes to **stdout** (or **stderr** when `--json` is active).
 - On Unix, managed commands and potentially blocking npm, pip, and Git captures announce their module/package and phase before waiting. While waiting, human progress messages include elapsed time every 30 seconds at `info`/`debug` log levels. They add no JSONL event types or fields.
+  - Before each message, the terminal on stdin (or, if stdin is not a terminal, the controlling terminal) is checked with `stty -a`. While it has echo or line editing turned off (`-echo` or `-icanon`) and `updates` is the terminal's foreground job, messages are skipped: a command is reading keys, such as a `[y/n]` confirmation or a password, and a message would push its prompt away. A background run (`updates >log &`) keeps printing, because the mode it sees is set by the shell's prompt; it counts as background only when `ps -o tpgid= -o pgid=` shows another process group in the terminal's foreground. Messages also stay off for as long as a command keeps the terminal in that mode, for example while sudo 1.9.14 and later relays a command through its own pseudo-terminal (its default), or after a command exits and leaves the terminal that way.
+  - With a terminal, the message at five minutes and every five minutes after that (every tenth interval; if that interval's message is skipped, the next printed one) adds `if it seems stuck, it may be waiting for input; ` before `Ctrl+C to cancel`, because a command can wait on a prompt that it hides by capturing its own output. Without a terminal, messages never add it.
 - Warnings and errors go to **stderr** and are prefixed:
   - `WARN: ...`
   - `ERROR: ...`
@@ -346,6 +348,7 @@ When `--json` is active, the log file receives the human-readable stderr output,
 | `UPDATES_ALLOW_NON_DARWIN=1` | unset   | Allow running on unsupported OSes (prints warning)               |
 | `UPDATES_SELF_UPDATE=0`      | `1`     | Disable self-update                                              |
 | `UPDATES_SELF_UPDATED=1`     | unset   | Internal guard: skip a second self-update after successful re-exec/relaunch |
+| `UPDATES_PROGRESS_INTERVAL`  | `30`    | Internal (tests): seconds between Unix `still running` messages; anything but a positive whole number means `30` |
 | `NO_COLOR=1`                 | unset   | Disable ANSI colors                                              |
 | `CI`                         | unset   | When set, self-update is disabled                                |
 
