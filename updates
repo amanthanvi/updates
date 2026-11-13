@@ -756,12 +756,18 @@ command_remove_temp() {
 # idle zsh prompt with echo and line editing off. Succeeds only when ps shows
 # another process group in the terminal's foreground.
 command_in_background_job() {
-	local tpgid="" pgid=""
-	read -r tpgid pgid <<<"$(ps -o tpgid= -o pgid= -p "$$" 2>/dev/null)" || true
+	local groups="" tpgid="" pgid=""
+	groups="$(ps -o tpgid= -o pgid= -p "$$" 2>/dev/null)" || return 1
+	read -r tpgid pgid <<<"$groups" || true
+	# Accept only two positive group IDs; no terminal shows as 0 or -1.
 	case "${tpgid}:${pgid}" in
-	*[!0-9:-]* | :* | *:) return 1 ;;
+	[1-9]*:[1-9]*) ;;
+	*) return 1 ;;
 	esac
-	[ "$tpgid" -gt 0 ] && [ "$tpgid" != "$pgid" ]
+	case "${tpgid}${pgid}" in
+	*[!0-9]*) return 1 ;;
+	esac
+	[ "$tpgid" != "$pgid" ]
 }
 
 command_heartbeat() {

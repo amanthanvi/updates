@@ -2755,7 +2755,8 @@ printf "speed 38400 baud; 24 rows; 80 columns;\nlflags: %s isig iexten %s echoe 
 # shellcheck disable=SC2016
 write_stub_to_dir "$progress_bin" ps '
 [ "$1 $2 $3 $4 $5" = "-o tpgid= -o pgid= -p" ] || exit 64
-printf "%s\n" "${PS_STUB_GROUPS:-  4242  4242}"
+printf "%s\n" "${PS_STUB_GROUPS-  4242  4242}"
+exit "${PS_STUB_STATUS:-0}"
 '
 # brew update runs until the heartbeat has checked the terminal BREW_STUB_CHECKS times.
 # shellcheck disable=SC2016
@@ -2790,7 +2791,18 @@ progress_run single-key 3 STTY_STUB_ICANON=-icanon &
 progress_pids+=($!)
 progress_run background 3 STTY_STUB_ICANON=-icanon STTY_STUB_ECHO=-echo PS_STUB_GROUPS="  4242  5151" &
 progress_pids+=($!)
-progress_run unknown-job 3 STTY_STUB_ICANON=-icanon STTY_STUB_ECHO=-echo PS_STUB_GROUPS="   -1  5151" &
+# When ps cannot show a terminal owner, updates counts as the foreground job.
+progress_run no-terminal-linux 3 STTY_STUB_ICANON=-icanon STTY_STUB_ECHO=-echo PS_STUB_GROUPS="   -1  5151" &
+progress_pids+=($!)
+progress_run no-terminal-macos 3 STTY_STUB_ICANON=-icanon STTY_STUB_ECHO=-echo PS_STUB_GROUPS="    0  5151" &
+progress_pids+=($!)
+progress_run ps-failed 3 STTY_STUB_ICANON=-icanon STTY_STUB_ECHO=-echo PS_STUB_GROUPS="  4242  5151" PS_STUB_STATUS=1 &
+progress_pids+=($!)
+progress_run ps-empty 3 STTY_STUB_ICANON=-icanon STTY_STUB_ECHO=-echo PS_STUB_GROUPS= &
+progress_pids+=($!)
+progress_run ps-malformed 3 STTY_STUB_ICANON=-icanon STTY_STUB_ECHO=-echo PS_STUB_GROUPS="  4242  51-51" &
+progress_pids+=($!)
+progress_run ps-dash 3 STTY_STUB_ICANON=-icanon STTY_STUB_ECHO=-echo PS_STUB_GROUPS="     -  5151" &
 progress_pids+=($!)
 progress_run long 12 &
 progress_pids+=($!)
@@ -2803,9 +2815,10 @@ for pid in "${progress_pids[@]}"; do
 done
 
 grep -q '^brew: brew update: still running ([0-9]*s elapsed; Ctrl+C to cancel)$' "${progress_dir}/cooked.out"
-for mode in raw password single-key unknown-job; do
-	if grep -q 'still running' "${progress_dir}/${mode}.out"; then
-		echo "Expected no still-running messages while a command reads keys (${mode})" >&2
+for mode in raw password single-key no-terminal-linux no-terminal-macos ps-failed ps-empty ps-malformed ps-dash; do
+	# Nothing may print over the prompt, not even a shell error from the checks.
+	if grep -q 'still running\|expression expected\|line [0-9]*:' "${progress_dir}/${mode}.out"; then
+		echo "Expected nothing printed while a command reads keys (${mode})" >&2
 		cat "${progress_dir}/${mode}.out" >&2
 		exit 1
 	fi
