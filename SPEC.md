@@ -290,8 +290,8 @@ Output is intended to be stable and easy to grep.
 
 - Normal progress goes to **stdout** (or **stderr** when `--json` is active).
 - On Unix, managed commands and potentially blocking npm, pip, and Git captures announce their module/package and phase before waiting. While waiting, human progress messages include elapsed time every 30 seconds at `info`/`debug` log levels. They add no JSONL event types or fields.
-  - When stdin is a terminal, a message is skipped while that terminal has echo or line editing turned off (`stty` reports `-echo` or `-icanon`): the command is reading keys, such as a `[y/n]` confirmation or a password, and the message would push its prompt away.
-  - When stdin is a terminal, the tenth and later messages for one command (five minutes and later) add `if it seems stuck, it may be waiting for input; ` before `Ctrl+C to cancel`, because a command can wait on a prompt that it hides by capturing its own output.
+  - Before each message, the terminal on stdin (or, if stdin is not a terminal, the controlling terminal) is checked with `stty -a`. While it has echo or line editing turned off (`-echo` or `-icanon`), messages are skipped: a command is reading keys, such as a `[y/n]` confirmation or a password, and a message would push its prompt away. Messages also stay off for as long as a command keeps the terminal in that mode, for example while sudo 1.9.14 and later relays a command through its own pseudo-terminal (its default), or after a command exits and leaves the terminal that way.
+  - With a terminal, the message at five minutes and every five minutes after that (every tenth interval) adds `if it seems stuck, it may be waiting for input; ` before `Ctrl+C to cancel`, because a command can wait on a prompt that it hides by capturing its own output. Without a terminal, messages never add it.
 - Warnings and errors go to **stderr** and are prefixed:
   - `WARN: ...`
   - `ERROR: ...`

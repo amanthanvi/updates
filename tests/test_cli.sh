@@ -2731,58 +2731,180 @@ write_stub brew 'echo "brew $*" >>"$CALL_LOG"'
 UPDATES_TEST_CASE
 
 run_test "still-running messages pause while a command reads keys" <<'UPDATES_TEST_CASE'
-progress_bin="${tmp_dir}/progress-bin"
+progress_dir="${tmp_dir}/progress"
+progress_bin="${progress_dir}/bin"
 mkdir -p "$progress_bin"
-# Stand in for the terminal on stdin. The cooked mode keeps lookalike flags
-# (-echok, -echoprt) that must not count as echo being off.
+# Stands in for the terminal. It answers only on the stdin updates was given,
+# so the heartbeat helper must keep that stdin, and it logs each answer so the
+# brew stub can wait for a number of checks instead of a fixed time. The cooked
+# mode keeps lookalike flags (-echok, -echoprt, -echonl) that are not echo off.
 # shellcheck disable=SC2016
 write_stub_to_dir "$progress_bin" stty '
 [ "$*" = "-a" ] || exit 64
+"$SYSTEM_PYTHON3" -I -c "import os, sys; a = os.fstat(0); b = os.stat(sys.argv[1]); sys.exit((a.st_dev, a.st_ino) != (b.st_dev, b.st_ino))" "$STTY_STUB_STDIN" || exit 1
+echo check >>"$STTY_STUB_LOG"
 [ -z "${STTY_STUB_NO_TERMINAL:-}" ] || exit 1
 printf "speed 38400 baud; 24 rows; 80 columns;\nlflags: %s isig iexten %s echoe -echok echoke\n\t-echoprt -echonl\n" "${STTY_STUB_ICANON:-icanon}" "${STTY_STUB_ECHO:-echo}"
 '
+# brew update runs until the heartbeat has checked the terminal BREW_STUB_CHECKS times.
 # shellcheck disable=SC2016
-write_stub_to_dir "$progress_bin" brew '[ "${1:-}" != update ] || sleep "$BREW_STUB_SLEEP"'
+write_stub_to_dir "$progress_bin" brew '
+[ "${1:-}" = update ] || exit 0
+deadline=$((SECONDS + 90))
+while [ "$(wc -l <"$STTY_STUB_LOG")" -lt "$BREW_STUB_CHECKS" ]; do
+	[ "$SECONDS" -lt "$deadline" ] || { echo "brew stub: the terminal was checked too few times" >&2; exit 1; }
+	sleep 0.1
+done
+'
 progress_run() {
-	local out="$1"
-	shift
-	env PATH="${progress_bin}:${PATH}" UPDATES_PROGRESS_INTERVAL=1 UPDATES_ALLOW_NON_DARWIN=1 "$@" \
-		"$SCRIPT" --only brew --no-emoji --no-color >"$out" 2>&1
+	local name="$1" checks="$2"
+	shift 2
+	: >"${progress_dir}/${name}.stdin"
+	: >"${progress_dir}/${name}.checks"
+	env PATH="${progress_bin}:${PATH}" UPDATES_PROGRESS_INTERVAL=1 UPDATES_ALLOW_NON_DARWIN=1 \
+		STTY_STUB_STDIN="${progress_dir}/${name}.stdin" STTY_STUB_LOG="${progress_dir}/${name}.checks" \
+		BREW_STUB_CHECKS="$checks" "$@" \
+		"$SCRIPT" --only brew --no-emoji --no-color <"${progress_dir}/${name}.stdin" >"${progress_dir}/${name}.out" 2>&1
 }
 hint='if it seems stuck, it may be waiting for input; '
 
-# Long waits run side by side: one with a terminal, one without.
-progress_run "${tmp_dir}/progress-long-tty" BREW_STUB_SLEEP=12 &
-long_tty=$!
-progress_run "${tmp_dir}/progress-long-none" BREW_STUB_SLEEP=12 STTY_STUB_NO_TERMINAL=1 &
-long_none=$!
-progress_run "${tmp_dir}/progress-cooked" BREW_STUB_SLEEP=3
-progress_run "${tmp_dir}/progress-raw" BREW_STUB_SLEEP=3 STTY_STUB_ICANON=-icanon STTY_STUB_ECHO=-echo
-progress_run "${tmp_dir}/progress-password" BREW_STUB_SLEEP=3 STTY_STUB_ECHO=-echo
-progress_run "${tmp_dir}/progress-single-key" BREW_STUB_SLEEP=3 STTY_STUB_ICANON=-icanon
-wait "$long_tty"
-wait "$long_none"
+progress_pids=()
+progress_run cooked 2 &
+progress_pids+=($!)
+progress_run raw 3 STTY_STUB_ICANON=-icanon STTY_STUB_ECHO=-echo &
+progress_pids+=($!)
+progress_run password 3 STTY_STUB_ECHO=-echo &
+progress_pids+=($!)
+progress_run single-key 3 STTY_STUB_ICANON=-icanon &
+progress_pids+=($!)
+progress_run long 12 &
+progress_pids+=($!)
+progress_run long-no-terminal 12 STTY_STUB_NO_TERMINAL=1 &
+progress_pids+=($!)
+for pid in "${progress_pids[@]}"; do
+	wait "$pid"
+done
 
-grep -q '^brew: brew update: still running ([0-9]*s elapsed; Ctrl+C to cancel)$' "${tmp_dir}/progress-cooked"
+grep -q '^brew: brew update: still running ([0-9]*s elapsed; Ctrl+C to cancel)$' "${progress_dir}/cooked.out"
 for mode in raw password single-key; do
-	if grep -q 'still running' "${tmp_dir}/progress-${mode}"; then
+	if grep -q 'still running' "${progress_dir}/${mode}.out"; then
 		echo "Expected no still-running messages while a command reads keys (${mode})" >&2
-		cat "${tmp_dir}/progress-${mode}" >&2
+		cat "${progress_dir}/${mode}.out" >&2
 		exit 1
 	fi
-	grep -q '^==> brew END (OK)' "${tmp_dir}/progress-${mode}"
+	grep -q '^==> brew END (OK)' "${progress_dir}/${mode}.out"
 done
-# The first nine messages stay short; later ones on a terminal add the hint.
-if ! awk -v hint="$hint" '/still running/ { n++; if (n <= 9 && index($0, hint)) early = 1; if (n >= 10 && index($0, "elapsed; " hint "Ctrl+C to cancel)")) late = 1 } END { exit !(late && !early) }' "${tmp_dir}/progress-long-tty"; then
-	echo "Expected the input hint from the tenth message on, and not before" >&2
-	cat "${tmp_dir}/progress-long-tty" >&2
+# With a terminal, only the tenth interval's message (five minutes) adds the hint.
+if ! awk -v hint="$hint" '/still running/ { n++; if (n == 10) late = index($0, "elapsed; " hint "Ctrl+C to cancel)") > 0; else if (index($0, hint)) other = 1 } END { exit !(n >= 11 && late && !other) }' "${progress_dir}/long.out"; then
+	echo "Expected the input hint on the tenth message only" >&2
+	cat "${progress_dir}/long.out" >&2
 	exit 1
 fi
-if [ "$(grep -c 'still running' "${tmp_dir}/progress-long-none")" -lt 10 ] || grep -qF "$hint" "${tmp_dir}/progress-long-none"; then
-	echo "Expected ten or more messages, none with the input hint, when stdin is not a terminal" >&2
-	cat "${tmp_dir}/progress-long-none" >&2
+if [ "$(grep -c 'still running' "${progress_dir}/long-no-terminal.out")" -lt 11 ] || grep -qF "$hint" "${progress_dir}/long-no-terminal.out"; then
+	echo "Expected eleven or more messages, none with the input hint, without a terminal" >&2
+	cat "${progress_dir}/long-no-terminal.out" >&2
 	exit 1
 fi
+
+UPDATES_TEST_CASE
+
+run_test "still-running messages pause during a raw-mode prompt on a real terminal" <<'UPDATES_TEST_CASE'
+pty_dir="${tmp_dir}/pty"
+mkdir -p "${pty_dir}/bin"
+# Like Homebrew's confirmation, read one key in raw mode. Then wait in cooked
+# mode until the driver has seen a still-running message and sends Enter. It
+# uses /dev/tty, as sudo does, so it works when stdin is not the terminal.
+# shellcheck disable=SC2016
+write_stub_to_dir "${pty_dir}/bin" brew '
+[ "${1:-}" = update ] || exit 0
+saved="$(stty -g </dev/tty)"
+stty raw -echo </dev/tty
+printf "proceed? [y/n]"
+IFS= read -r -n 1 key </dev/tty
+stty "$saved" </dev/tty
+printf "\nanswered %s\n" "$key"
+IFS= read -r _ </dev/tty
+'
+cat >"${pty_dir}/drive.py" <<'PY'
+import os
+import pty
+import select
+import sys
+import time
+
+pid, fd = pty.fork()
+if pid == 0:
+    if os.environ.get("PTY_STDIN_NULL"):
+        # Keep the terminal as the controlling terminal, but not as stdin.
+        os.dup2(os.open(os.devnull, os.O_RDONLY), 0)
+    os.execvp(sys.argv[1], sys.argv[1:])
+
+out = bytearray()
+eof = False
+
+
+def pump(until, timeout):
+    """Collect terminal output until until() holds, EOF, or the timeout."""
+    global eof
+    deadline = time.monotonic() + timeout
+    while not until() and not eof:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            break
+        ready, _, _ = select.select([fd], [], [], left)
+        if not ready:
+            continue
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:  # Linux reports EIO once the other side closes.
+            chunk = b""
+        if chunk:
+            out.extend(chunk)
+        else:
+            eof = True
+    return until()
+
+
+def fail(reason):
+    sys.stderr.write("%s\n--- terminal output ---\n%s\n" % (reason, out.decode(errors="replace")))
+    try:
+        os.kill(pid, 15)
+    except ProcessLookupError:
+        pass
+    sys.exit(1)
+
+
+prompt = b"proceed? [y/n]"
+if not pump(lambda: prompt in out, 60):
+    fail("the brew stub never prompted")
+# A message that raced the switch to raw mode can land just after the prompt,
+# so judge only what arrives over the next three intervals.
+pump(lambda: False, 0.5)
+start = len(out)
+pump(lambda: False, 3)
+if b"still running" in out[start:]:
+    fail("a still-running message was printed during the raw-mode prompt")
+os.write(fd, b"y")
+answered = b"answered y"
+if not pump(lambda: answered in out and b"still running" in out[out.find(answered):], 60):
+    fail("no still-running message after the prompt was answered")
+os.write(fd, b"\n")
+pump(lambda: False, 60)
+if not eof:
+    fail("updates did not exit")
+_, status = os.waitpid(pid, 0)
+if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0 or b"==> brew END (OK)" not in out:
+    fail("updates did not finish cleanly (wait status %d)" % status)
+PY
+# Once with the terminal on stdin, once with only the controlling terminal.
+PATH="${pty_dir}/bin:${PATH}" UPDATES_PROGRESS_INTERVAL=1 UPDATES_ALLOW_NON_DARWIN=1 \
+	"$SYSTEM_PYTHON3" -I "${pty_dir}/drive.py" "$SCRIPT" --only brew --no-emoji --no-color &
+pty_stdin=$!
+PATH="${pty_dir}/bin:${PATH}" UPDATES_PROGRESS_INTERVAL=1 UPDATES_ALLOW_NON_DARWIN=1 PTY_STDIN_NULL=1 \
+	"$SYSTEM_PYTHON3" -I "${pty_dir}/drive.py" "$SCRIPT" --only brew --no-emoji --no-color &
+pty_tty_only=$!
+wait "$pty_stdin"
+wait "$pty_tty_only"
 
 UPDATES_TEST_CASE
 
