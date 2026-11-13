@@ -1,3 +1,11 @@
+# Fix: progress messages over terminal prompts
+
+- [x] Skip a Unix `still running` message while the terminal on stdin has echo or line editing off (a command is reading keys, such as Homebrew's `[y/n]` confirmation or a password).
+- [x] From the tenth message (five minutes), messages on a terminal say the command may be waiting for input, for prompts a command hides by capturing its own output.
+- [x] Tests: stubbed `stty` modes (raw, no echo, single key, cooked with lookalike flags, no terminal) with a shortened interval; manual check on a real pty with a raw-mode `brew` stub.
+
+---
+
 # Fix: arguments after `--` and the Windows self-update relaunch
 
 - [x] Bash rejects any argument after `--` (exit `2`) instead of ignoring it.

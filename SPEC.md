@@ -290,6 +290,8 @@ Output is intended to be stable and easy to grep.
 
 - Normal progress goes to **stdout** (or **stderr** when `--json` is active).
 - On Unix, managed commands and potentially blocking npm, pip, and Git captures announce their module/package and phase before waiting. While waiting, human progress messages include elapsed time every 30 seconds at `info`/`debug` log levels. They add no JSONL event types or fields.
+  - When stdin is a terminal, a message is skipped while that terminal has echo or line editing turned off (`stty` reports `-echo` or `-icanon`): the command is reading keys, such as a `[y/n]` confirmation or a password, and the message would push its prompt away.
+  - When stdin is a terminal, the tenth and later messages for one command (five minutes and later) add `if it seems stuck, it may be waiting for input; ` before `Ctrl+C to cancel`, because a command can wait on a prompt that it hides by capturing its own output.
 - Warnings and errors go to **stderr** and are prefixed:
   - `WARN: ...`
   - `ERROR: ...`
@@ -346,6 +348,7 @@ When `--json` is active, the log file receives the human-readable stderr output,
 | `UPDATES_ALLOW_NON_DARWIN=1` | unset   | Allow running on unsupported OSes (prints warning)               |
 | `UPDATES_SELF_UPDATE=0`      | `1`     | Disable self-update                                              |
 | `UPDATES_SELF_UPDATED=1`     | unset   | Internal guard: skip a second self-update after successful re-exec/relaunch |
+| `UPDATES_PROGRESS_INTERVAL`  | `30`    | Internal (tests): seconds between Unix `still running` messages; anything but a positive whole number means `30` |
 | `NO_COLOR=1`                 | unset   | Disable ANSI colors                                              |
 | `CI`                         | unset   | When set, self-update is disabled                                |
 

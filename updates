@@ -753,24 +753,46 @@ command_remove_temp() {
 }
 
 command_heartbeat() {
-	local label="$1" started="$SECONDS" timer=""
+	local label="$1" started="$SECONDS" timer="" ticks=0 terminal="" hint=""
+	# Tests shorten the interval; anything but a positive whole number means 30.
+	local interval="${UPDATES_PROGRESS_INTERVAL:-30}"
+	case "$interval" in
+	'' | 0* | *[!0-9]*) interval=30 ;;
+	esac
 	COMMAND_PROGRESS_STYLE=probe
 	trap - EXIT
 	# An interruptible wait lets the parent reap this helper immediately.
 	trap '[ -z "$timer" ] || { kill "$timer" 2>/dev/null; wait "$timer" 2>/dev/null; }; exit 0' TERM INT
 	while :; do
-		sleep 30 &
+		sleep "$interval" &
 		timer=$!
 		wait "$timer" || return 0
 		timer=""
-		command_progress "$label: still running ($((SECONDS - started))s elapsed; Ctrl+C to cancel)"
+		ticks=$((ticks + 1))
+		hint=""
+		# stty reports the terminal on stdin, which commands read their input
+		# from, and fails when stdin is not a terminal.
+		if terminal="$(stty -a 2>/dev/null)"; then
+			case " $terminal " in
+			# With echo or line editing off, a command is reading keys: a y/n
+			# prompt such as Homebrew's, or a password. A message now would push
+			# the prompt away, and in raw mode each line would start where the
+			# previous one ended.
+			*[[:space:]]-icanon[[:space:]]* | *[[:space:]]-echo[[:space:]]*) continue ;;
+			esac
+			# A command can also wait on a prompt that its own output capture
+			# hides. Mention that only once the wait is long.
+			[ "$ticks" -lt 10 ] || hint="if it seems stuck, it may be waiting for input; "
+		fi
+		command_progress "$label: still running ($((SECONDS - started))s elapsed; ${hint}Ctrl+C to cancel)"
 	done
 }
 
 command_wait() {
 	local child="$1" label="$2" heartbeat="" status=0
 	if [ "$LOG_LEVEL_NUM" -ge 2 ]; then
-		command_heartbeat "$label" &
+		# Keep stdin so the helper can check the terminal's mode (it never reads).
+		command_heartbeat "$label" <&0 &
 		heartbeat=$!
 		COMMAND_PIDS+=("$heartbeat")
 	fi

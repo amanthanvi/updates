@@ -2730,6 +2730,62 @@ write_stub brew 'echo "brew $*" >>"$CALL_LOG"'
 
 UPDATES_TEST_CASE
 
+run_test "still-running messages pause while a command reads keys" <<'UPDATES_TEST_CASE'
+progress_bin="${tmp_dir}/progress-bin"
+mkdir -p "$progress_bin"
+# Stand in for the terminal on stdin. The cooked mode keeps lookalike flags
+# (-echok, -echoprt) that must not count as echo being off.
+# shellcheck disable=SC2016
+write_stub_to_dir "$progress_bin" stty '
+[ "$*" = "-a" ] || exit 64
+[ -z "${STTY_STUB_NO_TERMINAL:-}" ] || exit 1
+printf "speed 38400 baud; 24 rows; 80 columns;\nlflags: %s isig iexten %s echoe -echok echoke\n\t-echoprt -echonl\n" "${STTY_STUB_ICANON:-icanon}" "${STTY_STUB_ECHO:-echo}"
+'
+# shellcheck disable=SC2016
+write_stub_to_dir "$progress_bin" brew '[ "${1:-}" != update ] || sleep "$BREW_STUB_SLEEP"'
+progress_run() {
+	local out="$1"
+	shift
+	env PATH="${progress_bin}:${PATH}" UPDATES_PROGRESS_INTERVAL=1 UPDATES_ALLOW_NON_DARWIN=1 "$@" \
+		"$SCRIPT" --only brew --no-emoji --no-color >"$out" 2>&1
+}
+hint='if it seems stuck, it may be waiting for input; '
+
+# Long waits run side by side: one with a terminal, one without.
+progress_run "${tmp_dir}/progress-long-tty" BREW_STUB_SLEEP=12 &
+long_tty=$!
+progress_run "${tmp_dir}/progress-long-none" BREW_STUB_SLEEP=12 STTY_STUB_NO_TERMINAL=1 &
+long_none=$!
+progress_run "${tmp_dir}/progress-cooked" BREW_STUB_SLEEP=3
+progress_run "${tmp_dir}/progress-raw" BREW_STUB_SLEEP=3 STTY_STUB_ICANON=-icanon STTY_STUB_ECHO=-echo
+progress_run "${tmp_dir}/progress-password" BREW_STUB_SLEEP=3 STTY_STUB_ECHO=-echo
+progress_run "${tmp_dir}/progress-single-key" BREW_STUB_SLEEP=3 STTY_STUB_ICANON=-icanon
+wait "$long_tty"
+wait "$long_none"
+
+grep -q '^brew: brew update: still running ([0-9]*s elapsed; Ctrl+C to cancel)$' "${tmp_dir}/progress-cooked"
+for mode in raw password single-key; do
+	if grep -q 'still running' "${tmp_dir}/progress-${mode}"; then
+		echo "Expected no still-running messages while a command reads keys (${mode})" >&2
+		cat "${tmp_dir}/progress-${mode}" >&2
+		exit 1
+	fi
+	grep -q '^==> brew END (OK)' "${tmp_dir}/progress-${mode}"
+done
+# The first nine messages stay short; later ones on a terminal add the hint.
+if ! awk -v hint="$hint" '/still running/ { n++; if (n <= 9 && index($0, hint)) early = 1; if (n >= 10 && index($0, "elapsed; " hint "Ctrl+C to cancel)")) late = 1 } END { exit !(late && !early) }' "${tmp_dir}/progress-long-tty"; then
+	echo "Expected the input hint from the tenth message on, and not before" >&2
+	cat "${tmp_dir}/progress-long-tty" >&2
+	exit 1
+fi
+if [ "$(grep -c 'still running' "${tmp_dir}/progress-long-none")" -lt 10 ] || grep -qF "$hint" "${tmp_dir}/progress-long-none"; then
+	echo "Expected ten or more messages, none with the input hint, when stdin is not a terminal" >&2
+	cat "${tmp_dir}/progress-long-none" >&2
+	exit 1
+fi
+
+UPDATES_TEST_CASE
+
 run_test "--log-file writes output to file" <<'UPDATES_TEST_CASE'
 write_stub uname 'echo Darwin'
 log_file="${tmp_dir}/test-log-file.log"
