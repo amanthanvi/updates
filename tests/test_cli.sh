@@ -2744,7 +2744,18 @@ write_stub_to_dir "$progress_bin" stty '
 "$SYSTEM_PYTHON3" -I -c "import os, sys; a = os.fstat(0); b = os.stat(sys.argv[1]); sys.exit((a.st_dev, a.st_ino) != (b.st_dev, b.st_ino))" "$STTY_STUB_STDIN" || exit 1
 echo check >>"$STTY_STUB_LOG"
 [ -z "${STTY_STUB_NO_TERMINAL:-}" ] || exit 1
-printf "speed 38400 baud; 24 rows; 80 columns;\nlflags: %s isig iexten %s echoe -echok echoke\n\t-echoprt -echonl\n" "${STTY_STUB_ICANON:-icanon}" "${STTY_STUB_ECHO:-echo}"
+icanon="${STTY_STUB_ICANON:-icanon}" echo="${STTY_STUB_ECHO:-echo}"
+if [ "$(wc -l <"$STTY_STUB_LOG")" -eq "${STTY_STUB_RAW_AT:-0}" ]; then
+	icanon=-icanon echo=-echo
+fi
+printf "speed 38400 baud; 24 rows; 80 columns;\nlflags: %s isig iexten %s echoe -echok echoke\n\t-echoprt -echonl\n" "$icanon" "$echo"
+'
+# Reports the terminal's foreground process group and updates' own group:
+# equal for a foreground job, different for a background one.
+# shellcheck disable=SC2016
+write_stub_to_dir "$progress_bin" ps '
+[ "$1 $2 $3 $4 $5" = "-o tpgid= -o pgid= -p" ] || exit 64
+printf "%s\n" "${PS_STUB_GROUPS:-  4242  4242}"
 '
 # brew update runs until the heartbeat has checked the terminal BREW_STUB_CHECKS times.
 # shellcheck disable=SC2016
@@ -2777,7 +2788,13 @@ progress_run password 3 STTY_STUB_ECHO=-echo &
 progress_pids+=($!)
 progress_run single-key 3 STTY_STUB_ICANON=-icanon &
 progress_pids+=($!)
+progress_run background 3 STTY_STUB_ICANON=-icanon STTY_STUB_ECHO=-echo PS_STUB_GROUPS="  4242  5151" &
+progress_pids+=($!)
+progress_run unknown-job 3 STTY_STUB_ICANON=-icanon STTY_STUB_ECHO=-echo PS_STUB_GROUPS="   -1  5151" &
+progress_pids+=($!)
 progress_run long 12 &
+progress_pids+=($!)
+progress_run long-prompt-at-five-minutes 13 STTY_STUB_RAW_AT=10 &
 progress_pids+=($!)
 progress_run long-no-terminal 12 STTY_STUB_NO_TERMINAL=1 &
 progress_pids+=($!)
@@ -2786,7 +2803,7 @@ for pid in "${progress_pids[@]}"; do
 done
 
 grep -q '^brew: brew update: still running ([0-9]*s elapsed; Ctrl+C to cancel)$' "${progress_dir}/cooked.out"
-for mode in raw password single-key; do
+for mode in raw password single-key unknown-job; do
 	if grep -q 'still running' "${progress_dir}/${mode}.out"; then
 		echo "Expected no still-running messages while a command reads keys (${mode})" >&2
 		cat "${progress_dir}/${mode}.out" >&2
@@ -2794,12 +2811,22 @@ for mode in raw password single-key; do
 	fi
 	grep -q '^==> brew END (OK)' "${progress_dir}/${mode}.out"
 done
-# With a terminal, only the tenth interval's message (five minutes) adds the hint.
-if ! awk -v hint="$hint" '/still running/ { n++; if (n == 10) late = index($0, "elapsed; " hint "Ctrl+C to cancel)") > 0; else if (index($0, hint)) other = 1 } END { exit !(n >= 11 && late && !other) }' "${progress_dir}/long.out"; then
-	echo "Expected the input hint on the tenth message only" >&2
-	cat "${progress_dir}/long.out" >&2
+# A background job sees the terminal mode of its shell's prompt, so it keeps reporting.
+if ! grep -q '^brew: brew update: still running ([0-9]*s elapsed; Ctrl+C to cancel)$' "${progress_dir}/background.out"; then
+	echo "Expected a background job to keep printing still-running messages" >&2
+	cat "${progress_dir}/background.out" >&2
 	exit 1
 fi
+# With a terminal, only the tenth interval's message (five minutes) adds the
+# hint. When a prompt hides that message, the next printed one (here also the
+# tenth printed) carries it.
+for mode in long long-prompt-at-five-minutes; do
+	if ! awk -v hint="$hint" '/still running/ { n++; if (n == 10) late = index($0, "elapsed; " hint "Ctrl+C to cancel)") > 0; else if (index($0, hint)) other = 1 } END { exit !(n >= 11 && late && !other) }' "${progress_dir}/${mode}.out"; then
+		echo "Expected the input hint on the tenth printed message only (${mode})" >&2
+		cat "${progress_dir}/${mode}.out" >&2
+		exit 1
+	fi
+done
 if [ "$(grep -c 'still running' "${progress_dir}/long-no-terminal.out")" -lt 11 ] || grep -qF "$hint" "${progress_dir}/long-no-terminal.out"; then
 	echo "Expected eleven or more messages, none with the input hint, without a terminal" >&2
 	cat "${progress_dir}/long-no-terminal.out" >&2
@@ -2825,18 +2852,47 @@ stty "$saved" </dev/tty
 printf "\nanswered %s\n" "$key"
 IFS= read -r _ </dev/tty
 '
+# A background job never prompts; it runs until its log shows two messages.
+mkdir -p "${pty_dir}/background-bin"
+# shellcheck disable=SC2016
+write_stub_to_dir "${pty_dir}/background-bin" brew '
+[ "${1:-}" = update ] || exit 0
+deadline=$((SECONDS + 30))
+until [ "$(grep -c "still running" "$PTY_BACKGROUND_LOG")" -ge 2 ]; do
+	[ "$SECONDS" -lt "$deadline" ] || exit 1
+	sleep 0.1
+done
+'
 cat >"${pty_dir}/drive.py" <<'PY'
 import os
 import pty
 import select
 import sys
+import termios
 import time
 
+background_log = os.environ.get("PTY_BACKGROUND_LOG")
 pid, fd = pty.fork()
 if pid == 0:
     if os.environ.get("PTY_STDIN_NULL"):
         # Keep the terminal as the controlling terminal, but not as stdin.
         os.dup2(os.open(os.devnull, os.O_RDONLY), 0)
+    if background_log:
+        # Act like an interactive shell at its prompt: stay the terminal's
+        # foreground group with echo and line editing off, as zsh's line editor
+        # does, and run updates as a background job that writes to a log.
+        attrs = termios.tcgetattr(0)
+        attrs[3] &= ~(termios.ICANON | termios.ECHO)
+        termios.tcsetattr(0, termios.TCSANOW, attrs)
+        job = os.fork()
+        if job == 0:
+            os.setpgid(0, 0)
+            log = os.open(background_log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+            os.dup2(log, 1)
+            os.dup2(log, 2)
+            os.execvp(sys.argv[1], sys.argv[1:])
+        _, job_status = os.waitpid(job, 0)
+        os._exit(os.WEXITSTATUS(job_status) if os.WIFEXITED(job_status) else 1)
     os.execvp(sys.argv[1], sys.argv[1:])
 
 out = bytearray()
@@ -2874,6 +2930,24 @@ def fail(reason):
     sys.exit(1)
 
 
+def finish():
+    pump(lambda: False, 90)
+    if not eof:
+        fail("updates did not exit")
+    _, status = os.waitpid(pid, 0)
+    if background_log:
+        with open(background_log, "rb") as log:
+            out.extend(log.read())
+    if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0 or b"==> brew END (OK)" not in out:
+        fail("updates did not finish cleanly (wait status %d)" % status)
+
+
+if background_log:
+    finish()
+    if b"still running" not in out:
+        fail("a background job printed no still-running messages")
+    sys.exit(0)
+
 prompt = b"proceed? [y/n]"
 if not pump(lambda: prompt in out, 60):
     fail("the brew stub never prompted")
@@ -2889,22 +2963,23 @@ answered = b"answered y"
 if not pump(lambda: answered in out and b"still running" in out[out.find(answered):], 60):
     fail("no still-running message after the prompt was answered")
 os.write(fd, b"\n")
-pump(lambda: False, 60)
-if not eof:
-    fail("updates did not exit")
-_, status = os.waitpid(pid, 0)
-if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0 or b"==> brew END (OK)" not in out:
-    fail("updates did not finish cleanly (wait status %d)" % status)
+finish()
 PY
-# Once with the terminal on stdin, once with only the controlling terminal.
+# With the terminal on stdin, with only the controlling terminal, and as a
+# background job while the shell's prompt holds the terminal.
 PATH="${pty_dir}/bin:${PATH}" UPDATES_PROGRESS_INTERVAL=1 UPDATES_ALLOW_NON_DARWIN=1 \
 	"$SYSTEM_PYTHON3" -I "${pty_dir}/drive.py" "$SCRIPT" --only brew --no-emoji --no-color &
 pty_stdin=$!
 PATH="${pty_dir}/bin:${PATH}" UPDATES_PROGRESS_INTERVAL=1 UPDATES_ALLOW_NON_DARWIN=1 PTY_STDIN_NULL=1 \
 	"$SYSTEM_PYTHON3" -I "${pty_dir}/drive.py" "$SCRIPT" --only brew --no-emoji --no-color &
 pty_tty_only=$!
+PATH="${pty_dir}/background-bin:${PATH}" UPDATES_PROGRESS_INTERVAL=1 UPDATES_ALLOW_NON_DARWIN=1 \
+	PTY_BACKGROUND_LOG="${pty_dir}/background.log" \
+	"$SYSTEM_PYTHON3" -I "${pty_dir}/drive.py" "$SCRIPT" --only brew --no-emoji --no-color &
+pty_background=$!
 wait "$pty_stdin"
 wait "$pty_tty_only"
+wait "$pty_background"
 
 UPDATES_TEST_CASE
 

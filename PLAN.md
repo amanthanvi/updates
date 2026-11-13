@@ -1,8 +1,9 @@
 # Fix: progress messages over terminal prompts
 
 - [x] Skip a Unix `still running` message while the terminal on stdin, or else the controlling terminal, has echo or line editing off (a command is reading keys, such as Homebrew's `[y/n]` confirmation or a password; sudo's own pseudo-terminal keeps it raw too).
-- [x] Every five minutes (every tenth interval), messages on a terminal say the command may be waiting for input, for prompts a command hides by capturing its own output.
-- [x] Tests: stubbed `stty` modes (raw, no echo, single key, cooked with lookalike flags, no terminal) that answer only on updates' stdin and pace the stub by checks, not sleeps; a real pseudo-terminal with a raw-mode prompt, with the terminal on stdin and with only the controlling terminal.
+- [x] Pause only while `updates` is the terminal's foreground job, so a background run (whose terminal mode comes from the shell's prompt) keeps printing.
+- [x] Every five minutes (every tenth interval, or the next printed message if that one is skipped), messages on a terminal say the command may be waiting for input, for prompts a command hides by capturing its own output.
+- [x] Tests: stubbed `stty` modes (raw, no echo, single key, cooked with lookalike flags, no terminal) that answer only on updates' stdin and pace the stub by checks, not sleeps; foreground, background, and unknown `ps` job states; a hint carried past a skipped message; a real pseudo-terminal with a raw-mode prompt (terminal on stdin, and only the controlling terminal) and a background job behind a no-echo shell prompt.
 
 ---
 
